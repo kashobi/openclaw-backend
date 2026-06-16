@@ -1,1 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw Intelligence Terminal</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  :root {
+    --bg: #080c14; --surface: #0d1420; --surface2: #111827;
+    --border: #1e2d45; --accent: #00d4ff; --green: #00ff88;
+    --red: #ff3d5a; --yellow: #ffd700; --text: #e8f0fe;
+    --muted: #4a6080; --card: #0f1c2e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: 'Space Grotesk', sans-serif; min-height: 100vh; }
+  .ticker-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 0; overflow: hidden; white-space: nowrap; }
+  .ticker-inner { display: inline-block; animation: ticker 30s linear infinite; }
+  .ticker-item { display: inline-block; margin: 0 32px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+  .ticker-item .sym { color: var(--text); font-weight: 600; margin-right: 6px; }
+  .ticker-item .up { color: var(--green); }
+  .ticker-item .down { color: var(--red); }
+  @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+  .header { padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--accent), #0066ff); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .logo-text { font-size: 20px; font-weight: 700; }
+  .logo-text span { color: var(--accent); }
+  .status-dot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green); font-family: 'JetBrains Mono', monospace; }
+  .dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .search-section { padding: 32px 24px 24px; }
+  .search-label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; }
+  .search-box { display: flex; gap: 12px; max-width: 700px; }
+  .search-input { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; color: var(--text); font-family: 'Space Grotesk', sans-serif; font-size: 16px; outline: none; transition: border-color 0.2s; }
+  .search-input::placeholder { color: var(--muted); }
+  .search-input:focus { border-color: var(--accent); }
+  .search-btn { background: var(--accent); color: var(--bg); border: none; border-radius: 12px; padding: 16px 28px; font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; transition: opacity 0.2s; }
+  .search-btn:hover { opacity: 0.85; }
+  .quick-picks { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .quick-pick { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px; font-size: 13px; color: var(--muted); cursor: pointer; transition: all 0.2s; font-family: 'JetBrains Mono', monospace; }
+  .quick-pick:hover { border-color: var(--accent); color: var(--accent); }
+  .main { padding: 0 24px 40px; display: grid; grid-template-columns: 1fr 340px; gap: 20px; }
+  @media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .report-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 20px; }
+  .stock-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
+  .stock-name { font-size: 28px; font-weight: 700; }
+  .stock-full { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .price-block { text-align: right; }
+  .price { font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .price-change { font-size: 14px; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .price-change.up { color: var(--green); }
+  .price-change.down { color: var(--red); }
+  .decision { display: flex; gap: 12px; margin-bottom: 24px; }
+  .decision-btn { flex: 1; padding: 18px; border-radius: 12px; border: none; font-family: 'Space Grotesk', sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; transition: transform 0.1s; }
+  .decision-btn:hover { transform: translateY(-2px); }
+  .approve-btn { background: var(--green); color: #000; }
+  .pass-btn { background: var(--surface2); color: var(--red); border: 1px solid var(--red); }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+  .metric { background: var(--surface2); border-radius: 10px; padding: 14px; }
+  .metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; font-family: 'JetBrains Mono', monospace; }
+  .metric-value { font-size: 18px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+  .metric-value.positive { color: var(--green); }
+  .metric-value.negative { color: var(--red); }
+  .metric-value.neutral { color: var(--accent); }
+  .loading { display: none; text-align: center; padding: 40px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 14px; }
+  .loading.active { display: block; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .loading { animation: blink 1s infinite; }
+  .signal-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 12px; }
+  .signal-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .signal-sym { font-size: 18px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .signal-verdict { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 20px; font-family: 'JetBrains Mono', monospace; }
+  .verdict-approve { background: var(--green); color: #000; }
+  .verdict-pass { background: var(--red); color: #fff; }
+  .verdict-watch { background: var(--yellow); color: #000; }
+  .signal-price { font-size: 14px; font-family: 'JetBrains Mono', monospace; color: var(--muted); }
+  .footer { text-align: center; padding: 20px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
 
+<div class="ticker-bar">
+  <div class="ticker-inner">
+    <span class="ticker-item"><span class="sym">SPY</span><span class="up" id="spy-price">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">QQQ</span><span class="up" id="qqq-price">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">NVDA</span><span class="up" id="nvda-price">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">AAPL</span><span class="up" id="aapl-price">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">AMD</span><span class="up" id="amd-price">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">SOFI</span><span class="up" id="sofi-price">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">SPY</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">QQQ</span><span class="up">Loading...</span></span>
+  </div>
+</div>
+
+<div class="header">
+  <div class="logo">
+    <div class="logo-icon">🦅</div>
+    <div class="logo-text">Open<span>Claw</span></div>
+  </div>
+  <div class="status-dot"><div class="dot"></div>LIVE INTEL ACTIVE</div>
+</div>
+
+<div class="search-section">
+  <div class="search-label">Search any stock or company</div>
+  <div class="search-box">
+    <input class="search-input" type="text" id="searchInput" placeholder="Type a stock symbol or company name... e.g. Apple, SOFI, AMD" />
+    <button class="search-btn" onclick="analyzeStock()">ANALYZE</button>
+  </div>
+  <div class="quick-picks">
+    <div class="quick-pick" onclick="setSearch('SOFI')">SOFI</div>
+    <div class="quick-pick" onclick="setSearch('AMD')">AMD</div>
+    <div class="quick-pick" onclick="setSearch('NVDA')">NVDA</div>
+    <div class="quick-pick" onclick="setSearch('AAPL')">AAPL</div>
+    <div class="quick-pick" onclick="setSearch('MSFT')">MSFT</div>
+    <div class="quick-pick" onclick="setSearch('SCHD')">SCHD</div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="left-col">
+    <div class="section-title">Full Intelligence Report</div>
+    <div id="loading" class="loading">Pulling live intelligence... stand by</div>
+    <div class="report-card" id="report">
+      <div class="stock-header">
+        <div>
+          <div class="stock-name" id="stockSymbol">SOFI</div>
+          <div class="stock-full" id="stockName">SoFi Technologies Inc.</div>
+        </div>
+        <div class="price-block">
+          <div class="price" id="stockPrice">$17.13</div>
+          <div class="price-change up" id="stockChange">+3.32% today</div>
+        </div>
+      </div>
+      <div class="decision">
+        <button class="decision-btn approve-btn" id="approveBtn">✓ APPROVE</button>
+        <button class="decision-btn pass-btn" id="passBtn">✗ PASS</button>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="metric-label">Price</div><div class="metric-value neutral" id="metricPrice">$17.13</div></div>
+        <div class="metric"><div class="metric-label">Change</div><div class="metric-value positive" id="metricChange">+3.32%</div></div>
+        <div class="metric"><div class="metric-label">Verdict</div><div class="metric-value neutral" id="metricVerdict">WATCH</div></div>
+        <div class="metric"><div class="metric-label">PE Ratio</div><div class="metric-value neutral" id="metricPE">38.07</div></div>
+        <div class="metric"><div class="metric-label">Target</div><div class="metric-value positive" id="metricTarget">$21.00</div></div>
+        <div class="metric"><div class="metric-label">Analyst</div><div class="metric-value neutral" id="metricRec">HOLD</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="right-col">
+    <div class="section-title">Live Signals</div>
+    <div id="signalsPanel">
+      <div class="signal-card">
+        <div class="signal-top">
+          <div class="signal-sym">SOFI</div>
+          <div class="signal-verdict verdict-watch">WATCH</div>
+        </div>
+        <div class="signal-price">$17.13 &nbsp; Analyst target $21.00</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  OPENCLAW INTELLIGENCE TERMINAL &nbsp;|&nbsp; POWERED BY YFINANCE + FINNHUB + SEC EDGAR &nbsp;|&nbsp; FOR EDUCATIONAL PURPOSES ONLY. NOT FINANCIAL ADVICE.
+</div>
+
+<script>
+const API = 'https://web-production-23b61.up.railway.app';
+
+function setSearch(sym) {
+  document.getElementById('searchInput').value = sym;
+  analyzeStock();
+}
+
+async function analyzeStock() {
+  const val = document.getElementById('searchInput').value.trim().toUpperCase();
+  if (!val) return;
+
+  document.getElementById('loading').classList.add('active');
+  document.getElementById('report').style.opacity = '0.3';
+
+  try {
+    const res = await fetch(`${API}/analyze?symbol=${val}`);
+    const data = await res.json();
+
+    document.getElementById('stockSymbol').textContent = data.symbol || val;
+    document.getElementById('stockName').textContent = data.name || val;
+    document.getElementById('stockPrice').textContent = '$' + (data.price || 0);
+    document.getElementById('stockChange').textContent = (data.change_pct || 0) + '% today';
+    document.getElementById('metricPrice').textContent = '$' + (data.price || 0);
+    document.getElementById('metricChange').textContent = (data.change_pct || 0) + '%';
+    document.getElementById('metricVerdict').textContent = data.verdict || 'WATCH';
+    document.getElementById('metricPE').textContent = data.pe_ratio || 'N/A';
+    document.getElementById('metricTarget').textContent = data.analyst_target ? '$' + data.analyst_target : 'N/A';
+    document.getElementById('metricRec').textContent = data.recommendation || 'N/A';
+
+    const verdict = data.verdict || 'WATCH';
+    document.getElementById('approveBtn').style.opacity = verdict === 'APPROVE' ? '1' : '0.4';
+    document.getElementById('passBtn').style.opacity = verdict === 'PASS' ? '1' : '0.4';
+
+    const change = data.change_pct || 0;
+    const changeEl = document.getElementById('stockChange');
+    changeEl.className = 'price-change ' + (change >= 0 ? 'up' : 'down');
+
+    document.getElementById('signalsPanel').innerHTML = `
+      <div class="signal-card">
+        <div class="signal-top">
+          <div class="signal-sym">${data.symbol}</div>
+          <div class="signal-verdict verdict-${verdict.toLowerCase()}">${verdict}</div>
+        </div>
+        <div class="signal-price">$${data.price} &nbsp; Analyst target $${data.analyst_target || 'N/A'}</div>
+      </div>`;
+
+  } catch(e) {
+    document.getElementById('stockSymbol').textContent = 'ERROR';
+    document.getElementById('stockName').textContent = 'Could not fetch data. Try again.';
+  }
+
+  document.getElementById('loading').classList.remove('active');
+  document.getElementById('report').style.opacity = '1';
+}
+
+document.getElementById('searchInput').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') analyzeStock();
+});
+
+analyzeStock();
+</script>
+</body>
+</html>
