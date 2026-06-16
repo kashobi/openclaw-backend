@@ -5,229 +5,734 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OpenClaw Intelligence Terminal</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
   :root {
-    --bg: #080c14; --surface: #0d1420; --surface2: #111827;
-    --border: #1e2d45; --accent: #00d4ff; --green: #00ff88;
-    --red: #ff3d5a; --yellow: #ffd700; --text: #e8f0fe;
-    --muted: #4a6080; --card: #0f1c2e;
+    --bg:        #080c10;
+    --surface:   #0d1117;
+    --card:      #111820;
+    --border:    #1e2d3d;
+    --cyan:      #00e5ff;
+    --green:     #00ff88;
+    --red:       #ff3b5c;
+    --yellow:    #ffd166;
+    --muted:     #4a6070;
+    --text:      #cdd9e5;
+    --white:     #f0f6fc;
   }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font-family: 'Space Grotesk', sans-serif; min-height: 100vh; }
-  .ticker-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 0; overflow: hidden; white-space: nowrap; }
-  .ticker-inner { display: inline-block; animation: ticker 30s linear infinite; }
-  .ticker-item { display: inline-block; margin: 0 32px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
-  .ticker-item .sym { color: var(--text); font-weight: 600; margin-right: 6px; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* TICKER BAR */
+  .ticker-wrap {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+    height: 32px;
+    display: flex;
+    align-items: center;
+  }
+  .ticker-track {
+    display: flex;
+    gap: 48px;
+    animation: ticker 30s linear infinite;
+    white-space: nowrap;
+    padding-left: 100%;
+  }
+  .ticker-item {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    gap: 8px;
+  }
+  .ticker-item .sym { color: var(--cyan); font-weight: 700; }
   .ticker-item .up { color: var(--green); }
-  .ticker-item .down { color: var(--red); }
-  @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-  .header { padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
-  .logo { display: flex; align-items: center; gap: 10px; }
-  .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--accent), #0066ff); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
-  .logo-text { font-size: 20px; font-weight: 700; }
-  .logo-text span { color: var(--accent); }
-  .status-dot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green); font-family: 'JetBrains Mono', monospace; }
-  .dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  .search-section { padding: 32px 24px 24px; }
-  .search-label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; }
-  .search-box { display: flex; gap: 12px; max-width: 700px; }
-  .search-input { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; color: var(--text); font-family: 'Space Grotesk', sans-serif; font-size: 16px; outline: none; transition: border-color 0.2s; }
-  .search-input::placeholder { color: var(--muted); }
-  .search-input:focus { border-color: var(--accent); }
-  .search-btn { background: var(--accent); color: var(--bg); border: none; border-radius: 12px; padding: 16px 28px; font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; transition: opacity 0.2s; }
-  .search-btn:hover { opacity: 0.85; }
-  .quick-picks { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  .quick-pick { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px; font-size: 13px; color: var(--muted); cursor: pointer; transition: all 0.2s; font-family: 'JetBrains Mono', monospace; }
-  .quick-pick:hover { border-color: var(--accent); color: var(--accent); }
-  .main { padding: 0 24px 40px; display: grid; grid-template-columns: 1fr 340px; gap: 20px; }
-  @media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
-  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
-  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-  .report-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 20px; }
-  .stock-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
-  .stock-name { font-size: 28px; font-weight: 700; }
-  .stock-full { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .ticker-item .dn { color: var(--red); }
+  @keyframes ticker {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  /* HEADER */
+  header {
+    padding: 18px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo-icon {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, var(--cyan), #0077ff);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+  .logo-text {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: -0.3px;
+  }
+  .logo-text span { color: var(--cyan); }
+  .live-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0,255,136,0.08);
+    border: 1px solid rgba(0,255,136,0.2);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--green);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+  }
+  .live-dot {
+    width: 6px; height: 6px;
+    background: var(--green);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.8); }
+  }
+
+  /* SEARCH */
+  .search-section {
+    padding: 28px 24px 20px;
+  }
+  .search-label {
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .search-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .search-input {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: 2px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-input::placeholder { color: var(--muted); font-weight: 400; letter-spacing: 0.5px; }
+  .search-input:focus { border-color: var(--cyan); }
+  .analyze-btn {
+    background: var(--cyan);
+    color: #000;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 24px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-width: 110px;
+  }
+  .analyze-btn:hover { background: #33ecff; transform: translateY(-1px); }
+  .analyze-btn:active { transform: translateY(0); }
+  .analyze-btn.loading { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+  .quick-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    transition: all 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .chip:hover, .chip.active { border-color: var(--cyan); color: var(--cyan); background: rgba(0,229,255,0.06); }
+
+  /* REPORT SECTION */
+  .report-label {
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    padding: 0 24px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .report-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* MAIN CARD */
+  .report-card {
+    margin: 0 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  /* VERDICT BANNER */
+  .verdict-banner {
+    padding: 20px 20px 16px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .stock-identity { flex: 1; }
+  .stock-symbol {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: 2px;
+    line-height: 1;
+  }
+  .stock-name {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-weight: 400;
+  }
   .price-block { text-align: right; }
-  .price { font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-  .price-change { font-size: 14px; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .price-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--white);
+    line-height: 1;
+  }
+  .price-change {
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+  }
   .price-change.up { color: var(--green); }
-  .price-change.down { color: var(--red); }
-  .decision { display: flex; gap: 12px; margin-bottom: 24px; }
-  .decision-btn { flex: 1; padding: 18px; border-radius: 12px; border: none; font-family: 'Space Grotesk', sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; transition: transform 0.1s; }
-  .decision-btn:hover { transform: translateY(-2px); }
-  .approve-btn { background: var(--green); color: #000; }
-  .pass-btn { background: var(--surface2); color: var(--red); border: 1px solid var(--red); }
-  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
-  .metric { background: var(--surface2); border-radius: 10px; padding: 14px; }
-  .metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; font-family: 'JetBrains Mono', monospace; }
-  .metric-value { font-size: 18px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
-  .metric-value.positive { color: var(--green); }
-  .metric-value.negative { color: var(--red); }
-  .metric-value.neutral { color: var(--accent); }
-  .loading { display: none; text-align: center; padding: 40px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 14px; }
-  .loading.active { display: block; }
-  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  .loading { animation: blink 1s infinite; }
-  .signal-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 12px; }
-  .signal-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-  .signal-sym { font-size: 18px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-  .signal-verdict { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 20px; font-family: 'JetBrains Mono', monospace; }
-  .verdict-approve { background: var(--green); color: #000; }
-  .verdict-pass { background: var(--red); color: #fff; }
-  .verdict-watch { background: var(--yellow); color: #000; }
-  .signal-price { font-size: 14px; font-family: 'JetBrains Mono', monospace; color: var(--muted); }
-  .footer { text-align: center; padding: 20px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+  .price-change.dn { color: var(--red); }
+
+  /* ACTION BUTTONS */
+  .action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .action-btn {
+    padding: 16px;
+    border: none;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: opacity 0.2s;
+  }
+  .approve-btn {
+    background: rgba(0,255,136,0.12);
+    color: var(--green);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .pass-btn {
+    background: rgba(255,59,92,0.08);
+    color: var(--red);
+    border-bottom: 1px solid var(--border);
+  }
+  .approve-btn.dim, .pass-btn.dim { opacity: 0.25; }
+
+  /* METRICS GRID */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+  .metric {
+    padding: 14px 16px;
+    border-right: 1px solid var(--border);
+  }
+  .metric:last-child { border-right: none; }
+  .metric-label {
+    font-size: 9px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 5px;
+  }
+  .metric-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--cyan);
+  }
+  .metric-value.green { color: var(--green); }
+  .metric-value.red   { color: var(--red); }
+  .metric-value.yellow { color: var(--yellow); }
+  .metric-value.white { color: var(--white); }
+
+  /* SECOND ROW METRICS */
+  .metrics-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  /* ERROR STATE */
+  .error-state {
+    padding: 24px;
+    text-align: center;
+    color: var(--red);
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+    display: none;
+  }
+
+  /* LOADING STATE */
+  .loading-state {
+    padding: 32px;
+    text-align: center;
+    display: none;
+  }
+  .loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 2px solid var(--border);
+    border-top-color: var(--cyan);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  /* LIVE SIGNALS */
+  .signals-section {
+    padding: 20px 16px;
+  }
+  .signals-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .signal-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .signal-row:hover { border-color: var(--cyan); }
+  .signal-left { display: flex; align-items: center; gap: 10px; }
+  .signal-sym {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--white);
+    width: 44px;
+  }
+  .signal-name { font-size: 11px; color: var(--muted); }
+  .signal-right { display: flex; align-items: center; gap: 12px; }
+  .signal-price {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .signal-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding: 3px 9px;
+    border-radius: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+  }
+  .badge-approve { background: rgba(0,255,136,0.12); color: var(--green); }
+  .badge-watch   { background: rgba(255,209,102,0.12); color: var(--yellow); }
+  .badge-pass    { background: rgba(255,59,92,0.1); color: var(--red); }
+
+  /* DISCLAIMER */
+  .disclaimer {
+    margin: 16px 16px 24px;
+    padding: 12px 14px;
+    background: rgba(255,209,102,0.04);
+    border: 1px solid rgba(255,209,102,0.12);
+    border-radius: 8px;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.6;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .disclaimer strong { color: var(--yellow); }
 </style>
 </head>
 <body>
 
-<div class="ticker-bar">
-  <div class="ticker-inner">
-    <span class="ticker-item"><span class="sym">SPY</span><span class="up" id="spy-price">Loading...</span></span>
-    <span class="ticker-item"><span class="sym">QQQ</span><span class="up" id="qqq-price">Loading...</span></span>
-    <span class="ticker-item"><span class="sym">NVDA</span><span class="up" id="nvda-price">Loading...</span></span>
-    <span class="ticker-item"><span class="sym">AAPL</span><span class="up" id="aapl-price">Loading...</span></span>
-    <span class="ticker-item"><span class="sym">AMD</span><span class="up" id="amd-price">Loading...</span></span>
-    <span class="ticker-item"><span class="sym">SOFI</span><span class="up" id="sofi-price">Loading...</span></span>
+<!-- TICKER BAR -->
+<div class="ticker-wrap">
+  <div class="ticker-track" id="tickerTrack">
     <span class="ticker-item"><span class="sym">SPY</span><span class="up">Loading...</span></span>
     <span class="ticker-item"><span class="sym">QQQ</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">NVDA</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">AAPL</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">MSFT</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">AMD</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">SOFI</span><span class="up">Loading...</span></span>
+    <!-- Duplicate for seamless loop -->
+    <span class="ticker-item"><span class="sym">SPY</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">QQQ</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">NVDA</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">AAPL</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">MSFT</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">AMD</span><span class="up">Loading...</span></span>
+    <span class="ticker-item"><span class="sym">SOFI</span><span class="up">Loading...</span></span>
   </div>
 </div>
 
-<div class="header">
+<!-- HEADER -->
+<header>
   <div class="logo">
     <div class="logo-icon">🦅</div>
     <div class="logo-text">Open<span>Claw</span></div>
   </div>
-  <div class="status-dot"><div class="dot"></div>LIVE INTEL ACTIVE</div>
-</div>
+  <div class="live-badge">
+    <div class="live-dot"></div>
+    Live Intel Active
+  </div>
+</header>
 
+<!-- SEARCH -->
 <div class="search-section">
-  <div class="search-label">Search any stock or company</div>
-  <div class="search-box">
-    <input class="search-input" type="text" id="searchInput" placeholder="Type a stock symbol or company name... e.g. Apple, SOFI, AMD" />
-    <button class="search-btn" onclick="analyzeStock()">ANALYZE</button>
+  <div class="search-label">Search Any Stock or Company</div>
+  <div class="search-row">
+    <input
+      class="search-input"
+      id="searchInput"
+      type="text"
+      placeholder="Enter ticker..."
+      maxlength="10"
+      autocomplete="off"
+      autocapitalize="characters"
+    >
+    <button class="analyze-btn" id="analyzeBtn" onclick="analyzeStock()">ANALYZE</button>
   </div>
-  <div class="quick-picks">
-    <div class="quick-pick" onclick="setSearch('SOFI')">SOFI</div>
-    <div class="quick-pick" onclick="setSearch('AMD')">AMD</div>
-    <div class="quick-pick" onclick="setSearch('NVDA')">NVDA</div>
-    <div class="quick-pick" onclick="setSearch('AAPL')">AAPL</div>
-    <div class="quick-pick" onclick="setSearch('MSFT')">MSFT</div>
-    <div class="quick-pick" onclick="setSearch('SCHD')">SCHD</div>
-  </div>
-</div>
-
-<div class="main">
-  <div class="left-col">
-    <div class="section-title">Full Intelligence Report</div>
-    <div id="loading" class="loading">Pulling live intelligence... stand by</div>
-    <div class="report-card" id="report">
-      <div class="stock-header">
-        <div>
-          <div class="stock-name" id="stockSymbol">SOFI</div>
-          <div class="stock-full" id="stockName">SoFi Technologies Inc.</div>
-        </div>
-        <div class="price-block">
-          <div class="price" id="stockPrice">$17.13</div>
-          <div class="price-change up" id="stockChange">+3.32% today</div>
-        </div>
-      </div>
-      <div class="decision">
-        <button class="decision-btn approve-btn" id="approveBtn">✓ APPROVE</button>
-        <button class="decision-btn pass-btn" id="passBtn">✗ PASS</button>
-      </div>
-      <div class="metrics">
-        <div class="metric"><div class="metric-label">Price</div><div class="metric-value neutral" id="metricPrice">$17.13</div></div>
-        <div class="metric"><div class="metric-label">Change</div><div class="metric-value positive" id="metricChange">+3.32%</div></div>
-        <div class="metric"><div class="metric-label">Verdict</div><div class="metric-value neutral" id="metricVerdict">WATCH</div></div>
-        <div class="metric"><div class="metric-label">PE Ratio</div><div class="metric-value neutral" id="metricPE">38.07</div></div>
-        <div class="metric"><div class="metric-label">Target</div><div class="metric-value positive" id="metricTarget">$21.00</div></div>
-        <div class="metric"><div class="metric-label">Analyst</div><div class="metric-value neutral" id="metricRec">HOLD</div></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="right-col">
-    <div class="section-title">Live Signals</div>
-    <div id="signalsPanel">
-      <div class="signal-card">
-        <div class="signal-top">
-          <div class="signal-sym">SOFI</div>
-          <div class="signal-verdict verdict-watch">WATCH</div>
-        </div>
-        <div class="signal-price">$17.13 &nbsp; Analyst target $21.00</div>
-      </div>
-    </div>
+  <div class="quick-chips">
+    <div class="chip" onclick="quickSearch('SOFI')">SOFI</div>
+    <div class="chip" onclick="quickSearch('AMD')">AMD</div>
+    <div class="chip" onclick="quickSearch('NVDA')">NVDA</div>
+    <div class="chip" onclick="quickSearch('AAPL')">AAPL</div>
+    <div class="chip" onclick="quickSearch('MSFT')">MSFT</div>
+    <div class="chip" onclick="quickSearch('SCHD')">SCHD</div>
   </div>
 </div>
 
-<div class="footer">
-  OPENCLAW INTELLIGENCE TERMINAL &nbsp;|&nbsp; POWERED BY YFINANCE + FINNHUB + SEC EDGAR &nbsp;|&nbsp; FOR EDUCATIONAL PURPOSES ONLY. NOT FINANCIAL ADVICE.
+<!-- REPORT LABEL -->
+<div class="report-label">Full Intelligence Report</div>
+
+<!-- MAIN REPORT CARD -->
+<div class="report-card">
+
+  <!-- LOADING STATE -->
+  <div class="loading-state" id="loadingState">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Pulling live intel...</div>
+  </div>
+
+  <!-- ERROR STATE -->
+  <div class="error-state" id="errorState">
+    Could not fetch data. Check the ticker and try again.
+  </div>
+
+  <!-- RESULTS -->
+  <div id="resultsBlock">
+
+    <!-- VERDICT BANNER -->
+    <div class="verdict-banner">
+      <div class="stock-identity">
+        <div class="stock-symbol" id="stockSymbol">—</div>
+        <div class="stock-name" id="stockName">Enter a ticker to begin</div>
+      </div>
+      <div class="price-block">
+        <div class="price-value" id="priceValue">—</div>
+        <div class="price-change" id="priceChange">— today</div>
+      </div>
+    </div>
+
+    <!-- ACTION BUTTONS -->
+    <div class="action-row">
+      <button class="action-btn approve-btn dim" id="approveBtn">✓ APPROVE</button>
+      <button class="action-btn pass-btn dim" id="passBtn">✕ PASS</button>
+    </div>
+
+    <!-- METRICS ROW 1 -->
+    <div class="metrics-grid">
+      <div class="metric">
+        <div class="metric-label">Price</div>
+        <div class="metric-value cyan" id="m_price">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Change</div>
+        <div class="metric-value" id="m_change">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Verdict</div>
+        <div class="metric-value yellow" id="m_verdict">—</div>
+      </div>
+    </div>
+
+    <!-- METRICS ROW 2 -->
+    <div class="metrics-grid-2">
+      <div class="metric">
+        <div class="metric-label">PE Ratio</div>
+        <div class="metric-value white" id="m_pe">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Target</div>
+        <div class="metric-value green" id="m_target">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Analyst</div>
+        <div class="metric-value white" id="m_analyst">—</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- LIVE SIGNALS -->
+<div class="signals-section">
+  <div class="report-label" style="padding:0; margin-bottom:12px;">Live Signals</div>
+  <div class="signals-grid" id="signalsGrid">
+    <div class="signal-row"><div class="signal-left"><span class="signal-sym">AMD</span><span class="signal-name">Loading...</span></div></div>
+    <div class="signal-row"><div class="signal-left"><span class="signal-sym">NVDA</span><span class="signal-name">Loading...</span></div></div>
+    <div class="signal-row"><div class="signal-left"><span class="signal-sym">AAPL</span><span class="signal-name">Loading...</span></div></div>
+  </div>
+</div>
+
+<!-- DISCLAIMER -->
+<div class="disclaimer">
+  <strong>DISCLAIMER:</strong> OpenClaw is for educational and informational purposes only. Nothing here is financial advice. Always do your own research before making investment decisions.
 </div>
 
 <script>
-const API = 'https://web-production-23b61.up.railway.app';
+  const RAILWAY_URL = 'https://web-production-23b61.up.railway.app';
 
-function setSearch(sym) {
-  document.getElementById('searchInput').value = sym;
-  analyzeStock();
-}
+  // ---- ANALYZE ----
+  async function analyzeStock() {
+    const input = document.getElementById('searchInput');
+    const symbol = input.value.trim().toUpperCase();
+    if (!symbol) return;
 
-async function analyzeStock() {
-  const val = document.getElementById('searchInput').value.trim().toUpperCase();
-  if (!val) return;
+    setLoading(true);
 
-  document.getElementById('loading').classList.add('active');
-  document.getElementById('report').style.opacity = '0.3';
+    // highlight active chip
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.chip').forEach(c => {
+      if (c.textContent === symbol) c.classList.add('active');
+    });
 
-  try {
-    const res = await fetch(`${API}/analyze?symbol=${val}`);
-    const data = await res.json();
-
-    document.getElementById('stockSymbol').textContent = data.symbol || val;
-    document.getElementById('stockName').textContent = data.name || val;
-    document.getElementById('stockPrice').textContent = '$' + (data.price || 0);
-    document.getElementById('stockChange').textContent = (data.change_pct || 0) + '% today';
-    document.getElementById('metricPrice').textContent = '$' + (data.price || 0);
-    document.getElementById('metricChange').textContent = (data.change_pct || 0) + '%';
-    document.getElementById('metricVerdict').textContent = data.verdict || 'WATCH';
-    document.getElementById('metricPE').textContent = data.pe_ratio || 'N/A';
-    document.getElementById('metricTarget').textContent = data.analyst_target ? '$' + data.analyst_target : 'N/A';
-    document.getElementById('metricRec').textContent = data.recommendation || 'N/A';
-
-    const verdict = data.verdict || 'WATCH';
-    document.getElementById('approveBtn').style.opacity = verdict === 'APPROVE' ? '1' : '0.4';
-    document.getElementById('passBtn').style.opacity = verdict === 'PASS' ? '1' : '0.4';
-
-    const change = data.change_pct || 0;
-    const changeEl = document.getElementById('stockChange');
-    changeEl.className = 'price-change ' + (change >= 0 ? 'up' : 'down');
-
-    document.getElementById('signalsPanel').innerHTML = `
-      <div class="signal-card">
-        <div class="signal-top">
-          <div class="signal-sym">${data.symbol}</div>
-          <div class="signal-verdict verdict-${verdict.toLowerCase()}">${verdict}</div>
-        </div>
-        <div class="signal-price">$${data.price} &nbsp; Analyst target $${data.analyst_target || 'N/A'}</div>
-      </div>`;
-
-  } catch(e) {
-    document.getElementById('stockSymbol').textContent = 'ERROR';
-    document.getElementById('stockName').textContent = 'Could not fetch data. Try again.';
+    try {
+      const res = await fetch(`${RAILWAY_URL}/analyze?symbol=${symbol}`);
+      if (!res.ok) throw new Error('Bad response');
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      renderReport(data);
+    } catch(e) {
+      showError();
+    }
   }
 
-  document.getElementById('loading').classList.remove('active');
-  document.getElementById('report').style.opacity = '1';
-}
+  function quickSearch(sym) {
+    document.getElementById('searchInput').value = sym;
+    analyzeStock();
+  }
 
-document.getElementById('searchInput').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter') analyzeStock();
-});
+  // ---- RENDER ----
+  function renderReport(d) {
+    setLoading(false);
+    document.getElementById('errorState').style.display = 'none';
+    document.getElementById('resultsBlock').style.display = 'block';
 
-analyzeStock();
+    document.getElementById('stockSymbol').textContent = d.symbol || '—';
+    document.getElementById('stockName').textContent = d.name || d.symbol;
+
+    const price = d.price ? '$' + d.price : '—';
+    document.getElementById('priceValue').textContent = price;
+    document.getElementById('m_price').textContent = price;
+
+    const chg = d.change_pct;
+    const chgEl = document.getElementById('priceChange');
+    const chgM  = document.getElementById('m_change');
+    if (chg !== undefined && chg !== null) {
+      const sign = chg >= 0 ? '+' : '';
+      const txt  = sign + chg + '%';
+      chgEl.textContent = txt + ' today';
+      chgEl.className   = 'price-change ' + (chg >= 0 ? 'up' : 'dn');
+      chgM.textContent  = txt;
+      chgM.className    = 'metric-value ' + (chg >= 0 ? 'green' : 'red');
+    }
+
+    const verdict = (d.verdict || 'WATCH').toUpperCase();
+    document.getElementById('m_verdict').textContent = verdict;
+
+    const aBtn = document.getElementById('approveBtn');
+    const pBtn = document.getElementById('passBtn');
+    aBtn.classList.toggle('dim', verdict !== 'APPROVE');
+    pBtn.classList.toggle('dim', verdict !== 'PASS');
+
+    const pe = d.pe_ratio;
+    document.getElementById('m_pe').textContent = (pe && pe !== 'N/A') ? parseFloat(pe).toFixed(2) : 'N/A';
+
+    const tgt = d.analyst_target;
+    document.getElementById('m_target').textContent = (tgt && tgt !== 'N/A') ? '$' + parseFloat(tgt).toFixed(0) : 'N/A';
+
+    document.getElementById('m_analyst').textContent = d.recommendation || 'N/A';
+  }
+
+  function setLoading(on) {
+    document.getElementById('loadingState').style.display   = on ? 'block' : 'none';
+    document.getElementById('resultsBlock').style.display   = on ? 'none'  : 'block';
+    document.getElementById('errorState').style.display     = 'none';
+    const btn = document.getElementById('analyzeBtn');
+    btn.classList.toggle('loading', on);
+    btn.textContent = on ? '...' : 'ANALYZE';
+  }
+
+  function showError() {
+    document.getElementById('loadingState').style.display  = 'none';
+    document.getElementById('resultsBlock').style.display  = 'none';
+    document.getElementById('errorState').style.display    = 'block';
+    const btn = document.getElementById('analyzeBtn');
+    btn.classList.remove('loading');
+    btn.textContent = 'ANALYZE';
+  }
+
+  // ---- ENTER KEY ----
+  document.getElementById('searchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') analyzeStock();
+  });
+  document.getElementById('searchInput').addEventListener('input', e => {
+    e.target.value = e.target.value.toUpperCase();
+  });
+
+  // ---- LIVE SIGNALS ----
+  const signalSymbols = ['AMD','NVDA','AAPL','MSFT','SOFI'];
+
+  async function loadSignals() {
+    const grid = document.getElementById('signalsGrid');
+    grid.innerHTML = '';
+    for (const sym of signalSymbols) {
+      try {
+        const res  = await fetch(`${RAILWAY_URL}/analyze?symbol=${sym}`);
+        const data = await res.json();
+        if (data.error) continue;
+        const chg     = data.change_pct;
+        const sign    = chg >= 0 ? '+' : '';
+        const verdict = (data.verdict || 'WATCH').toUpperCase();
+        const badgeCls = verdict === 'APPROVE' ? 'badge-approve' : verdict === 'PASS' ? 'badge-pass' : 'badge-watch';
+        grid.innerHTML += `
+          <div class="signal-row" onclick="quickSearch('${sym}')">
+            <div class="signal-left">
+              <span class="signal-sym">${sym}</span>
+              <span class="signal-name">${data.name || sym}</span>
+            </div>
+            <div class="signal-right">
+              <span class="signal-price">$${data.price}</span>
+              <span class="signal-price" style="color:${chg>=0?'var(--green)':'var(--red)'}">${sign}${chg}%</span>
+              <span class="signal-badge ${badgeCls}">${verdict}</span>
+            </div>
+          </div>`;
+      } catch(e) { /* skip failed signal */ }
+    }
+  }
+
+  // ---- TICKER ----
+  async function loadTicker() {
+    const syms = ['SPY','QQQ','NVDA','AAPL','MSFT','AMD','SOFI','TSLA','META'];
+    let items = '';
+    for (const s of syms) {
+      try {
+        const res  = await fetch(`${RAILWAY_URL}/analyze?symbol=${s}`);
+        const data = await res.json();
+        if (data.error) continue;
+        const chg  = data.change_pct;
+        const sign = chg >= 0 ? '+' : '';
+        const cls  = chg >= 0 ? 'up' : 'dn';
+        items += `<span class="ticker-item"><span class="sym">${s}</span><span class="${cls}">$${data.price} (${sign}${chg}%)</span></span>`;
+      } catch(e) {}
+    }
+    if (items) {
+      const track = document.getElementById('tickerTrack');
+      track.innerHTML = items + items; // duplicate for loop
+    }
+  }
+
+  // ---- INIT ----
+  window.addEventListener('load', () => {
+    loadSignals();
+    loadTicker();
+    setInterval(loadSignals, 60000); // refresh signals every 60s
+    setInterval(loadTicker,  60000); // refresh ticker every 60s
+  });
 </script>
 </body>
 </html>
