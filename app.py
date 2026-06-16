@@ -1,5 +1,5 @@
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import yfinance as yf
 import requests
@@ -11,11 +11,11 @@ CORS(app)
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 FMP_KEY = os.environ.get("FMP_KEY", "")
 
-@app.route("/")
-def home():
-    return jsonify({"status": "OpenClaw Intelligence Terminal is live"})
-
-@app.route("/analyze")
+14    @app.route("/")
+15    def home():
+16        return send_from_directory('.', 'index.html')
+17
+18    @app.route("/analyze")
 def analyze():
     symbol = request.args.get("symbol", "").upper().strip()
     if not symbol:
