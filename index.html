@@ -1,438 +1,247 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Apex Q Intelligence Terminal</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-  :root {
-    --bg: #f0f4f8; --surface: #ffffff; --surface2: #e8edf2;
-    --border: #c8d4e0; --accent: #0066cc; --green: #007a3d;
-    --green-bg: #e6f4ed; --red: #cc0000; --red-bg: #fce8e8;
-    --yellow: #b36b00; --yellow-bg: #fff3e0; --text: #0d1f2d;
-    --muted: #5a7a9a; --card: #ffffff; --header: #0d1f2d;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font-family: 'Space Grotesk', sans-serif; min-height: 100vh; }
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+import yfinance as yf
+import requests
+import os
 
-  .ticker-bar { background: var(--header); overflow: hidden; white-space: nowrap; height: 34px; display: flex; align-items: center; }
-  .ticker-track { display: flex; animation: ticker 60s linear infinite; }
-  .ticker-track:hover { animation-play-state: paused; }
-  .ticker-item { display: inline-flex; align-items: center; gap: 8px; padding: 0 18px; height: 34px; font-family: 'JetBrains Mono', monospace; font-size: 11px; border-right: 1px solid #1e3550; cursor: pointer; transition: background 0.2s; }
-  .ticker-item:hover { background: #1e3550; }
-  .ticker-sym { color: #ffffff; font-weight: 700; }
-  .ticker-price { color: #a0b8cc; font-size: 11px; }
-  .ticker-change.up { color: #00cc66; font-weight: 600; }
-  .ticker-change.down { color: #ff6666; font-weight: 600; }
-  @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+app = Flask(__name__)
+CORS(app)
 
-  .header { padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; background: var(--surface); border-bottom: 2px solid var(--border); }
-  .logo { display: flex; align-items: center; gap: 10px; }
-  .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, #0066cc, #0044aa); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
-  .logo-text { font-size: 22px; font-weight: 700; color: var(--text); }
-  .logo-text span { color: var(--accent); }
-  .status-dot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green); font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-  .dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
+FMP_KEY = os.environ.get("FMP_KEY", "")
 
-  .market-bar { display: flex; border-bottom: 2px solid var(--border); background: var(--surface); overflow-x: auto; scrollbar-width: none; }
-  .market-bar::-webkit-scrollbar { display: none; }
-  .market-item { display: flex; flex-direction: column; padding: 10px 20px; border-right: 1px solid var(--border); cursor: pointer; transition: background 0.2s; min-width: 110px; }
-  .market-item:hover { background: var(--surface2); }
-  .market-label { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; margin-bottom: 2px; font-weight: 600; }
-  .market-value { font-size: 13px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-  .market-value.up { color: var(--green); }
-  .market-value.down { color: var(--red); }
+def resolve_ticker(query):
+    query = query.strip()
+    try:
+        search = yf.Search(query, max_results=1)
+        quotes = search.quotes
+        if quotes and len(quotes) > 0:
+            return quotes[0].get("symbol", query.upper())
+    except:
+        pass
+    return query.upper()
 
-  .search-section { padding: 20px 24px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
-  .search-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-  .search-box { display: flex; gap: 12px; max-width: 700px; position: relative; }
-  .search-input { flex: 1; background: var(--bg); border: 2px solid var(--border); border-radius: 10px; padding: 13px 18px; color: var(--text); font-family: 'Space Grotesk', sans-serif; font-size: 15px; outline: none; transition: border-color 0.2s; }
-  .search-input::placeholder { color: var(--muted); }
-  .search-input:focus { border-color: var(--accent); }
-  .search-btn { background: var(--accent); color: #ffffff; border: none; border-radius: 10px; padding: 13px 28px; font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; }
-  .search-btn:hover { background: #0055aa; }
-  .autocomplete { position: absolute; top: 100%; left: 0; right: 80px; background: var(--surface); border: 2px solid var(--border); border-radius: 8px; z-index: 100; display: none; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
-  .autocomplete-item { padding: 10px 16px; cursor: pointer; font-size: 13px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--border); }
-  .autocomplete-item:hover { background: var(--surface2); }
-  .autocomplete-item:last-child { border-bottom: none; }
-  .autocomplete-sym { font-family: 'JetBrains Mono', monospace; color: var(--accent); font-weight: 700; min-width: 60px; }
-  .autocomplete-name { color: var(--muted); font-size: 12px; }
-  .quick-picks { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-  .quick-pick { background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 5px 14px; font-size: 12px; color: var(--muted); cursor: pointer; transition: all 0.2s; font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-  .quick-pick:hover { border-color: var(--accent); color: var(--accent); background: #e6f0ff; }
+def build_signal_reasons(data):
+    reasons = []
+    score = 0
+    total = 0
 
-  .main { padding: 20px 24px 40px; display: grid; grid-template-columns: 1fr 320px; gap: 20px; }
-  @media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
-  .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; font-weight: 700; }
-  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-  .report-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-  .stock-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
-  .stock-name { font-size: 28px; font-weight: 700; color: var(--text); }
-  .stock-full { font-size: 13px; color: var(--muted); margin-top: 2px; }
-  .stock-sector { font-size: 11px; color: var(--accent); margin-top: 4px; font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-  .price-block { text-align: right; }
-  .price { font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--text); }
-  .price-change { font-size: 13px; font-family: 'JetBrains Mono', monospace; margin-top: 2px; font-weight: 600; }
-  .price-change.up { color: var(--green); }
-  .price-change.down { color: var(--red); }
+    change = data.get("change_pct", 0) or 0
+    total += 25
+    if change > 2:
+        reasons.append({"label": "Price Momentum", "value": "Strong", "detail": f"Up {change}% today. Positive buying pressure.", "positive": True})
+        score += 25
+    elif change > 0:
+        reasons.append({"label": "Price Momentum", "value": "Moderate", "detail": f"Up {change}% today. Mild positive movement.", "positive": True})
+        score += 15
+    elif change < -3:
+        reasons.append({"label": "Price Momentum", "value": "Weak", "detail": f"Down {change}% today. Selling pressure present.", "positive": False})
+    else:
+        reasons.append({"label": "Price Momentum", "value": "Neutral", "detail": f"Change of {change}% today. No strong direction.", "positive": None})
+        score += 10
 
-  /* VERDICT DISPLAY */
-  .verdict-display { border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid transparent; }
-  .verdict-display.approve { background: var(--green-bg); border-color: var(--green); }
-  .verdict-display.pass { background: var(--red-bg); border-color: var(--red); }
-  .verdict-display.watch { background: var(--yellow-bg); border-color: #e6a800; }
-  .verdict-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  .verdict-label { font-size: 24px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-  .verdict-label.approve { color: var(--green); }
-  .verdict-label.pass { color: var(--red); }
-  .verdict-label.watch { color: var(--yellow); }
-  .confidence-bar-wrap { flex: 1; margin-left: 20px; }
-  .confidence-text { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-bottom: 4px; font-weight: 600; }
-  .confidence-bar { height: 10px; background: var(--surface2); border-radius: 10px; overflow: hidden; }
-  .confidence-fill { height: 100%; border-radius: 10px; transition: width 0.8s ease; }
-  .confidence-fill.approve { background: var(--green); }
-  .confidence-fill.pass { background: var(--red); }
-  .confidence-fill.watch { background: #e6a800; }
-  .reasons-list { display: flex; flex-direction: column; gap: 10px; }
-  .reason-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 14px; background: rgba(255,255,255,0.6); border-radius: 8px; }
-  .reason-icon { font-size: 16px; margin-top: 1px; flex-shrink: 0; }
-  .reason-body { flex: 1; }
-  .reason-label { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
-  .reason-value { font-size: 14px; font-weight: 700; color: var(--text); margin: 2px 0; }
-  .reason-detail { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    rec = data.get("recommendation", "hold") or "hold"
+    total += 25
+    if rec in ["BUY", "STRONG_BUY"]:
+        reasons.append({"label": "Analyst Consensus", "value": "Bullish", "detail": f"Wall Street analysts rate this a {rec.replace('_', ' ').title()}.", "positive": True})
+        score += 25
+    elif rec in ["SELL", "STRONG_SELL"]:
+        reasons.append({"label": "Analyst Consensus", "value": "Bearish", "detail": f"Wall Street analysts rate this a {rec.replace('_', ' ').title()}.", "positive": False})
+    else:
+        reasons.append({"label": "Analyst Consensus", "value": "Neutral", "detail": "Analysts currently rate this a Hold. No strong directional call.", "positive": None})
+        score += 10
 
-  .decision { display: flex; gap: 12px; margin-bottom: 16px; }
-  .decision-btn { flex: 1; padding: 14px; border-radius: 10px; border: none; font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
-  .approve-btn { background: var(--green); color: #ffffff; }
-  .approve-btn.active { box-shadow: 0 4px 20px rgba(0,122,61,0.4); transform: translateY(-2px); }
-  .pass-btn { background: var(--red-bg); color: var(--red); border: 2px solid var(--red); }
-  .pass-btn.active { background: var(--red); color: #ffffff; box-shadow: 0 4px 20px rgba(204,0,0,0.4); transform: translateY(-2px); }
-  .watch-btn { background: var(--yellow-bg); color: var(--yellow); border: 2px solid #e6a800; }
-  .watch-btn.active { background: #e6a800; color: #ffffff; box-shadow: 0 4px 20px rgba(230,168,0,0.4); transform: translateY(-2px); }
+    target = data.get("analyst_target")
+    current = data.get("price", 0) or 0
+    total += 25
+    if target and current:
+        try:
+            upside = round(((float(target) - float(current)) / float(current)) * 100, 1)
+            if upside > 10:
+                reasons.append({"label": "Price Target Upside", "value": f"+{upside}%", "detail": f"Analyst mean target is ${target}. That is {upside}% above today's price.", "positive": True})
+                score += 25
+            elif upside > 0:
+                reasons.append({"label": "Price Target Upside", "value": f"+{upside}%", "detail": f"Analyst mean target is ${target}. Modest upside of {upside}%.", "positive": True})
+                score += 15
+            elif upside < -5:
+                reasons.append({"label": "Price Target Upside", "value": f"{upside}%", "detail": f"Analyst mean target is ${target}. Stock may be overvalued.", "positive": False})
+            else:
+                reasons.append({"label": "Price Target Upside", "value": "At Target", "detail": f"Stock is trading near analyst mean target of ${target}.", "positive": None})
+                score += 10
+        except:
+            reasons.append({"label": "Price Target Upside", "value": "N/A", "detail": "Price target data not available.", "positive": None})
+            score += 10
+    else:
+        reasons.append({"label": "Price Target Upside", "value": "N/A", "detail": "No analyst price target available for this security.", "positive": None})
+        score += 10
 
-  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .metric { background: var(--surface2); border-radius: 8px; padding: 12px; border: 1px solid var(--border); }
-  .metric-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-  .metric-value { font-size: 15px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--text); }
-  .metric-value.positive { color: var(--green); }
-  .metric-value.negative { color: var(--red); }
-  .metric-value.neutral { color: var(--accent); }
+    pe = data.get("pe_ratio")
+    total += 25
+    if pe and pe != "N/A":
+        try:
+            pe_val = float(pe)
+            if pe_val < 15:
+                reasons.append({"label": "Valuation", "value": "Attractive", "detail": f"PE ratio of {round(pe_val,1)} is below market average. Potentially undervalued.", "positive": True})
+                score += 25
+            elif pe_val < 30:
+                reasons.append({"label": "Valuation", "value": "Fair", "detail": f"PE ratio of {round(pe_val,1)} is within normal range.", "positive": True})
+                score += 15
+            elif pe_val < 50:
+                reasons.append({"label": "Valuation", "value": "Elevated", "detail": f"PE ratio of {round(pe_val,1)} is above average. Growth expectations priced in.", "positive": None})
+                score += 8
+            else:
+                reasons.append({"label": "Valuation", "value": "High", "detail": f"PE ratio of {round(pe_val,1)} is very high. Market expects significant future growth.", "positive": False})
+        except:
+            reasons.append({"label": "Valuation", "value": "N/A", "detail": "PE ratio not available.", "positive": None})
+            score += 10
+    else:
+        reasons.append({"label": "Valuation", "value": "N/A", "detail": "Valuation data not available. Common for new IPOs and crypto assets.", "positive": None})
+        score += 10
 
-  .loading { display: none; text-align: center; padding: 40px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; animation: blink 1s infinite; }
-  .loading.active { display: block; }
-  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    confidence = round((score / total) * 100) if total > 0 else 50
+    return reasons, confidence
 
-  .signal-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 10px; cursor: pointer; transition: all 0.2s; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
-  .signal-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(0,102,204,0.15); }
-  .signal-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-  .signal-sym { font-size: 15px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--text); }
-  .signal-verdict { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; font-family: 'JetBrains Mono', monospace; }
-  .verdict-approve { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
-  .verdict-pass { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
-  .verdict-watch { background: var(--yellow-bg); color: var(--yellow); border: 1px solid #e6a800; }
-  .signal-price { font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--muted); }
-  .signal-confidence { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+def get_quote(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="2d")
+        if hist.empty:
+            return None
+        current = round(hist["Close"].iloc[-1], 2)
+        prev = round(hist["Close"].iloc[-2], 2) if len(hist) > 1 else current
+        change_pct = round(((current - prev) / prev) * 100, 2)
+        return {"symbol": symbol, "price": current, "change_pct": change_pct}
+    except:
+        return None
 
-  .footer { text-align: center; padding: 16px; border-top: 1px solid var(--border); font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; background: var(--surface); }
-</style>
-</head>
-<body>
+@app.route("/")
+def home():
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'index.html')
 
-<div class="ticker-bar">
-  <div class="ticker-track" id="tickerTrack">
-    <span class="ticker-item"><span class="ticker-sym">Loading market data...</span></span>
-  </div>
-</div>
+@app.route("/search")
+def search_ticker():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"error": "No query provided"}), 400
+    try:
+        search = yf.Search(query, max_results=5)
+        quotes = search.quotes
+        results = [
+            {"symbol": q.get("symbol"), "name": q.get("longname") or q.get("shortname"), "exchange": q.get("exchange")}
+            for q in quotes if q.get("symbol")
+        ]
+        return jsonify({"results": results})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-<div class="header">
-  <div class="logo">
-    <div class="logo-icon">⚡</div>
-    <div class="logo-text">Apex <span>Q</span></div>
-  </div>
-  <div class="status-dot"><div class="dot"></div>LIVE INTEL ACTIVE</div>
-</div>
+@app.route("/market")
+def market():
+    data = {}
 
-<div class="market-bar">
-  <div class="market-item" onclick="tickerClick('SPY')"><div class="market-label">S&P 500</div><div class="market-value up" id="m-SPY">Loading...</div></div>
-  <div class="market-item" onclick="tickerClick('QQQ')"><div class="market-label">NASDAQ</div><div class="market-value up" id="m-QQQ">Loading...</div></div>
-  <div class="market-item" onclick="tickerClick('DIA')"><div class="market-label">DOW</div><div class="market-value up" id="m-DIA">Loading...</div></div>
-  <div class="market-item" onclick="tickerClick('IWM')"><div class="market-label">RUSSELL</div><div class="market-value up" id="m-IWM">Loading...</div></div>
-  <div class="market-item" onclick="tickerClick('GLD')"><div class="market-label">GOLD</div><div class="market-value up" id="m-GLD">Loading...</div></div>
-  <div class="market-item" onclick="tickerClick('USO')"><div class="market-label">OIL</div><div class="market-value" id="m-USO">Loading...</div></div>
-  <div class="market-item" onclick="tickerClick('BTC-USD')"><div class="market-label">BITCOIN</div><div class="market-value up" id="m-BTC">Loading...</div></div>
-</div>
-
-<div class="search-section">
-  <div class="search-label">Search any stock or company name</div>
-  <div class="search-box">
-    <input class="search-input" type="text" id="searchInput" placeholder="Type a company name or ticker... e.g. Apple, Tesla, SpaceX, SOFI" autocomplete="off" />
-    <div class="autocomplete" id="autocomplete"></div>
-    <button class="search-btn" onclick="analyzeStock()">ANALYZE</button>
-  </div>
-  <div class="quick-picks">
-    <div class="quick-pick" onclick="tickerClick('SOFI')">SOFI</div>
-    <div class="quick-pick" onclick="tickerClick('SPCX')">SpaceX</div>
-    <div class="quick-pick" onclick="tickerClick('NVDA')">NVDA</div>
-    <div class="quick-pick" onclick="tickerClick('AAPL')">Apple</div>
-    <div class="quick-pick" onclick="tickerClick('AMD')">AMD</div>
-    <div class="quick-pick" onclick="tickerClick('TSLA')">Tesla</div>
-    <div class="quick-pick" onclick="tickerClick('MSFT')">Microsoft</div>
-    <div class="quick-pick" onclick="tickerClick('AMZN')">Amazon</div>
-  </div>
-</div>
-
-<div class="main">
-  <div class="left-col">
-    <div class="section-title">Full Intelligence Report</div>
-    <div id="loading" class="loading">Pulling live intelligence... stand by</div>
-    <div class="report-card" id="report">
-      <div class="stock-header">
-        <div>
-          <div class="stock-name" id="stockSymbol">SOFI</div>
-          <div class="stock-full" id="stockName">SoFi Technologies Inc.</div>
-          <div class="stock-sector" id="stockSector">Financial Services</div>
-        </div>
-        <div class="price-block">
-          <div class="price" id="stockPrice">$17.13</div>
-          <div class="price-change up" id="stockChange">+3.32% today</div>
-        </div>
-      </div>
-
-      <!-- VERDICT DISPLAY -->
-      <div class="verdict-display watch" id="verdictDisplay">
-        <div class="verdict-header">
-          <div class="verdict-label watch" id="verdictLabel">⚠ WATCH</div>
-          <div class="confidence-bar-wrap">
-            <div class="confidence-text" id="confidenceText">Confidence: 50%</div>
-            <div class="confidence-bar"><div class="confidence-fill watch" id="confidenceFill" style="width:50%"></div></div>
-          </div>
-        </div>
-        <div class="reasons-list" id="reasonsList">
-          <div class="reason-item">
-            <div class="reason-icon">⏳</div>
-            <div class="reason-body">
-              <div class="reason-label">Status</div>
-              <div class="reason-value">Search a stock to see the full analysis</div>
-              <div class="reason-detail">Type any company name or ticker above and click Analyze to get a full breakdown of why the system approves or passes on this stock.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="decision">
-        <button class="decision-btn approve-btn" id="approveBtn">✓ APPROVE</button>
-        <button class="decision-btn watch-btn" id="watchBtn">⚠ WATCH</button>
-        <button class="decision-btn pass-btn" id="passBtn">✗ PASS</button>
-      </div>
-
-      <div class="metrics">
-        <div class="metric"><div class="metric-label">Price</div><div class="metric-value neutral" id="metricPrice">$17.13</div></div>
-        <div class="metric"><div class="metric-label">Change</div><div class="metric-value positive" id="metricChange">+3.32%</div></div>
-        <div class="metric"><div class="metric-label">Confidence</div><div class="metric-value neutral" id="metricConfidence">50%</div></div>
-        <div class="metric"><div class="metric-label">PE Ratio</div><div class="metric-value" id="metricPE">38.07</div></div>
-        <div class="metric"><div class="metric-label">Analyst Target</div><div class="metric-value positive" id="metricTarget">$21.00</div></div>
-        <div class="metric"><div class="metric-label">Recommendation</div><div class="metric-value neutral" id="metricRec">HOLD</div></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="right-col">
-    <div class="section-title">Live Signals</div>
-    <div id="signalsPanel">
-      <div class="signal-card" onclick="tickerClick('SOFI')"><div class="signal-top"><div class="signal-sym">SOFI</div><div class="signal-verdict verdict-watch">WATCH</div></div><div class="signal-price">Click to analyze</div></div>
-      <div class="signal-card" onclick="tickerClick('NVDA')"><div class="signal-top"><div class="signal-sym">NVDA</div><div class="signal-verdict verdict-watch">WATCH</div></div><div class="signal-price">Click to analyze</div></div>
-      <div class="signal-card" onclick="tickerClick('SPCX')"><div class="signal-top"><div class="signal-sym">SPCX</div><div class="signal-verdict verdict-watch">WATCH</div></div><div class="signal-price">Click to analyze</div></div>
-      <div class="signal-card" onclick="tickerClick('AMD')"><div class="signal-top"><div class="signal-sym">AMD</div><div class="signal-verdict verdict-watch">WATCH</div></div><div class="signal-price">Click to analyze</div></div>
-      <div class="signal-card" onclick="tickerClick('TSLA')"><div class="signal-top"><div class="signal-sym">TSLA</div><div class="signal-verdict verdict-watch">WATCH</div></div><div class="signal-price">Click to analyze</div></div>
-    </div>
-  </div>
-</div>
-
-<div class="footer">
-  APEX Q INTELLIGENCE TERMINAL &nbsp;|&nbsp; POWERED BY YFINANCE + FINNHUB + SEC EDGAR &nbsp;|&nbsp; FOR EDUCATIONAL PURPOSES ONLY. NOT FINANCIAL ADVICE.
-</div>
-
-<script>
-const API = 'https://web-production-23b61.up.railway.app';
-const TICKERS = ['SPY','QQQ','DIA','IWM','AAPL','MSFT','NVDA','AMD','TSLA','AMZN','GOOGL','META','SOFI','SPCX','SCHD','JPM','BAC','GLD','BTC-USD','NFLX'];
-
-async function loadTicker(sym) {
-  try {
-    const res = await fetch(`${API}/analyze?symbol=${sym}`);
-    const d = await res.json();
-    if (d.price) {
-      const changeClass = d.change_pct >= 0 ? 'up' : 'down';
-      const changeStr = (d.change_pct >= 0 ? '+' : '') + d.change_pct + '%';
-      return `<span class="ticker-item" onclick="tickerClick('${sym}')">
-        <span class="ticker-sym">${d.symbol}</span>
-        <span class="ticker-price">$${d.price}</span>
-        <span class="ticker-change ${changeClass}">${changeStr}</span>
-      </span>`;
+    # Major Indexes
+    indexes = {
+        "sp500": "^GSPC", "dow": "^DJI", "nasdaq": "^IXIC",
+        "russell": "^RUT", "vix": "^VIX"
     }
-  } catch(e) {}
-  return '';
-}
+    for key, sym in indexes.items():
+        q = get_quote(sym)
+        if q:
+            data[key] = q
 
-async function buildTicker() {
-  const track = document.getElementById('tickerTrack');
-  let html = '';
-  for (const sym of TICKERS) { html += await loadTicker(sym); }
-  track.innerHTML = html + html;
-}
+    # Commodities
+    commodities = {"gold": "GC=F", "oil": "CL=F", "silver": "SI=F", "natgas": "NG=F"}
+    for key, sym in commodities.items():
+        q = get_quote(sym)
+        if q:
+            data[key] = q
 
-async function loadMarketBar() {
-  const markets = [
-    {sym:'SPY',id:'m-SPY'},{sym:'QQQ',id:'m-QQQ'},{sym:'DIA',id:'m-DIA'},
-    {sym:'IWM',id:'m-IWM'},{sym:'GLD',id:'m-GLD'},{sym:'USO',id:'m-USO'},{sym:'BTC-USD',id:'m-BTC'}
-  ];
-  for (const m of markets) {
-    try {
-      const res = await fetch(`${API}/analyze?symbol=${m.sym}`);
-      const d = await res.json();
-      if (d.price) {
-        const el = document.getElementById(m.id);
-        if (el) {
-          el.textContent = '$' + d.price + ' (' + (d.change_pct >= 0 ? '+' : '') + d.change_pct + '%)';
-          el.className = 'market-value ' + (d.change_pct >= 0 ? 'up' : 'down');
+    # Crypto
+    crypto = {"bitcoin": "BTC-USD", "ethereum": "ETH-USD", "solana": "SOL-USD"}
+    for key, sym in crypto.items():
+        q = get_quote(sym)
+        if q:
+            data[key] = q
+
+    # Options Fear and Greed proxy
+    data["options_note"] = "Options flow data coming soon"
+
+    # Prediction markets note
+    data["prediction_note"] = "Prediction market integration coming soon"
+
+    # Bonds
+    bonds = {"us10y": "^TNX", "us2y": "^IRX"}
+    for key, sym in bonds.items():
+        q = get_quote(sym)
+        if q:
+            data[key] = q
+
+    # Major ETFs
+    etfs = {"spy": "SPY", "qqq": "QQQ", "dia": "DIA", "iwm": "IWM", "schd": "SCHD"}
+    for key, sym in etfs.items():
+        q = get_quote(sym)
+        if q:
+            data[key] = q
+
+    return jsonify(data)
+
+@app.route("/analyze")
+def analyze():
+    query = request.args.get("symbol", "").strip()
+    if not query:
+        return jsonify({"error": "No symbol provided"}), 400
+
+    symbol = resolve_ticker(query)
+
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="5d")
+        info = ticker.info
+
+        if hist.empty:
+            return jsonify({"error": f"No data found for {symbol}."}), 404
+
+        current = round(hist["Close"].iloc[-1], 2)
+        prev = round(hist["Close"].iloc[-2], 2) if len(hist) > 1 else current
+        change_pct = round(((current - prev) / prev) * 100, 2)
+        rec = info.get("recommendationKey", "hold").upper()
+        target = info.get("targetMeanPrice")
+
+        data = {
+            "symbol": symbol,
+            "query": query,
+            "price": current,
+            "change_pct": change_pct,
+            "recommendation": rec,
+            "name": info.get("longName", symbol),
+            "sector": info.get("sector", "N/A"),
+            "pe_ratio": info.get("trailingPE", "N/A"),
+            "market_cap": info.get("marketCap", "N/A"),
+            "analyst_target": target,
+            "volume": int(hist["Volume"].iloc[-1]) if not hist.empty else 0,
+            "week_52_high": info.get("fiftyTwoWeekHigh", "N/A"),
+            "week_52_low": info.get("fiftyTwoWeekLow", "N/A"),
+            "dividend_yield": info.get("dividendYield", "N/A"),
+            "beta": info.get("beta", "N/A")
         }
-      }
-    } catch(e) {}
-  }
-}
 
-function tickerClick(sym) {
-  document.getElementById('searchInput').value = sym;
-  analyzeStock();
-}
+        reasons, confidence = build_signal_reasons(data)
 
-let searchTimeout;
-document.getElementById('searchInput').addEventListener('input', function() {
-  clearTimeout(searchTimeout);
-  const val = this.value.trim();
-  if (val.length < 2) { document.getElementById('autocomplete').style.display = 'none'; return; }
-  searchTimeout = setTimeout(() => fetchSuggestions(val), 300);
-});
+        if confidence >= 65:
+            verdict = "APPROVE"
+        elif confidence <= 35:
+            verdict = "PASS"
+        else:
+            verdict = "WATCH"
 
-async function fetchSuggestions(query) {
-  try {
-    const res = await fetch(`${API}/search?q=${encodeURIComponent(query)}`);
-    const data = await res.json();
-    const ac = document.getElementById('autocomplete');
-    if (data.results && data.results.length > 0) {
-      ac.innerHTML = data.results.map(r =>
-        `<div class="autocomplete-item" onclick="tickerClick('${r.symbol}')">
-          <span class="autocomplete-sym">${r.symbol}</span>
-          <span class="autocomplete-name">${r.name || ''}</span>
-        </div>`).join('');
-      ac.style.display = 'block';
-    } else { ac.style.display = 'none'; }
-  } catch(e) {}
-}
+        data["verdict"] = verdict
+        data["confidence"] = confidence
+        data["reasons"] = reasons
 
-document.addEventListener('click', function(e) {
-  if (!e.target.closest('.search-box')) document.getElementById('autocomplete').style.display = 'none';
-});
+        return jsonify(data)
 
-function updateVerdictDisplay(verdict, confidence, reasons) {
-  const display = document.getElementById('verdictDisplay');
-  const label = document.getElementById('verdictLabel');
-  const confText = document.getElementById('confidenceText');
-  const confFill = document.getElementById('confidenceFill');
-  const reasonsList = document.getElementById('reasonsList');
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-  display.className = 'verdict-display ' + verdict.toLowerCase();
-  label.className = 'verdict-label ' + verdict.toLowerCase();
-
-  const icons = { APPROVE: '✅', PASS: '❌', WATCH: '⚠' };
-  label.textContent = icons[verdict] + ' ' + verdict;
-
-  confText.textContent = 'Signal Confidence: ' + confidence + '%';
-  confFill.style.width = confidence + '%';
-  confFill.className = 'confidence-fill ' + verdict.toLowerCase();
-
-  document.getElementById('approveBtn').className = 'decision-btn approve-btn' + (verdict === 'APPROVE' ? ' active' : '');
-  document.getElementById('watchBtn').className = 'decision-btn watch-btn' + (verdict === 'WATCH' ? ' active' : '');
-  document.getElementById('passBtn').className = 'decision-btn pass-btn' + (verdict === 'PASS' ? ' active' : '');
-
-  if (reasons && reasons.length > 0) {
-    reasonsList.innerHTML = reasons.map(r => {
-      const icon = r.positive === true ? '✅' : r.positive === false ? '❌' : '➡';
-      return `<div class="reason-item">
-        <div class="reason-icon">${icon}</div>
-        <div class="reason-body">
-          <div class="reason-label">${r.label}</div>
-          <div class="reason-value">${r.value}</div>
-          <div class="reason-detail">${r.detail}</div>
-        </div>
-      </div>`;
-    }).join('');
-  }
-}
-
-async function analyzeStock() {
-  const val = document.getElementById('searchInput').value.trim();
-  if (!val) return;
-  document.getElementById('autocomplete').style.display = 'none';
-  document.getElementById('loading').classList.add('active');
-  document.getElementById('report').style.opacity = '0.4';
-
-  try {
-    const res = await fetch(`${API}/analyze?symbol=${encodeURIComponent(val)}`);
-    const data = await res.json();
-
-    if (data.error) {
-      document.getElementById('stockSymbol').textContent = 'NOT FOUND';
-      document.getElementById('stockName').textContent = data.error;
-      document.getElementById('loading').classList.remove('active');
-      document.getElementById('report').style.opacity = '1';
-      return;
-    }
-
-    document.getElementById('stockSymbol').textContent = data.symbol || val;
-    document.getElementById('stockName').textContent = data.name || val;
-    document.getElementById('stockSector').textContent = data.sector || '';
-    document.getElementById('stockPrice').textContent = '$' + (data.price || 0);
-    document.getElementById('metricPrice').textContent = '$' + (data.price || 0);
-    document.getElementById('metricChange').textContent = (data.change_pct >= 0 ? '+' : '') + (data.change_pct || 0) + '%';
-    document.getElementById('metricConfidence').textContent = (data.confidence || 50) + '%';
-    document.getElementById('metricPE').textContent = data.pe_ratio || 'N/A';
-    document.getElementById('metricTarget').textContent = data.analyst_target ? '$' + data.analyst_target : 'N/A';
-    document.getElementById('metricRec').textContent = data.recommendation || 'N/A';
-
-    const change = data.change_pct || 0;
-    const changeEl = document.getElementById('stockChange');
-    changeEl.textContent = (change >= 0 ? '+' : '') + change + '% today';
-    changeEl.className = 'price-change ' + (change >= 0 ? 'up' : 'down');
-
-    updateVerdictDisplay(data.verdict || 'WATCH', data.confidence || 50, data.reasons || []);
-
-    const verdictClass = data.verdict === 'APPROVE' ? 'verdict-approve' : data.verdict === 'PASS' ? 'verdict-pass' : 'verdict-watch';
-    const panel = document.getElementById('signalsPanel');
-    const existing = panel.querySelector(`[data-sym="${data.symbol}"]`);
-    const card = `<div class="signal-card" data-sym="${data.symbol}" onclick="tickerClick('${data.symbol}')">
-      <div class="signal-top"><div class="signal-sym">${data.symbol}</div><div class="signal-verdict ${verdictClass}">${data.verdict}</div></div>
-      <div class="signal-price">$${data.price} &nbsp; ${data.name}</div>
-      <div class="signal-confidence">Confidence: ${data.confidence}%</div>
-    </div>`;
-    if (existing) { existing.outerHTML = card; } else { panel.insertAdjacentHTML('afterbegin', card); }
-
-  } catch(e) {
-    document.getElementById('stockSymbol').textContent = 'ERROR';
-    document.getElementById('stockName').textContent = 'Could not connect. Try again.';
-  }
-
-  document.getElementById('loading').classList.remove('active');
-  document.getElementById('report').style.opacity = '1';
-}
-
-document.getElementById('searchInput').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter') analyzeStock();
-});
-
-buildTicker();
-loadMarketBar();
-</script>
-</body>
-</html>
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
