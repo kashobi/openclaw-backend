@@ -4,11 +4,9 @@ import yfinance as yf
 import requests
 import os
 import time
-import json
 import logging
 from datetime import datetime, timedelta
 
-# Setup logging for audit trail
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -18,352 +16,335 @@ CORS(app)
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 QUIVER_KEY = os.environ.get("QUIVER_KEY", "")
 
-# In-memory cache with 4 hour TTL
 CACHE = {}
 CACHE_TTL = 60 * 60 * 4
 
 def get_cache(key):
     if key in CACHE:
-        data, timestamp = CACHE[key]
-        if time.time() - timestamp < CACHE_TTL:
-            logger.info(f"CACHE HIT: {key}")
+        data, ts = CACHE[key]
+        if time.time() - ts < CACHE_TTL:
             return data
     return None
 
 def set_cache(key, data):
     CACHE[key] = (data, time.time())
-    logger.info(f"CACHE SET: {key}")
 
-# ─────────────────────────────────────────
-# AGENT 1: Market Data Agent
-# ─────────────────────────────────────────
+def resolve_ticker(query):
+    query = query.strip()
+    try:
+        s = yf.Search(query, max_results=1)
+        quotes = s.quotes
+        if quotes:
+            return quotes[0].get("symbol", query.upper())
+    except:
+        pass
+    return query.upper()
+
+def fmt_price(val):
+    try:
+        return round(float(val), 2)
+    except:
+        return val
+
+# ── AGENT 1: Market Data ──────────────────────────────────
 class MarketDataAgent:
     def get(self, symbol):
-        cached = get_cache(f"market_{symbol}")
+        cached = get_cache(f"mkt_{symbol}")
         if cached:
             return cached
         try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="5d")
-            info = ticker.info
+            t = yf.Ticker(symbol)
+            hist = t.history(period="5d", timeout=10)
+            info = t.info
             if hist.empty:
                 return None
-            current = round(float(hist["Close"].iloc[-1]), 2)
-            prev = round(float(hist["Close"].iloc[-2]), 2) if len(hist) > 1 else current
-            change_pct = round(((current - prev) / prev) * 100, 2)
-            result = {
-                "price": current,
-                "change_pct": change_pct,
+            cur = fmt_price(hist["Close"].iloc[-1])
+            prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
+            chg = round(((cur - prev) / prev) * 100, 2)
+            pe_raw = info.get("trailingPE")
+            pe = round(float(pe_raw), 2) if pe_raw else "N/A"
+            tgt_raw = info.get("targetMeanPrice")
+            tgt = round(float(tgt_raw), 2) if tgt_raw else "N/A"
+            res = {
+                "price": cur,
+                "change_pct": chg,
                 "recommendation": info.get("recommendationKey", "hold").upper(),
                 "name": info.get("longName", symbol),
-                "sector": info.get("sector", "N/A"),
-                "pe_ratio": round(float(info.get("trailingPE", 0)), 2) if info.get("trailingPE") else "N/A",
+                "sector": info.get("sector", ""),
+                "pe_ratio": pe,
                 "market_cap": info.get("marketCap", "N/A"),
-                "analyst_target": info.get("targetMeanPrice", "N/A"),
+                "analyst_target": tgt,
                 "volume": int(hist["Volume"].iloc[-1]),
-                "52w_high": info.get("fiftyTwoWeekHigh", "N/A"),
-                "52w_low": info.get("fiftyTwoWeekLow", "N/A"),
+                "52w_high": fmt_price(info.get("fiftyTwoWeekHigh")),
+                "52w_low": fmt_price(info.get("fiftyTwoWeekLow")),
+                "beta": fmt_price(info.get("beta")),
                 "dividend_yield": info.get("dividendYield", "N/A"),
-                "beta": info.get("beta", "N/A"),
             }
-            set_cache(f"market_{symbol}", result)
-            logger.info(f"MARKET AGENT: {symbol} price=${current} change={change_pct}%")
-            return result
+            set_cache(f"mkt_{symbol}", res)
+            return res
         except Exception as e:
-            logger.error(f"MARKET AGENT ERROR: {symbol} - {e}")
+            logger.error(f"MarketAgent {symbol}: {e}")
             return None
 
-# ─────────────────────────────────────────
-# AGENT 2: News Agent (Finnhub)
-# ─────────────────────────────────────────
+# ── AGENT 2: News Agent ───────────────────────────────────
 class NewsAgent:
     def get(self, symbol):
         cached = get_cache(f"news_{symbol}")
         if cached is not None:
             return cached
         if not FINNHUB_KEY:
-            logger.warning("NEWS AGENT: No FINNHUB_KEY found in environment")
+            logger.warning("NewsAgent: FINNHUB_KEY missing")
             return []
+        results = []
+        # Try company-specific news first
         try:
             today = datetime.now().strftime('%Y-%m-%d')
-            week_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-            url = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={week_ago}&to={today}&token={FINNHUB_KEY}"
-            resp = requests.get(url, timeout=8)
-            logger.info(f"NEWS AGENT: Finnhub status={resp.status_code} for {symbol}")
-            if resp.status_code == 200:
-                data = resp.json()
-                news = []
-                for n in data[:8]:
+            from_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+            url = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={from_date}&to={today}&token={FINNHUB_KEY}"
+            r = requests.get(url, timeout=10)
+            logger.info(f"NewsAgent company-news status={r.status_code} for {symbol}")
+            if r.status_code == 200:
+                for n in r.json()[:8]:
                     if n.get("headline"):
-                        news.append({
-                            "headline": n.get("headline"),
+                        results.append({
+                            "headline": n["headline"],
                             "source": n.get("source", "Market News"),
-                            "summary": n.get("summary", ""),
+                            "summary": n.get("summary", "")[:200],
                             "url": n.get("url", ""),
-                            "datetime": n.get("datetime", 0)
                         })
-                set_cache(f"news_{symbol}", news)
-                logger.info(f"NEWS AGENT: {len(news)} articles found for {symbol}")
-                return news
-            else:
-                logger.warning(f"NEWS AGENT: Bad response {resp.status_code} - {resp.text[:200]}")
-                return []
         except Exception as e:
-            logger.error(f"NEWS AGENT ERROR: {symbol} - {e}")
-            return []
+            logger.error(f"NewsAgent company news error: {e}")
 
-# ─────────────────────────────────────────
-# AGENT 3: Regulatory Agent (Quiver - Congressional)
-# ─────────────────────────────────────────
+        # If no results, pull general market news
+        if not results:
+            try:
+                url2 = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
+                r2 = requests.get(url2, timeout=10)
+                logger.info(f"NewsAgent general news status={r2.status_code}")
+                if r2.status_code == 200:
+                    for n in r2.json()[:5]:
+                        if n.get("headline"):
+                            results.append({
+                                "headline": n["headline"],
+                                "source": n.get("source", "Market News") + " (General Market)",
+                                "summary": n.get("summary", "")[:200],
+                                "url": n.get("url", ""),
+                            })
+            except Exception as e:
+                logger.error(f"NewsAgent general news error: {e}")
+
+        set_cache(f"news_{symbol}", results)
+        logger.info(f"NewsAgent: {len(results)} articles for {symbol}")
+        return results
+
+# ── AGENT 3: Regulatory Agent ─────────────────────────────
 class RegulatoryAgent:
     def get_congressional(self, symbol):
-        cached = get_cache(f"congress_{symbol}")
+        cached = get_cache(f"cong_{symbol}")
         if cached is not None:
             return cached
         if not QUIVER_KEY:
-            logger.warning("REGULATORY AGENT: No QUIVER_KEY found")
             return []
         try:
             url = f"https://api.quiverquant.com/beta/historical/congresstrading/{symbol}"
-            headers = {"Authorization": f"Token {QUIVER_KEY}", "Accept": "application/json"}
-            resp = requests.get(url, headers=headers, timeout=8)
-            logger.info(f"REGULATORY AGENT: Quiver congress status={resp.status_code} for {symbol}")
-            if resp.status_code == 200:
-                trades = resp.json()
-                result = []
-                for t in trades[:10]:
-                    result.append({
+            h = {"Authorization": f"Token {QUIVER_KEY}", "Accept": "application/json"}
+            r = requests.get(url, headers=h, timeout=10)
+            logger.info(f"RegulatoryAgent congress status={r.status_code} for {symbol}")
+            if r.status_code == 200:
+                res = []
+                for t in r.json()[:10]:
+                    res.append({
                         "politician": t.get("Representative", "Unknown"),
                         "party": t.get("Party", ""),
                         "action": t.get("Transaction", "Unknown"),
-                        "amount": t.get("Range", "Unknown"),
+                        "amount": t.get("Range", ""),
                         "date": t.get("TransactionDate", ""),
-                        "ticker": t.get("Ticker", symbol)
                     })
-                set_cache(f"congress_{symbol}", result)
-                logger.info(f"REGULATORY AGENT: {len(result)} congressional trades for {symbol}")
-                return result
-            else:
-                logger.warning(f"REGULATORY AGENT: {resp.status_code} - {resp.text[:200]}")
-                return []
+                set_cache(f"cong_{symbol}", res)
+                return res
         except Exception as e:
-            logger.error(f"REGULATORY AGENT ERROR: {e}")
-            return []
+            logger.error(f"RegulatoryAgent: {e}")
+        return []
 
-# ─────────────────────────────────────────
-# AGENT 4: Insider Agent (Quiver - Insiders)
-# ─────────────────────────────────────────
+# ── AGENT 4: Insider Agent ────────────────────────────────
 class InsiderAgent:
-    C_LEVEL = ["CEO", "CFO", "COO", "PRESIDENT", "CHAIRMAN", "CTO", "CIO", "DIRECTOR", "FOUNDER"]
+    CLEVEL = ["CEO","CFO","COO","PRESIDENT","CHAIRMAN","CTO","CIO","DIRECTOR","FOUNDER","OWNER"]
 
     def get(self, symbol):
-        cached = get_cache(f"insider_{symbol}")
+        cached = get_cache(f"ins_{symbol}")
         if cached is not None:
             return cached
         if not QUIVER_KEY:
-            logger.warning("INSIDER AGENT: No QUIVER_KEY found")
             return []
         try:
             url = f"https://api.quiverquant.com/beta/historical/insiders/{symbol}"
-            headers = {"Authorization": f"Token {QUIVER_KEY}", "Accept": "application/json"}
-            resp = requests.get(url, headers=headers, timeout=8)
-            logger.info(f"INSIDER AGENT: Quiver insiders status={resp.status_code} for {symbol}")
-            if resp.status_code == 200:
-                trades = resp.json()
-                result = []
-                for t in trades[:15]:
-                    title = str(t.get("Title", "")).upper()
-                    is_clevel = any(c in title for c in self.C_LEVEL)
-                    result.append({
-                        "name": t.get("Name", "Unknown"),
-                        "title": t.get("Title", "Unknown"),
-                        "action": t.get("AcquiredDisposed", "Unknown"),
-                        "shares": t.get("Shares", 0),
-                        "price": t.get("Price", 0),
-                        "date": t.get("Date", ""),
-                        "is_clevel": is_clevel
+            h = {"Authorization": f"Token {QUIVER_KEY}", "Accept": "application/json"}
+            r = requests.get(url, headers=h, timeout=10)
+            logger.info(f"InsiderAgent status={r.status_code} for {symbol}")
+            if r.status_code == 200:
+                res = []
+                for t in r.json()[:15]:
+                    title = str(t.get("Title","")).upper()
+                    res.append({
+                        "name": t.get("Name","Unknown"),
+                        "title": t.get("Title",""),
+                        "action": t.get("AcquiredDisposed",""),
+                        "shares": t.get("Shares",0),
+                        "price": fmt_price(t.get("Price",0)),
+                        "date": t.get("Date",""),
+                        "is_clevel": any(c in title for c in self.CLEVEL),
                     })
-                set_cache(f"insider_{symbol}", result)
-                logger.info(f"INSIDER AGENT: {len(result)} insider trades for {symbol}")
-                return result
-            else:
-                logger.warning(f"INSIDER AGENT: {resp.status_code} - {resp.text[:200]}")
-                return []
+                set_cache(f"ins_{symbol}", res)
+                return res
         except Exception as e:
-            logger.error(f"INSIDER AGENT ERROR: {e}")
-            return []
+            logger.error(f"InsiderAgent: {e}")
+        return []
 
-# ─────────────────────────────────────────
-# ORCHESTRATOR: Synthesis Engine
-# ─────────────────────────────────────────
+# ── ORCHESTRATOR ──────────────────────────────────────────
 class Orchestrator:
     def synthesize(self, symbol, market, congressional, insider, news):
         score = 0
         reasons = []
         signals = []
-
-        # Market signals
-        change_pct = market.get("change_pct", 0)
+        chg = market.get("change_pct", 0)
         rec = market.get("recommendation", "HOLD")
-        target = market.get("analyst_target")
+        tgt = market.get("analyst_target")
         price = market.get("price", 0)
         pe = market.get("pe_ratio", "N/A")
 
-        if change_pct > 3:
-            score += 3
-            signals.append("STRONG_MOMENTUM")
-            reasons.append({"icon": "&#128200;", "label": f"Strong Price Momentum: +{change_pct}%", "detail": f"{symbol} is up {change_pct}% today. Strong buying pressure with institutional demand driving the move."})
-        elif change_pct > 1:
-            score += 2
-            signals.append("POSITIVE_MOMENTUM")
-            reasons.append({"icon": "&#128202;", "label": f"Positive Price Action: +{change_pct}%", "detail": f"Stock trending upward {change_pct}% today. Buyers are in control with steady accumulation."})
-        elif change_pct > 0:
+        # Price momentum
+        if chg > 3:
+            score += 3; signals.append("STRONG_MOMENTUM")
+            reasons.append({"icon":"&#128200;","label":f"Strong Price Momentum: +{chg}%","detail":f"Up {chg}% today. Strong buying pressure. When a stock moves this much in one day buyers are firmly in control. This is a bullish signal for short term momentum traders."})
+        elif chg > 1:
+            score += 2; signals.append("POSITIVE_MOMENTUM")
+            reasons.append({"icon":"&#128202;","label":f"Positive Price Action: +{chg}%","detail":f"Stock is up {chg}% today. Buyers are outnumbering sellers. Positive momentum means demand is exceeding supply at current prices."})
+        elif chg > 0:
             score += 1
-            reasons.append({"icon": "&#10145;", "label": f"Slight Upward Drift: +{change_pct}%", "detail": "Modest positive movement. No strong conviction yet but direction is favorable."})
-        elif change_pct < -4:
-            score -= 3
-            signals.append("HEAVY_SELLING")
-            reasons.append({"icon": "&#128201;", "label": f"Heavy Selling Pressure: {change_pct}%", "detail": f"Down {abs(change_pct)}% today. Sellers are dominating. This level of decline signals elevated risk."})
-        elif change_pct < -2:
-            score -= 2
-            signals.append("SELLING_PRESSURE")
-            reasons.append({"icon": "&#128201;", "label": f"Significant Decline: {change_pct}%", "detail": f"Down {abs(change_pct)}% today. Bearish price action. Wait for stabilization before considering entry."})
+            reasons.append({"icon":"&#10145;","label":f"Slight Upward Drift: +{chg}%","detail":f"Up {chg}% today but no strong conviction. The market is slightly favoring buyers but not aggressively. Watch for a stronger move to confirm direction."})
+        elif chg < -5:
+            score -= 3; signals.append("HEAVY_SELLING")
+            reasons.append({"icon":"&#128201;","label":f"Heavy Selling Pressure: {chg}%","detail":f"Down {abs(chg)}% today. This is significant single day selling. When a stock drops this sharply it means sellers are panicking or reacting to bad news. High risk entry point."})
+        elif chg < -2:
+            score -= 2; signals.append("SELLING_PRESSURE")
+            reasons.append({"icon":"&#128201;","label":f"Significant Decline: {chg}%","detail":f"Down {abs(chg)}% today. Sellers are in control. This could be a buying opportunity on dip OR the start of a larger move down. Wait for the selling to stabilize before acting."})
         else:
             score -= 1
-            reasons.append({"icon": "&#10145;", "label": f"Slight Decline: {change_pct}%", "detail": "Minor pullback. Could be normal profit taking or the beginning of a trend change."})
+            reasons.append({"icon":"&#10145;","label":f"Minor Pullback: {chg}%","detail":f"Down {abs(chg)}% today. Minor selling pressure. Could be normal profit taking after a run or the early sign of a trend change. Monitor closely."})
 
         # Analyst consensus
-        if rec in ["BUY", "STRONG_BUY"]:
-            score += 2
-            signals.append("ANALYST_BUY")
-            reasons.append({"icon": "&#9989;", "label": f"Wall Street Rating: {rec.replace('_', ' ')}", "detail": "Professional analysts rate this stock a Buy. Institutional money managers see significant upside potential ahead."})
-        elif rec in ["SELL", "STRONG_SELL"]:
-            score -= 2
-            signals.append("ANALYST_SELL")
-            reasons.append({"icon": "&#9940;", "label": f"Wall Street Rating: {rec.replace('_', ' ')}", "detail": "Analysts are negative on this stock. Professional consensus sees downside risk. Proceed with extreme caution."})
-        elif rec == "HOLD":
-            reasons.append({"icon": "&#9888;", "label": "Wall Street Rating: Hold", "detail": "Analysts are neutral. No strong conviction either direction. Watch for a catalyst to break the stalemate."})
+        if rec in ["BUY","STRONG_BUY"]:
+            score += 2; signals.append("ANALYST_BUY")
+            reasons.append({"icon":"&#9989;","label":f"Wall Street Rating: {rec.replace('_',' ')}","detail":"Professional analysts who research this company full time rate it a Buy. These are the same analysts used by hedge funds and institutional investors. Their consensus matters."})
+        elif rec in ["SELL","STRONG_SELL"]:
+            score -= 2; signals.append("ANALYST_SELL")
+            reasons.append({"icon":"&#9940;","label":f"Wall Street Rating: {rec.replace('_',' ')}","detail":"Professional analysts are negative on this stock right now. When the people who research a company full time say sell that is a serious signal worth respecting."})
+        else:
+            reasons.append({"icon":"&#9888;","label":"Wall Street Rating: Hold","detail":"Analysts are neutral. They do not see a compelling reason to buy or sell right now. This often means the stock is fairly valued or they are waiting for a catalyst."})
 
-        # Price target analysis
-        if target and price and float(str(target)) > 0:
+        # Price target
+        if tgt and price and str(tgt) != "N/A":
             try:
-                upside = round(((float(str(target)) - price) / price) * 100, 1)
-                if upside > 15:
+                up = round(((float(tgt) - price) / price) * 100, 1)
+                if up > 15:
                     score += 2
-                    reasons.append({"icon": "&#127919;", "label": f"{upside}% Upside to Analyst Target: ${target}", "detail": f"At ${price} today the stock has {upside}% room to grow to reach the analyst consensus target of ${target}. Strong projected upside."})
-                elif upside > 5:
+                    reasons.append({"icon":"&#127919;","label":f"{up}% Upside to Analyst Target: ${tgt}","detail":f"The average analyst price target is ${tgt}. At today's price of ${price} that represents {up}% potential upside. When targets are significantly above current price it signals analysts see undervaluation."})
+                elif up > 5:
                     score += 1
-                    reasons.append({"icon": "&#127919;", "label": f"{upside}% Upside to Target: ${target}", "detail": f"Modest upside of {upside}% from current price ${price} to analyst target ${target}."})
-                elif upside < -5:
+                    reasons.append({"icon":"&#127919;","label":f"{up}% Upside to Target: ${tgt}","detail":f"Analyst consensus target ${tgt} is {up}% above current price ${price}. Modest but positive projected upside based on professional analysis."})
+                elif up < -5:
                     score -= 1
-                    reasons.append({"icon": "&#127919;", "label": f"Trading {abs(upside)}% Above Target", "detail": f"Current price ${price} exceeds analyst target ${target}. The stock may be overvalued at current levels."})
+                    reasons.append({"icon":"&#127919;","label":f"Trading {abs(up)}% Above Target","detail":f"Current price ${price} is ABOVE the analyst target of ${tgt}. This suggests the stock may be overvalued relative to what analysts think it is worth right now."})
+                else:
+                    reasons.append({"icon":"&#127919;","label":f"Near Analyst Target: ${tgt}","detail":f"Stock is trading close to the analyst consensus target of ${tgt}. Fairly valued at current levels based on professional projections."})
             except:
                 pass
 
-        # PE valuation
+        # PE ratio
         if pe and pe != "N/A":
             try:
-                pe_num = float(str(pe))
-                if pe_num < 12:
+                pn = float(str(pe))
+                if pn < 12:
                     score += 2
-                    reasons.append({"icon": "&#128176;", "label": f"PE Ratio {pe_num:.1f} — Deeply Undervalued", "detail": f"PE of {pe_num:.1f} is significantly below market average. The stock appears cheap relative to its earnings power."})
-                elif pe_num < 20:
+                    reasons.append({"icon":"&#128176;","label":f"PE {pn:.1f} — Deeply Undervalued","detail":f"A PE of {pn:.1f} means you are paying only {pn:.1f} dollars for every dollar the company earns. The average stock trades at 20x earnings. This looks cheap. Low PE can signal a hidden gem or a company in trouble. Dig deeper."})
+                elif pn < 20:
                     score += 1
-                    reasons.append({"icon": "&#128176;", "label": f"PE Ratio {pe_num:.1f} — Fair Value", "detail": f"PE of {pe_num:.1f} is reasonable relative to market averages. Stock is not overpriced at current levels."})
-                elif pe_num > 60:
+                    reasons.append({"icon":"&#128176;","label":f"PE {pn:.1f} — Reasonably Valued","detail":f"PE of {pn:.1f} is below or near the market average of around 20x. You are not overpaying for this stock relative to its earnings power. Solid valuation signal."})
+                elif pn < 40:
+                    reasons.append({"icon":"&#128203;","label":f"PE {pn:.1f} — Moderate Premium","detail":f"PE of {pn:.1f} is above average. Investors are paying a moderate premium. This is acceptable for a high growth company but requires the growth to actually materialize."})
+                elif pn < 80:
                     score -= 1
-                    reasons.append({"icon": "&#128184;", "label": f"PE Ratio {pe_num:.1f} — Premium Valuation", "detail": f"High PE of {pe_num:.1f} means investors are paying a premium. Growth expectations must be met or the stock could drop significantly."})
+                    reasons.append({"icon":"&#128184;","label":f"PE {pn:.1f} — High Valuation","detail":f"PE of {pn:.1f} means you are paying a significant premium for future growth. If growth slows the stock could fall sharply. High PE stocks carry more risk when market conditions change."})
                 else:
-                    reasons.append({"icon": "&#128203;", "label": f"PE Ratio {pe_num:.1f} — Moderate Valuation", "detail": f"PE of {pe_num:.1f} is above average but not extreme. Reasonable for a growth company with strong fundamentals."})
+                    score -= 2
+                    reasons.append({"icon":"&#128184;","label":f"PE {pn:.1f} — Extreme Valuation","detail":f"PE of {pn:.1f} is very high. The company must deliver exceptional growth to justify this price. One earnings miss could cause a significant drop. Proceed with caution and manage position size carefully."})
             except:
                 pass
 
-        # Congressional trading
+        # Congressional
         if congressional:
-            buys = [t for t in congressional if t.get("action") and ("purchase" in t["action"].lower() or "buy" in t["action"].lower())]
-            sells = [t for t in congressional if t.get("action") and ("sale" in t["action"].lower() or "sell" in t["action"].lower())]
+            buys = [t for t in congressional if "purchase" in str(t.get("action","")).lower()]
+            sells = [t for t in congressional if "sale" in str(t.get("action","")).lower()]
             if len(buys) >= 3:
-                score += 3
-                signals.append("CONGRESS_CLUSTER_BUY")
-                politicians = ", ".join([b.get("politician", "Unknown") for b in buys[:3]])
-                reasons.append({"icon": "&#127963;", "label": f"Congressional Cluster Buy: {len(buys)} Politicians", "detail": f"Multiple members of Congress including {politicians} recently purchased this stock. Congressional members have access to regulatory and policy information before the public."})
-            elif len(buys) > len(sells) and buys:
-                score += 2
-                signals.append("CONGRESS_BUYING")
-                politician = buys[0].get("politician", "Unknown")
-                reasons.append({"icon": "&#127963;", "label": f"Congressional Buying: {politician}", "detail": f"{politician} and others recently purchased shares. When politicians buy with their own money it is one of the most meaningful signals in the market."})
-            elif len(sells) > len(buys) and sells:
-                score -= 1
-                signals.append("CONGRESS_SELLING")
-                reasons.append({"icon": "&#127963;", "label": f"Congressional Selling: {len(sells)} trades", "detail": f"{len(sells)} congressional members recently sold this stock. Worth monitoring as political insiders may have information about upcoming regulatory changes."})
+                score += 3; signals.append("CONGRESS_CLUSTER_BUY")
+                pols = ", ".join([b.get("politician","Unknown") for b in buys[:3]])
+                reasons.append({"icon":"&#127963;","label":f"Congressional Cluster Buy: {len(buys)} politicians","detail":f"Multiple members of Congress recently bought this stock including {pols}. Under the STOCK Act politicians must disclose trades within 45 days. When multiple members buy the same stock at once it can signal positive regulatory or policy developments ahead."})
+            elif buys:
+                score += 2; signals.append("CONGRESS_BUYING")
+                reasons.append({"icon":"&#127963;","label":f"Congressional Buying Detected","detail":f"{buys[0].get('politician','A politician')} recently purchased shares. Congressional members often have early access to regulatory and policy information. Their personal investment decisions can be a meaningful signal."})
+            elif sells:
+                score -= 1; signals.append("CONGRESS_SELLING")
+                reasons.append({"icon":"&#127963;","label":f"Congressional Selling: {len(sells)} trades","detail":f"{len(sells)} congressional members recently sold this stock. This could signal concern about upcoming regulatory changes or simply routine portfolio management."})
 
-        # Insider trading
+        # Insider
         if insider:
-            c_buys = [t for t in insider if t.get("is_clevel") and t.get("action") == "A"]
-            c_sells = [t for t in insider if t.get("is_clevel") and t.get("action") == "D"]
-            all_buys = [t for t in insider if t.get("action") == "A"]
+            cb = [t for t in insider if t.get("is_clevel") and t.get("action")=="A"]
+            cs = [t for t in insider if t.get("is_clevel") and t.get("action")=="D"]
+            if len(cb) >= 3:
+                score += 4; signals.append("INSIDER_CLUSTER_BUY")
+                names = ", ".join([f"{t.get('name')} ({t.get('title')})" for t in cb[:3]])
+                reasons.append({"icon":"&#128188;","label":"C-Level Cluster Buy — HIGHEST CONVICTION SIGNAL","detail":f"Multiple executives are buying with their own money: {names}. Insiders have only one reason to buy their own stock with personal funds: they believe it is going higher. Three or more executives buying simultaneously is the single strongest signal in Apex Q."})
+            elif len(cb) == 2:
+                score += 3; signals.append("INSIDER_CLUSTER_BUY")
+                reasons.append({"icon":"&#128188;","label":f"Dual Executive Buy","detail":f"{cb[0].get('name')} ({cb[0].get('title')}) and {cb[1].get('name')} ({cb[1].get('title')}) both bought shares. When two or more executives buy simultaneously it shows strong internal confidence in the company's direction."})
+            elif len(cb) == 1:
+                score += 2; signals.append("INSIDER_BUY")
+                reasons.append({"icon":"&#128188;","label":f"Executive Buy: {cb[0].get('title')}","detail":f"{cb[0].get('name')} recently purchased {int(cb[0].get('shares',0)):,} shares at ${cb[0].get('price')}. Executives see the company's financials before anyone else. When they buy with personal money they are putting their own wealth behind their conviction."})
+            if len(cs) >= 2:
+                score -= 2; signals.append("INSIDER_CLUSTER_SELL")
+                reasons.append({"icon":"&#128188;","label":f"Executive Cluster Selling: {len(cs)} officers","detail":f"Multiple executives recently sold shares. Executives sell for many reasons including taxes, diversification, and personal needs. However heavy cluster selling can sometimes signal concern about near term performance."})
 
-            if len(c_buys) >= 3:
-                score += 4
-                signals.append("INSIDER_CLUSTER_BUY")
-                names = ", ".join([f"{t.get('name', 'Unknown')} ({t.get('title', '')})" for t in c_buys[:3]])
-                reasons.append({"icon": "&#128188;", "label": f"C-Level Cluster Buy — HIGHEST CONVICTION SIGNAL", "detail": f"Multiple executives buying simultaneously: {names}. When 3 or more C-level insiders buy at once this is one of the most powerful signals in the entire market. Insiders only buy for one reason."})
-            elif len(c_buys) == 2:
-                score += 3
-                signals.append("INSIDER_CLUSTER_BUY")
-                reasons.append({"icon": "&#128188;", "label": f"Dual Executive Buy Signal", "detail": f"{c_buys[0].get('name')} ({c_buys[0].get('title')}) and {c_buys[1].get('name')} ({c_buys[1].get('title')}) both purchased shares recently. Strong insider conviction signal."})
-            elif len(c_buys) == 1:
-                score += 2
-                signals.append("INSIDER_BUY")
-                reasons.append({"icon": "&#128188;", "label": f"Executive Buy: {c_buys[0].get('title')}", "detail": f"{c_buys[0].get('name')} recently purchased {c_buys[0].get('shares', 0):,} shares. Insiders only buy for one reason: they believe the stock is going higher."})
-            elif len(c_sells) >= 2:
-                score -= 2
-                signals.append("INSIDER_CLUSTER_SELL")
-                reasons.append({"icon": "&#128188;", "label": f"Executive Cluster Selling: {len(c_sells)} officers", "detail": f"Multiple C-level executives are selling shares. While executives sell for many reasons, heavy cluster selling is a caution flag that warrants attention."})
-
-        # Confluence bonus — the most powerful signal
-        confluence_signals = [s for s in ["CONGRESS_BUYING", "CONGRESS_CLUSTER_BUY", "INSIDER_BUY", "INSIDER_CLUSTER_BUY", "ANALYST_BUY", "STRONG_MOMENTUM"] if s in signals]
-        if len(confluence_signals) >= 3:
+        # Confluence
+        conf = [s for s in ["CONGRESS_BUYING","CONGRESS_CLUSTER_BUY","INSIDER_BUY","INSIDER_CLUSTER_BUY","ANALYST_BUY","STRONG_MOMENTUM","POSITIVE_MOMENTUM"] if s in signals]
+        if len(conf) >= 3:
             score += 3
-            reasons.append({"icon": "&#9889;", "label": f"CONFLUENCE DETECTED — {len(confluence_signals)} Signals Aligned", "detail": f"Rare alignment across {len(confluence_signals)} independent intelligence layers: {', '.join(confluence_signals)}. When multiple unrelated data sources point in the same direction simultaneously this is the highest conviction signal Apex Q can produce."})
+            reasons.append({"icon":"&#9889;","label":f"CONFLUENCE SIGNAL: {len(conf)} Layers Aligned","detail":f"Rare alignment across {len(conf)} independent intelligence sources: {', '.join(conf)}. Confluence is when multiple unrelated data sources all point in the same direction. This is the highest conviction setup Apex Q can identify."})
 
-        # Final verdict
-        if score >= 5:
-            verdict = "APPROVE"
-            confidence = f"HIGH CONVICTION BUY SIGNAL. Intelligence score {score}/15. Multiple independent data sources are aligned bullish. Price momentum, analyst consensus, and smart money activity are pointing in the same direction. This is the type of setup Apex Q is built to find."
+        # Verdict
+        if score >= 6:
+            v = "APPROVE"
+            conf_txt = f"HIGH CONVICTION BUY. Score {score}/15. Multiple independent intelligence layers confirm bullish setup. Price momentum, analyst consensus, and smart money activity are all pointing the same direction. This is exactly the type of confluence Apex Q is built to find."
         elif score >= 3:
-            verdict = "APPROVE"
-            confidence = f"MODERATE BUY SIGNAL. Intelligence score {score}/15. The data leans bullish across multiple indicators. Not a perfect setup but the weight of evidence favors the upside. Manage your position size appropriately."
-        elif score <= -4:
-            verdict = "PASS"
-            confidence = f"HIGH CONVICTION AVOID. Intelligence score {score}/15. Multiple independent signals are negative. The data strongly suggests avoiding this position right now. Wait for a better setup."
+            v = "APPROVE"
+            conf_txt = f"MODERATE BUY SIGNAL. Score {score}/15. The weight of evidence leans bullish. Not a perfect setup but more signals favor upside than downside. Manage position size appropriately and set a clear stop loss."
+        elif score <= -5:
+            v = "PASS"
+            conf_txt = f"HIGH CONVICTION AVOID. Score {score}/15. Multiple signals are clearly negative. The data strongly suggests avoiding this position right now and waiting for conditions to improve."
         elif score <= -2:
-            verdict = "PASS"
-            confidence = f"CAUTION SIGNAL. Intelligence score {score}/15. More signals are negative than positive. The risk/reward does not favor entry at current levels. Monitor for improvement."
+            v = "PASS"
+            conf_txt = f"CAUTION SIGNAL. Score {score}/15. More signals are negative than positive. The risk/reward does not favor entry at current levels. Monitor for improvement before considering a position."
         else:
-            verdict = "WATCH"
-            confidence = f"MIXED SIGNALS. Intelligence score {score}/15. The data is not conclusive in either direction. Put this on your watchlist and wait for a catalyst that creates a clearer signal before acting."
+            v = "WATCH"
+            conf_txt = f"MIXED SIGNALS. Score {score}/15. The data is not conclusive in either direction. Add to your watchlist and wait for a catalyst that creates a clearer signal before acting."
 
-        logger.info(f"ORCHESTRATOR: {symbol} verdict={verdict} score={score} signals={signals}")
-        return verdict, confidence, reasons, score, signals
+        logger.info(f"Orchestrator: {symbol} verdict={v} score={score} signals={signals}")
+        return v, conf_txt, reasons, score, signals
 
-# Instantiate agents
 market_agent = MarketDataAgent()
 news_agent = NewsAgent()
-regulatory_agent = RegulatoryAgent()
-insider_agent = InsiderAgent()
-orchestrator = Orchestrator()
-
-def resolve_ticker(query):
-    query = query.strip()
-    try:
-        search = yf.Search(query, max_results=1)
-        quotes = search.quotes
-        if quotes and len(quotes) > 0:
-            return quotes[0].get("symbol", query.upper())
-    except:
-        pass
-    return query.upper()
+reg_agent = RegulatoryAgent()
+ins_agent = InsiderAgent()
+orch = Orchestrator()
 
 HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -372,269 +353,275 @@ HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Apex Q Intelligence Terminal</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-  :root{--bg:#f0f4f8;--surface:#fff;--surface2:#e8edf2;--border:#c8d4e0;--accent:#0055cc;--green:#006b35;--green-bg:#e0f2ea;--red:#b30000;--red-bg:#fce8e8;--yellow:#8a5000;--yellow-bg:#fff3e0;--text:#0a1628;--muted:#4a6080;--card:#fff;--navy:#0a1628;}
-  *{margin:0;padding:0;box-sizing:border-box;}
-  body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-serif;min-height:100vh;}
-  /* TICKER */
-  .ticker-bar{background:var(--navy);overflow:hidden;height:36px;display:flex;align-items:center;}
-  .ticker-track{display:flex;animation:scroll 80s linear infinite;white-space:nowrap;}
-  .ticker-track:hover{animation-play-state:paused;}
-  .ticker-item{display:inline-flex;align-items:center;gap:8px;padding:0 20px;height:36px;font-family:'JetBrains Mono',monospace;font-size:11px;border-right:1px solid #1a2d4a;cursor:pointer;transition:background 0.2s;flex-shrink:0;}
-  .ticker-item:hover{background:#1a2d4a;}
-  .tsym{color:#fff;font-weight:700;font-size:12px;}
-  .tprice{color:#7a9ab8;}
-  .tup{color:#00e676;font-weight:600;}
-  .tdown{color:#ff5252;font-weight:600;}
-  @keyframes scroll{0%{transform:translateX(0);}100%{transform:translateX(-50%);}}
-  /* HEADER */
-  .header{background:var(--surface);border-bottom:2px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;}
-  .logo{display:flex;align-items:center;gap:12px;}
-  .logo-mark{width:40px;height:40px;background:linear-gradient(135deg,#0055cc,#003399);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 2px 8px rgba(0,85,204,0.3);}
-  .logo-name{font-size:24px;font-weight:800;color:var(--text);letter-spacing:-0.5px;}
-  .logo-name span{color:var(--accent);}
-  .live-badge{display:flex;align-items:center;gap:6px;background:#e0f2ea;border:1px solid var(--green);border-radius:20px;padding:5px 12px;font-size:11px;color:var(--green);font-family:'JetBrains Mono',monospace;font-weight:700;}
-  .live-dot{width:7px;height:7px;background:var(--green);border-radius:50%;animation:blink 1.5s infinite;}
-  /* MARKET BAR */
-  .market-bar{background:var(--surface);border-bottom:1px solid var(--border);display:flex;overflow-x:auto;scrollbar-width:none;}
-  .market-bar::-webkit-scrollbar{display:none;}
-  .mkt{padding:10px 22px;border-right:1px solid var(--border);cursor:pointer;transition:background 0.2s;min-width:140px;flex-shrink:0;}
-  .mkt:hover{background:var(--surface2);}
-  .mkt-label{font-size:9px;color:var(--muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;font-weight:700;}
-  .mkt-val{font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;}
-  .mkt-val.up{color:var(--green);}
-  .mkt-val.down{color:var(--red);}
-  /* SEARCH */
-  .search-wrap{background:var(--surface);border-bottom:1px solid var(--border);padding:18px 28px 14px;}
-  .search-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-bottom:10px;font-family:'JetBrains Mono',monospace;font-weight:700;}
-  .search-row{display:flex;gap:10px;max-width:720px;position:relative;}
-  .search-input{flex:1;background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:14px 18px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:15px;outline:none;transition:border-color 0.2s;}
-  .search-input::placeholder{color:var(--muted);}
-  .search-input:focus{border-color:var(--accent);background:#fff;}
-  .search-btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:14px 30px;font-family:'Space Grotesk',monospace;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.5px;box-shadow:0 2px 8px rgba(0,85,204,0.3);}
-  .search-btn:hover{background:#0044aa;}
-  .ac{position:absolute;top:calc(100% + 4px);left:0;right:100px;background:#fff;border:2px solid var(--border);border-radius:10px;z-index:200;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.12);}
-  .ac-item{padding:11px 16px;cursor:pointer;font-size:13px;display:flex;gap:14px;align-items:center;border-bottom:1px solid var(--border);}
-  .ac-item:last-child{border-bottom:none;}
-  .ac-item:hover{background:var(--bg);}
-  .ac-sym{font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:700;min-width:64px;}
-  .ac-name{color:var(--muted);font-size:12px;}
-  .quick-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
-  .qpick{background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--muted);cursor:pointer;transition:all 0.2s;font-family:'JetBrains Mono',monospace;font-weight:600;}
-  .qpick:hover{border-color:var(--accent);color:var(--accent);background:#e6f0ff;}
-  /* MAIN LAYOUT */
-  .main{padding:20px 28px 60px;display:grid;grid-template-columns:1fr 330px;gap:22px;}
-  @media(max-width:960px){.main{grid-template-columns:1fr;}}
-  .sec-title{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:12px;display:flex;align-items:center;gap:8px;font-weight:700;}
-  .sec-title::after{content:'';flex:1;height:1px;background:var(--border);}
-  /* REPORT CARD */
-  .rcard{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px;box-shadow:0 2px 12px rgba(0,0,0,0.05);}
-  .stock-hdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;gap:12px;}
-  .sname{font-size:30px;font-weight:800;color:var(--text);letter-spacing:-0.5px;}
-  .sfull{font-size:13px;color:var(--muted);margin-top:3px;}
-  .ssect{font-size:10px;color:var(--accent);margin-top:5px;font-family:'JetBrains Mono',monospace;font-weight:700;text-transform:uppercase;letter-spacing:1px;}
-  .price-blk{text-align:right;flex-shrink:0;}
-  .sprice{font-size:30px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
-  .schg{font-size:13px;font-family:'JetBrains Mono',monospace;margin-top:3px;font-weight:700;}
-  .schg.up{color:var(--green);}
-  .schg.down{color:var(--red);}
-  /* VERDICT */
-  .verdict-box{border-radius:14px;padding:22px;margin-bottom:20px;transition:all 0.3s;}
-  .verdict-box.approve{background:linear-gradient(135deg,#e0f2ea,#c0e8d4);border:2px solid var(--green);}
-  .verdict-box.pass{background:linear-gradient(135deg,#fce8e8,#f5c0c0);border:2px solid var(--red);}
-  .verdict-box.watch{background:linear-gradient(135deg,#fff3e0,#ffe0b0);border:2px solid var(--yellow);}
-  .verdict-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
-  .vbadge{font-size:20px;font-weight:900;font-family:'JetBrains Mono',monospace;letter-spacing:4px;padding:11px 28px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.15);}
-  .vbadge.approve{background:var(--green);color:#fff;}
-  .vbadge.pass{background:var(--red);color:#fff;}
-  .vbadge.watch{background:var(--yellow);color:#fff;}
-  .vscore{font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--muted);font-weight:700;background:rgba(255,255,255,0.7);padding:6px 12px;border-radius:20px;}
-  .vconf{font-size:13px;color:var(--text);margin-bottom:16px;line-height:1.7;font-weight:500;background:rgba(255,255,255,0.6);padding:12px 16px;border-radius:8px;}
-  .vreasons{display:flex;flex-direction:column;gap:8px;}
-  .vreason{display:flex;align-items:flex-start;gap:12px;padding:11px 14px;background:rgba(255,255,255,0.85);border-radius:10px;transition:transform 0.2s;}
-  .vreason:hover{transform:translateX(3px);}
-  .vicon{font-size:18px;flex-shrink:0;margin-top:1px;}
-  .vlabel{font-weight:700;display:block;margin-bottom:3px;color:var(--text);font-size:13px;}
-  .vdetail{color:var(--muted);font-size:12px;line-height:1.5;}
-  /* METRICS */
-  .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;}
-  .met{background:var(--surface2);border-radius:10px;padding:13px;border:1px solid var(--border);}
-  .met-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;font-family:'JetBrains Mono',monospace;font-weight:700;}
-  .met-val{font-size:16px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text);}
-  .met-val.pos{color:var(--green);}
-  .met-val.neg{color:var(--red);}
-  .met-val.neu{color:var(--accent);}
-  /* INTEL CARDS */
-  .icard{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;}
-  .ihead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
-  .ititle{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;}
-  .ibadge{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
-  .bg{background:var(--green-bg);color:var(--green);border:1px solid var(--green);}
-  .br{background:var(--red-bg);color:var(--red);border:1px solid var(--red);}
-  .by{background:var(--yellow-bg);color:var(--yellow);border:1px solid var(--yellow);}
-  .itext{font-size:13px;color:var(--text);line-height:1.6;}
-  .trade-row{padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
-  .trade-row:last-child{border-bottom:none;}
-  .tbuy{color:var(--green);font-weight:700;font-family:'JetBrains Mono',monospace;}
-  .tsell{color:var(--red);font-weight:700;font-family:'JetBrains Mono',monospace;}
-  .tgray{color:var(--muted);font-size:11px;}
-  /* NEWS */
-  .news-item{padding:11px 0;border-bottom:1px solid var(--border);}
-  .news-item:last-child{border-bottom:none;}
-  .nsrc{font-size:10px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:700;margin-bottom:4px;}
-  .nhd{font-size:13px;color:var(--text);line-height:1.5;font-weight:500;}
-  .nsum{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4;}
-  /* LOADING */
-  .loading{display:none;text-align:center;padding:50px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;}
-  .loading.active{display:block;}
-  .loading-steps{display:flex;flex-direction:column;gap:6px;margin-top:16px;text-align:left;max-width:300px;margin:16px auto 0;}
-  .lstep{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px;}
-  .lstep.active{color:var(--accent);}
-  @keyframes blink{0%,100%{opacity:1;}50%{opacity:0.3;}}
-  .live-dot,.loading{animation:blink 1.2s infinite;}
-  /* SIGNALS PANEL */
-  .sig-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all 0.2s;box-shadow:0 1px 4px rgba(0,0,0,0.04);}
-  .sig-card:hover{border-color:var(--accent);box-shadow:0 4px 12px rgba(0,85,204,0.1);}
-  .sig-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
-  .sig-sym{font-size:16px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
-  .sig-v{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
-  .va{background:var(--green-bg);color:var(--green);border:1px solid var(--green);}
-  .vp{background:var(--red-bg);color:var(--red);border:1px solid var(--red);}
-  .vw{background:var(--yellow-bg);color:var(--yellow);border:1px solid var(--yellow);}
-  .sig-info{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--muted);}
-  /* CONFLUENCE */
-  .conf-alert{background:linear-gradient(135deg,#0a1628,#0d2340);border:2px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:12px;}
-  .conf-title{font-size:11px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:5px;letter-spacing:1px;}
-  .conf-text{font-size:12px;color:#a0b8cc;line-height:1.5;}
-  /* FOOTER */
-  .footer{background:var(--surface);border-top:1px solid var(--border);padding:20px 28px;text-align:center;font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:2;}
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+:root{
+  --bg:#eef2f7;--surface:#fff;--s2:#e4eaf2;--border:#ccd8e8;
+  --accent:#0052cc;--green:#006830;--gbg:#dff2e9;
+  --red:#b00000;--rbg:#fde8e8;--yellow:#7a4500;--ybg:#fff4e0;
+  --text:#08192e;--muted:#4a6282;--navy:#08192e;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-serif;}
+
+/* TICKER */
+.tkbar{background:var(--navy);height:38px;overflow:hidden;display:flex;align-items:center;}
+.tktrack{display:flex;animation:scroll 90s linear infinite;white-space:nowrap;}
+.tktrack:hover{animation-play-state:paused;}
+.tki{display:inline-flex;align-items:center;gap:9px;padding:0 22px;height:38px;font-family:'JetBrains Mono',monospace;font-size:11.5px;border-right:1px solid #162840;cursor:pointer;flex-shrink:0;transition:background .2s;}
+.tki:hover{background:#162840;}
+.tsym{color:#fff;font-weight:700;}
+.tpx{color:#6a8aaa;}
+.tup{color:#00e676;font-weight:600;}
+.tdn{color:#ff5252;font-weight:600;}
+@keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+/* HEADER */
+.hdr{background:var(--surface);border-bottom:2px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;}
+.hlogo{display:flex;align-items:center;gap:13px;}
+.hmark{width:42px;height:42px;background:linear-gradient(135deg,#0052cc,#003399);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 3px 10px rgba(0,82,204,.25);}
+.hname{font-size:25px;font-weight:800;letter-spacing:-.5px;}
+.hname span{color:var(--accent);}
+.hbadge{display:flex;align-items:center;gap:7px;background:var(--gbg);border:1px solid var(--green);border-radius:20px;padding:6px 14px;font-size:11px;color:var(--green);font-family:'JetBrains Mono',monospace;font-weight:700;}
+.hdot{width:7px;height:7px;background:var(--green);border-radius:50%;animation:pulse 1.4s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* MARKET BAR */
+.mbar{background:var(--surface);border-bottom:1px solid var(--border);display:flex;overflow-x:auto;scrollbar-width:none;}
+.mbar::-webkit-scrollbar{display:none;}
+.mi{padding:10px 22px;border-right:1px solid var(--border);cursor:pointer;transition:background .2s;min-width:148px;flex-shrink:0;}
+.mi:hover{background:var(--s2);}
+.ml{font-size:9px;color:var(--muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:4px;font-weight:700;}
+.mv{font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.mv.up{color:var(--green);}
+.mv.dn{color:var(--red);}
+.mv.ld{color:var(--muted);font-size:11px;}
+
+/* SEARCH */
+.swrap{background:var(--surface);border-bottom:1px solid var(--border);padding:18px 28px 14px;}
+.slbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-bottom:11px;font-family:'JetBrains Mono',monospace;font-weight:700;}
+.srow{display:flex;gap:10px;max-width:740px;position:relative;}
+.sinp{flex:1;background:var(--bg);border:2px solid var(--border);border-radius:11px;padding:14px 18px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:15px;outline:none;transition:border-color .2s;}
+.sinp::placeholder{color:var(--muted);}
+.sinp:focus{border-color:var(--accent);background:#fff;}
+.sbtn{background:var(--accent);color:#fff;border:none;border-radius:11px;padding:14px 32px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,82,204,.3);}
+.sbtn:hover{background:#0044aa;}
+.ac{position:absolute;top:calc(100% + 5px);left:0;right:100px;background:#fff;border:2px solid var(--border);border-radius:11px;z-index:300;display:none;box-shadow:0 8px 28px rgba(0,0,0,.12);}
+.aci{padding:11px 17px;cursor:pointer;font-size:13px;display:flex;gap:14px;align-items:center;border-bottom:1px solid var(--border);}
+.aci:last-child{border-bottom:none;}
+.aci:hover{background:var(--bg);}
+.acs{font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:700;min-width:66px;}
+.acn{color:var(--muted);font-size:12px;}
+.qrow{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap;}
+.qp{background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:5px 15px;font-size:11px;color:var(--muted);cursor:pointer;transition:all .2s;font-family:'JetBrains Mono',monospace;font-weight:600;}
+.qp:hover{border-color:var(--accent);color:var(--accent);background:#e6f0ff;}
+
+/* MAIN */
+.main{padding:22px 28px 70px;display:grid;grid-template-columns:1fr 340px;gap:22px;}
+@media(max-width:980px){.main{grid-template-columns:1fr;}}
+.stitle{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:13px;display:flex;align-items:center;gap:9px;font-weight:700;}
+.stitle::after{content:'';flex:1;height:1px;background:var(--border);}
+
+/* REPORT */
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:15px;padding:24px;margin-bottom:18px;box-shadow:0 2px 14px rgba(0,0,0,.05);}
+.shdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:22px;gap:14px;}
+.sn{font-size:32px;font-weight:800;letter-spacing:-.5px;}
+.sf{font-size:13px;color:var(--muted);margin-top:4px;}
+.ss{font-size:10px;color:var(--accent);margin-top:5px;font-family:'JetBrains Mono',monospace;font-weight:700;text-transform:uppercase;letter-spacing:1px;}
+.pb{text-align:right;flex-shrink:0;}
+.sp{font-size:32px;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.sc{font-size:14px;font-family:'JetBrains Mono',monospace;margin-top:3px;font-weight:700;}
+.sc.up{color:var(--green);}
+.sc.dn{color:var(--red);}
+
+/* VERDICT */
+.vb{border-radius:15px;padding:24px;margin-bottom:22px;transition:all .3s;}
+.vb.approve{background:linear-gradient(135deg,#dff2e9,#b8e6cc);border:2px solid var(--green);}
+.vb.pass{background:linear-gradient(135deg,#fde8e8,#f5b8b8);border:2px solid var(--red);}
+.vb.watch{background:linear-gradient(135deg,#fff4e0,#ffd9a0);border:2px solid var(--yellow);}
+.vtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;}
+.vbdg{font-size:19px;font-weight:900;font-family:'JetBrains Mono',monospace;letter-spacing:4px;padding:12px 30px;border-radius:11px;box-shadow:0 2px 10px rgba(0,0,0,.15);}
+.vbdg.approve{background:var(--green);color:#fff;}
+.vbdg.pass{background:var(--red);color:#fff;}
+.vbdg.watch{background:var(--yellow);color:#fff;}
+.vsco{font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--muted);font-weight:700;background:rgba(255,255,255,.75);padding:7px 13px;border-radius:20px;}
+.vconf{font-size:13px;color:var(--text);margin-bottom:18px;line-height:1.75;font-weight:500;background:rgba(255,255,255,.65);padding:14px 18px;border-radius:10px;}
+.vrlist{display:flex;flex-direction:column;gap:9px;}
+.vr{display:flex;align-items:flex-start;gap:13px;padding:12px 16px;background:rgba(255,255,255,.88);border-radius:11px;transition:transform .2s;}
+.vr:hover{transform:translateX(4px);}
+.vi{font-size:20px;flex-shrink:0;margin-top:1px;}
+.vlbl{font-weight:700;display:block;margin-bottom:3px;color:var(--text);font-size:13px;}
+.vdt{color:var(--muted);font-size:12px;line-height:1.55;}
+
+/* METRICS */
+.mets{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-bottom:20px;}
+.met{background:var(--s2);border-radius:11px;padding:14px;border:1px solid var(--border);}
+.ml2{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:5px;font-family:'JetBrains Mono',monospace;font-weight:700;}
+.mv2{font-size:16px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.mv2.pos{color:var(--green);}
+.mv2.neg{color:var(--red);}
+.mv2.neu{color:var(--accent);}
+
+/* INTEL */
+.ic{background:var(--s2);border:1px solid var(--border);border-radius:11px;padding:15px;margin-bottom:10px;}
+.ih{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+.it{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;}
+.ibdg{font-size:10px;font-weight:700;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
+.bg{background:var(--gbg);color:var(--green);border:1px solid var(--green);}
+.br{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.by{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
+.itxt{font-size:13px;color:var(--text);line-height:1.6;}
+.tr{padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;flex-wrap:wrap;gap:7px;align-items:center;}
+.tr:last-child{border-bottom:none;}
+.buy{color:var(--green);font-weight:700;font-family:'JetBrains Mono',monospace;}
+.sell{color:var(--red);font-weight:700;font-family:'JetBrains Mono',monospace;}
+.gray{color:var(--muted);font-size:11px;}
+
+/* NEWS */
+.ni{padding:12px 0;border-bottom:1px solid var(--border);}
+.ni:last-child{border-bottom:none;}
+.ns{font-size:10px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:700;margin-bottom:4px;}
+.nh{font-size:13px;color:var(--text);line-height:1.55;font-weight:500;}
+.nsum{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4;}
+
+/* LOADING */
+.loading{display:none;padding:50px 30px;text-align:center;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;}
+.loading.on{display:block;animation:pulse 1.2s infinite;}
+.lsteps{margin-top:18px;display:flex;flex-direction:column;gap:7px;max-width:320px;margin:18px auto 0;text-align:left;}
+.ls{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:9px;}
+
+/* SIGNAL CARDS */
+.sg{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:15px;margin-bottom:10px;cursor:pointer;transition:all .2s;box-shadow:0 1px 5px rgba(0,0,0,.04);}
+.sg:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(0,82,204,.1);}
+.sgtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;}
+.sgsym{font-size:17px;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.sgv{font-size:10px;font-weight:700;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
+.va{background:var(--gbg);color:var(--green);border:1px solid var(--green);}
+.vp{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.vw{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
+.sgi{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--muted);}
+
+/* FOOTER */
+.foot{background:var(--surface);border-top:1px solid var(--border);padding:22px 28px;text-align:center;font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:2.2;}
 </style>
 </head>
 <body>
 
-<div class="ticker-bar">
-  <div class="ticker-track" id="tickerTrack">
-    <span class="ticker-item"><span class="tsym">APEX Q</span><span class="tprice">Loading market data...</span></span>
-  </div>
+<div class="tkbar"><div class="tktrack" id="tktrack"><span class="tki"><span class="tsym">APEX Q</span><span class="tpx">Loading live data...</span></span></div></div>
+
+<div class="hdr">
+  <div class="hlogo"><div class="hmark">&#9889;</div><div class="hname">Apex <span>Q</span></div></div>
+  <div class="hbadge"><div class="hdot"></div>LIVE INTEL ACTIVE</div>
 </div>
 
-<div class="header">
-  <div class="logo">
-    <div class="logo-mark">&#9889;</div>
-    <div class="logo-name">Apex <span>Q</span></div>
-  </div>
-  <div class="live-badge"><div class="live-dot"></div>LIVE INTEL ACTIVE</div>
+<div class="mbar">
+  <div class="mi" onclick="go('^GSPC')"><div class="ml">S&amp;P 500</div><div class="mv ld" id="m0">Loading...</div></div>
+  <div class="mi" onclick="go('^IXIC')"><div class="ml">NASDAQ</div><div class="mv ld" id="m1">Loading...</div></div>
+  <div class="mi" onclick="go('^DJI')"><div class="ml">DOW JONES</div><div class="mv ld" id="m2">Loading...</div></div>
+  <div class="mi" onclick="go('^RUT')"><div class="ml">RUSSELL 2000</div><div class="mv ld" id="m3">Loading...</div></div>
+  <div class="mi" onclick="go('^VIX')"><div class="ml">VIX FEAR</div><div class="mv ld" id="m4">Loading...</div></div>
+  <div class="mi" onclick="go('GC=F')"><div class="ml">GOLD FUTURES</div><div class="mv ld" id="m5">Loading...</div></div>
+  <div class="mi" onclick="go('CL=F')"><div class="ml">OIL WTI</div><div class="mv ld" id="m6">Loading...</div></div>
+  <div class="mi" onclick="go('BTC-USD')"><div class="ml">BITCOIN</div><div class="mv ld" id="m7">Loading...</div></div>
 </div>
 
-<div class="market-bar">
-  <div class="mkt" onclick="go('^GSPC')"><div class="mkt-label">S&amp;P 500</div><div class="mkt-val up" id="m0">Loading...</div></div>
-  <div class="mkt" onclick="go('^IXIC')"><div class="mkt-label">NASDAQ</div><div class="mkt-val up" id="m1">Loading...</div></div>
-  <div class="mkt" onclick="go('^DJI')"><div class="mkt-label">DOW JONES</div><div class="mkt-val up" id="m2">Loading...</div></div>
-  <div class="mkt" onclick="go('^RUT')"><div class="mkt-label">RUSSELL 2000</div><div class="mkt-val up" id="m3">Loading...</div></div>
-  <div class="mkt" onclick="go('^VIX')"><div class="mkt-label">VIX FEAR INDEX</div><div class="mkt-val" id="m4">Loading...</div></div>
-  <div class="mkt" onclick="go('GC=F')"><div class="mkt-label">GOLD FUTURES</div><div class="mkt-val up" id="m5">Loading...</div></div>
-  <div class="mkt" onclick="go('CL=F')"><div class="mkt-label">OIL WTI</div><div class="mkt-val" id="m6">Loading...</div></div>
-  <div class="mkt" onclick="go('BTC-USD')"><div class="mkt-label">BITCOIN</div><div class="mkt-val up" id="m7">Loading...</div></div>
-</div>
-
-<div class="search-wrap">
-  <div class="search-label">&#128269; Search any stock or company name</div>
-  <div class="search-row">
-    <input class="search-input" id="si" type="text" placeholder="Type a company or ticker... Apple, Tesla, SpaceX, SOFI, NVDA" autocomplete="off"/>
+<div class="swrap">
+  <div class="slbl">&#128269; Search any stock or company name</div>
+  <div class="srow">
+    <input class="sinp" id="si" type="text" placeholder="Type a company or ticker... Apple, Tesla, SpaceX, SOFI, NVDA" autocomplete="off"/>
     <div class="ac" id="ac"></div>
-    <button class="search-btn" onclick="run()">ANALYZE</button>
+    <button class="sbtn" onclick="run()">ANALYZE</button>
   </div>
-  <div class="quick-row">
-    <div class="qpick" onclick="go('SOFI')">SOFI</div>
-    <div class="qpick" onclick="go('SPCX')">SpaceX</div>
-    <div class="qpick" onclick="go('NVDA')">NVDA</div>
-    <div class="qpick" onclick="go('AAPL')">Apple</div>
-    <div class="qpick" onclick="go('AMD')">AMD</div>
-    <div class="qpick" onclick="go('TSLA')">Tesla</div>
-    <div class="qpick" onclick="go('MSFT')">Microsoft</div>
-    <div class="qpick" onclick="go('AMZN')">Amazon</div>
-    <div class="qpick" onclick="go('GOOGL')">Google</div>
-    <div class="qpick" onclick="go('META')">Meta</div>
-    <div class="qpick" onclick="go('JPM')">JPMorgan</div>
-    <div class="qpick" onclick="go('SCHD')">SCHD</div>
+  <div class="qrow">
+    <div class="qp" onclick="go('SOFI')">SOFI</div>
+    <div class="qp" onclick="go('SPCX')">SpaceX</div>
+    <div class="qp" onclick="go('NVDA')">NVDA</div>
+    <div class="qp" onclick="go('AAPL')">Apple</div>
+    <div class="qp" onclick="go('AMD')">AMD</div>
+    <div class="qp" onclick="go('TSLA')">Tesla</div>
+    <div class="qp" onclick="go('MSFT')">Microsoft</div>
+    <div class="qp" onclick="go('AMZN')">Amazon</div>
+    <div class="qp" onclick="go('GOOGL')">Google</div>
+    <div class="qp" onclick="go('META')">Meta</div>
+    <div class="qp" onclick="go('JPM')">JPMorgan</div>
+    <div class="qp" onclick="go('SCHD')">SCHD</div>
   </div>
 </div>
 
 <div class="main">
   <div>
-    <div class="sec-title">Full Intelligence Report</div>
-    <div class="loading" id="loadBox">
-      Running intelligence agents...
-      <div class="loading-steps">
-        <div class="lstep">&#128202; Analyst Agent — pulling price and fundamentals</div>
-        <div class="lstep">&#127963; Regulatory Agent — checking congressional trades</div>
-        <div class="lstep">&#128188; Insider Agent — scanning C-level activity</div>
-        <div class="lstep">&#128240; News Agent — fetching Finnhub intelligence</div>
-        <div class="lstep">&#9889; Synthesis Engine — calculating verdict</div>
+    <div class="stitle">Full Intelligence Report</div>
+    <div class="loading" id="lb">
+      Running 4 intelligence agents simultaneously...
+      <div class="lsteps">
+        <div class="ls">&#128202; Analyst Agent — price, fundamentals, valuation</div>
+        <div class="ls">&#127963; Regulatory Agent — congressional trades</div>
+        <div class="ls">&#128188; Insider Agent — C-level buy/sell activity</div>
+        <div class="ls">&#128240; News Agent — Finnhub live intelligence</div>
+        <div class="ls">&#9889; Synthesis Engine — calculating verdict</div>
       </div>
     </div>
-    <div id="report" class="rcard">
-      <div class="stock-hdr">
+    <div id="rpt" class="rc">
+      <div class="shdr">
         <div>
-          <div class="sname" id="sym">APEX Q</div>
-          <div class="sfull" id="sname">Search a stock above to begin full multi-agent analysis</div>
-          <div class="ssect" id="ssect"></div>
+          <div class="sn" id="sym">APEX Q</div>
+          <div class="sf" id="sfull">Search a stock above to begin full multi-agent analysis</div>
+          <div class="ss" id="ssect"></div>
         </div>
-        <div class="price-blk">
-          <div class="sprice" id="sprice">--</div>
-          <div class="schg up" id="schg">-- today</div>
-        </div>
-      </div>
-
-      <div class="verdict-box watch" id="vbox">
-        <div class="verdict-top">
-          <div class="vbadge watch" id="vbadge">&#9889; READY</div>
-          <div class="vscore" id="vscore">Intelligence Score: --</div>
-        </div>
-        <div class="vconf" id="vconf">Search any stock above. Apex Q runs four independent intelligence agents simultaneously and synthesizes all data into a single data-driven verdict with full plain English reasoning.</div>
-        <div class="vreasons" id="vreasons">
-          <div class="vreason"><span class="vicon">&#128202;</span><div><span class="vlabel">Analyst Agent</span><span class="vdetail">Price momentum, PE ratio, analyst consensus, and price target analysis</span></div></div>
-          <div class="vreason"><span class="vicon">&#127963;</span><div><span class="vlabel">Regulatory Agent</span><span class="vdetail">Congressional trading patterns from Quiver Quantitative</span></div></div>
-          <div class="vreason"><span class="vicon">&#128188;</span><div><span class="vlabel">Insider Agent</span><span class="vdetail">C-Level cluster buy and sell detection</span></div></div>
-          <div class="vreason"><span class="vicon">&#128240;</span><div><span class="vlabel">News Agent</span><span class="vdetail">Live news intelligence from Finnhub</span></div></div>
+        <div class="pb">
+          <div class="sp" id="spx">--</div>
+          <div class="sc up" id="schg">--</div>
         </div>
       </div>
 
-      <div class="metrics">
-        <div class="met"><div class="met-lbl">Current Price</div><div class="met-val neu" id="mp">--</div></div>
-        <div class="met"><div class="met-lbl">Change Today</div><div class="met-val" id="mc">--</div></div>
-        <div class="met"><div class="met-lbl">Intel Score</div><div class="met-val neu" id="ms">--</div></div>
-        <div class="met"><div class="met-lbl">PE Ratio</div><div class="met-val" id="mpe">--</div></div>
-        <div class="met"><div class="met-lbl">Analyst Target</div><div class="met-val pos" id="mt">--</div></div>
-        <div class="met"><div class="met-lbl">Market Cap</div><div class="met-val neu" id="mm">--</div></div>
+      <div class="vb watch" id="vbox">
+        <div class="vtop">
+          <div class="vbdg watch" id="vbdg">&#9889; READY</div>
+          <div class="vsco" id="vsco">Score: --</div>
+        </div>
+        <div class="vconf" id="vconf">Search any stock or company name above. Apex Q runs four independent intelligence agents and synthesizes all data into a single clear verdict with plain English reasoning designed for every level of investor.</div>
+        <div class="vrlist" id="vrl">
+          <div class="vr"><span class="vi">&#128202;</span><div><span class="vlbl">Analyst Agent</span><span class="vdt">Pulls price momentum, PE ratio, analyst consensus rating, and price target upside</span></div></div>
+          <div class="vr"><span class="vi">&#127963;</span><div><span class="vlbl">Regulatory Agent</span><span class="vdt">Monitors congressional stock trades via Quiver Quantitative STOCK Act disclosures</span></div></div>
+          <div class="vr"><span class="vi">&#128188;</span><div><span class="vlbl">Insider Agent</span><span class="vdt">Tracks C-Level executive buy and sell filings. Cluster buys are the strongest signal</span></div></div>
+          <div class="vr"><span class="vi">&#128240;</span><div><span class="vlbl">News Agent</span><span class="vdt">Live company news from Finnhub covering the last 60 days of coverage</span></div></div>
+        </div>
       </div>
 
-      <div class="sec-title">&#127963; Congressional Trading Intelligence</div>
-      <div id="congSec"><div class="icard"><div class="ihead"><div class="ititle">Quiver Quantitative</div><div class="ibadge by">WAITING</div></div><div class="itext">Congressional trading data will appear here after analysis.</div></div></div>
+      <div class="mets">
+        <div class="met"><div class="ml2">Current Price</div><div class="mv2 neu" id="mp">--</div></div>
+        <div class="met"><div class="ml2">Change Today</div><div class="mv2" id="mc">--</div></div>
+        <div class="met"><div class="ml2">Intel Score</div><div class="mv2 neu" id="ms">--</div></div>
+        <div class="met"><div class="ml2">PE Ratio</div><div class="mv2" id="mpe">--</div></div>
+        <div class="met"><div class="ml2">Analyst Target</div><div class="mv2 pos" id="mt">--</div></div>
+        <div class="met"><div class="ml2">Market Cap</div><div class="mv2 neu" id="mm">--</div></div>
+      </div>
 
-      <div class="sec-title">&#128188; Insider Activity Intelligence</div>
-      <div id="insSec"><div class="icard"><div class="ihead"><div class="ititle">C-Level Insider Trades</div><div class="ibadge by">WAITING</div></div><div class="itext">Executive buy and sell activity will appear here after analysis.</div></div></div>
+      <div class="stitle">&#127963; Congressional Trading</div>
+      <div id="cong"><div class="ic"><div class="ih"><div class="it">Quiver Quantitative</div><div class="ibdg by">WAITING</div></div><div class="itxt">Congressional trading data loads after analysis.</div></div></div>
 
-      <div class="sec-title">&#128240; Live News Intelligence</div>
-      <div id="newsSec"><div class="icard"><div class="ihead"><div class="ititle">Finnhub News Feed</div><div class="ibadge by">WAITING</div></div><div class="itext">Live news feed will appear here after analysis.</div></div></div>
+      <div class="stitle">&#128188; Insider Activity</div>
+      <div id="ins"><div class="ic"><div class="ih"><div class="it">C-Level Insider Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Executive buy and sell activity loads after analysis.</div></div></div>
+
+      <div class="stitle">&#128240; Live News Intelligence</div>
+      <div id="news"><div class="ic"><div class="ih"><div class="it">Finnhub News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Live news feed loads after analysis.</div></div></div>
     </div>
   </div>
 
   <div>
-    <div class="sec-title">Live Signals</div>
+    <div class="stitle">Live Signals</div>
     <div id="panel">
-      <div class="sig-card" onclick="go('SOFI')"><div class="sig-top"><div class="sig-sym">SOFI</div><div class="sig-v vw">WATCH</div></div><div class="sig-info">Click to run full analysis</div></div>
-      <div class="sig-card" onclick="go('NVDA')"><div class="sig-top"><div class="sig-sym">NVDA</div><div class="sig-v vw">WATCH</div></div><div class="sig-info">Click to run full analysis</div></div>
-      <div class="sig-card" onclick="go('SPCX')"><div class="sig-top"><div class="sig-sym">SPCX</div><div class="sig-v vw">WATCH</div></div><div class="sig-info">Click to run full analysis</div></div>
-      <div class="sig-card" onclick="go('AMD')"><div class="sig-top"><div class="sig-sym">AMD</div><div class="sig-v vw">WATCH</div></div><div class="sig-info">Click to run full analysis</div></div>
-      <div class="sig-card" onclick="go('TSLA')"><div class="sig-top"><div class="sig-sym">TSLA</div><div class="sig-v vw">WATCH</div></div><div class="sig-info">Click to run full analysis</div></div>
-      <div class="sig-card" onclick="go('AAPL')"><div class="sig-top"><div class="sig-sym">AAPL</div><div class="sig-v vw">WATCH</div></div><div class="sig-info">Click to run full analysis</div></div>
-      <div class="sig-card" onclick="go('MSFT')"><div class="sig-top"><div class="sig-sym">MSFT</div><div class="sig-v vw">WATCH</div></div><div class="sig-info">Click to run full analysis</div></div>
+      <div class="sg" onclick="go('SOFI')"><div class="sgtop"><div class="sgsym">SOFI</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to run full analysis</div></div>
+      <div class="sg" onclick="go('NVDA')"><div class="sgtop"><div class="sgsym">NVDA</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to run full analysis</div></div>
+      <div class="sg" onclick="go('SPCX')"><div class="sgtop"><div class="sgsym">SPCX</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to run full analysis</div></div>
+      <div class="sg" onclick="go('AMD')"><div class="sgtop"><div class="sgsym">AMD</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to run full analysis</div></div>
+      <div class="sg" onclick="go('TSLA')"><div class="sgtop"><div class="sgsym">TSLA</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to run full analysis</div></div>
+      <div class="sg" onclick="go('AAPL')"><div class="sgtop"><div class="sgsym">AAPL</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to run full analysis</div></div>
+      <div class="sg" onclick="go('MSFT')"><div class="sgtop"><div class="sgsym">MSFT</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to run full analysis</div></div>
     </div>
   </div>
 </div>
 
-<div class="footer">
+<div class="foot">
   APEX Q INTELLIGENCE TERMINAL &nbsp;|&nbsp; ANALYST AGENT &bull; REGULATORY AGENT &bull; INSIDER AGENT &bull; NEWS AGENT &bull; SYNTHESIS ENGINE<br>
   Powered by yFinance &bull; Finnhub &bull; Quiver Quantitative &bull; SEC EDGAR<br><br>
   The insights provided are generated by our analytical engine for educational and illustrative purposes only.<br>
@@ -643,16 +630,12 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-const API = window.location.origin;
-const TICKERS = ['AAPL','MSFT','NVDA','AMD','TSLA','AMZN','GOOGL','META','SOFI','SPCX','SCHD','JPM','BAC','NFLX','BTC-USD','GC=F'];
-const MKT = [
-  {sym:'^GSPC',id:'m0'},{sym:'^IXIC',id:'m1'},{sym:'^DJI',id:'m2'},
-  {sym:'^RUT',id:'m3'},{sym:'^VIX',id:'m4'},{sym:'GC=F',id:'m5'},
-  {sym:'CL=F',id:'m6'},{sym:'BTC-USD',id:'m7'}
-];
+const A=window.location.origin;
+const TKS=['AAPL','MSFT','NVDA','AMD','TSLA','AMZN','GOOGL','META','SOFI','SPCX','SCHD','JPM','BAC','NFLX','BTC-USD'];
+const MKT=[{s:'^GSPC',id:'m0'},{s:'^IXIC',id:'m1'},{s:'^DJI',id:'m2'},{s:'^RUT',id:'m3'},{s:'^VIX',id:'m4'},{s:'GC=F',id:'m5'},{s:'CL=F',id:'m6'},{s:'BTC-USD',id:'m7'}];
 
 function fmt(n){
-  if(!n||n==='N/A')return 'N/A';
+  if(!n||n==='N/A')return'N/A';
   const x=parseFloat(n);if(isNaN(x))return'N/A';
   if(x>=1e12)return'$'+(x/1e12).toFixed(2)+'T';
   if(x>=1e9)return'$'+(x/1e9).toFixed(2)+'B';
@@ -660,179 +643,175 @@ function fmt(n){
   return'$'+x.toLocaleString();
 }
 
-function renderCongress(trades){
-  const s=document.getElementById('congSec');
-  if(!trades||!trades.length){
-    s.innerHTML='<div class="icard"><div class="ihead"><div class="ititle">Congressional Trading</div><div class="ibadge bg">CLEAN</div></div><div class="itext">No recent congressional trading activity found for this stock in the Quiver Quantitative database.</div></div>';
+function renderCong(data){
+  const s=document.getElementById('cong');
+  if(!data||!data.length){
+    s.innerHTML='<div class="ic"><div class="ih"><div class="it">Congressional Trading</div><div class="ibdg bg">CLEAN</div></div><div class="itxt">No recent congressional trading activity found for this stock. This means no politicians have publicly disclosed trades in this company recently.</div></div>';
     return;
   }
-  const buys=trades.filter(t=>t.action&&t.action.toLowerCase().includes('purchase'));
-  const sells=trades.filter(t=>t.action&&t.action.toLowerCase().includes('sale'));
+  const buys=data.filter(t=>t.action&&t.action.toLowerCase().includes('purchase'));
+  const sells=data.filter(t=>t.action&&t.action.toLowerCase().includes('sale'));
   const bc=buys.length>sells.length?'bg':sells.length>buys.length?'br':'by';
   const bl=buys.length>sells.length?`BUYING (${buys.length})`:sells.length>buys.length?`SELLING (${sells.length})`:'MIXED';
-  s.innerHTML=`<div class="icard"><div class="ihead"><div class="ititle">Congressional Trades — ${trades.length} total</div><div class="ibadge ${bc}">${bl}</div></div><div class="itext">${
-    trades.map(t=>`<div class="trade-row"><span class="${t.action&&t.action.toLowerCase().includes('purchase')?'tbuy':'tsell'}">${t.action||'Unknown'}</span><span>${t.politician||'Unknown'}</span><span class="tgray">(${t.party||''})</span><span class="tgray">${t.amount||''}</span><span class="tgray">${t.date||''}</span></div>`).join('')
-  }</div></div>`;
+  s.innerHTML=`<div class="ic"><div class="ih"><div class="it">Congressional Trades — ${data.length} total</div><div class="ibdg ${bc}">${bl}</div></div><div class="itxt">${data.map(t=>`<div class="tr"><span class="${t.action&&t.action.toLowerCase().includes('purchase')?'buy':'sell'}">${t.action||'Unknown'}</span><span>${t.politician||'Unknown'}</span><span class="gray">(${t.party||''})</span><span class="gray">${t.amount||''}</span><span class="gray">${t.date||''}</span></div>`).join('')}</div></div>`;
 }
 
-function renderInsider(trades){
-  const s=document.getElementById('insSec');
-  if(!trades||!trades.length){
-    s.innerHTML='<div class="icard"><div class="ihead"><div class="ititle">Insider Activity</div><div class="ibadge bg">CLEAN</div></div><div class="itext">No recent insider trading filings detected. Clean insider slate — no unusual activity from executives or directors.</div></div>';
+function renderIns(data){
+  const s=document.getElementById('ins');
+  if(!data||!data.length){
+    s.innerHTML='<div class="ic"><div class="ih"><div class="it">Insider Activity</div><div class="ibdg bg">CLEAN</div></div><div class="itxt">No recent insider trading filings detected. A clean insider slate means executives and directors are not making unusual moves with their personal holdings right now.</div></div>';
     return;
   }
-  const buys=trades.filter(t=>t.action==='A');
-  const sells=trades.filter(t=>t.action==='D');
-  const cbuys=trades.filter(t=>t.is_clevel&&t.action==='A');
+  const buys=data.filter(t=>t.action==='A');
+  const sells=data.filter(t=>t.action==='D');
+  const cb=data.filter(t=>t.is_clevel&&t.action==='A');
   const bc=buys.length>sells.length?'bg':sells.length>buys.length?'br':'by';
-  let label=buys.length>sells.length?'BUYING':'SELLING';
-  if(cbuys.length>=2)label='CLUSTER BUY &#9889;';
-  s.innerHTML=`<div class="icard"><div class="ihead"><div class="ititle">Insider Trades — ${trades.length} filings</div><div class="ibadge ${bc}">${label}</div></div><div class="itext">${
-    trades.slice(0,8).map(t=>`<div class="trade-row"><span class="${t.action==='A'?'tbuy':'tsell'}">${t.action==='A'?'BUY':'SELL'}</span><span>${t.name||'Unknown'}</span><span class="tgray">${t.title||''}</span>${t.shares?`<span class="tgray">${parseInt(t.shares).toLocaleString()} shares</span>`:''}<span class="tgray">${t.date||''}</span></div>`).join('')
-  }</div></div>`;
+  let lbl=buys.length>sells.length?'BUYING':'SELLING';
+  if(cb.length>=2)lbl='CLUSTER BUY &#9889;';
+  s.innerHTML=`<div class="ic"><div class="ih"><div class="it">Insider Trades — ${data.length} filings</div><div class="ibdg ${bc}">${lbl}</div></div><div class="itxt">${data.slice(0,8).map(t=>`<div class="tr"><span class="${t.action==='A'?'buy':'sell'}">${t.action==='A'?'BUY':'SELL'}</span><span>${t.name||'Unknown'}</span><span class="gray">${t.title||''}</span>${t.shares?`<span class="gray">${parseInt(t.shares).toLocaleString()} shares</span>`:''}<span class="gray">${t.date||''}</span></div>`).join('')}</div></div>`;
 }
 
-function renderNews(news){
-  const s=document.getElementById('newsSec');
-  if(!news||!news.length){
-    s.innerHTML='<div class="icard"><div class="ihead"><div class="ititle">Finnhub News Feed</div><div class="ibadge by">NO RESULTS</div></div><div class="itext">No recent news articles found for this stock in the last 30 days. This may indicate low media coverage or a very recently listed company.</div></div>';
+function renderNews(data){
+  const s=document.getElementById('news');
+  if(!data||!data.length){
+    s.innerHTML='<div class="ic"><div class="ih"><div class="it">Finnhub News Feed</div><div class="ibdg by">NO RESULTS</div></div><div class="itxt">No news articles found in the last 60 days for this stock. This may mean low media coverage, a very new listing, or the company is between major announcements.</div></div>';
     return;
   }
-  s.innerHTML=news.map(n=>`<div class="news-item"><div class="nsrc">${n.source||'Market News'}</div><div class="nhd">${n.headline}</div>${n.summary?`<div class="nsum">${n.summary.slice(0,120)}...</div>`:''}</div>`).join('');
+  const isGeneral=data.some(n=>n.source&&n.source.includes('General Market'));
+  s.innerHTML=(isGeneral?'<div class="ic" style="margin-bottom:10px"><div class="ih"><div class="it">Market News</div><div class="ibdg by">GENERAL</div></div><div class="itxt" style="font-size:12px">No company-specific news found. Showing general market news instead.</div></div>':'')+data.map(n=>`<div class="ni"><div class="ns">${n.source||'Market News'}</div><div class="nh">${n.headline}</div>${n.summary?`<div class="nsum">${n.summary}</div>`:''}</div>`).join('');
 }
 
 async function loadTicker(sym){
   try{
-    const r=await fetch(`${API}/analyze?symbol=${encodeURIComponent(sym)}`);
+    const r=await fetch(`${A}/analyze?symbol=${encodeURIComponent(sym)}`);
     const d=await r.json();
     if(d.price){
       const up=d.change_pct>=0;
-      return `<span class="ticker-item" onclick="go('${sym}')"><span class="tsym">${d.symbol}</span><span class="tprice">$${d.price.toLocaleString()}</span><span class="${up?'tup':'tdown'}">${up?'+':''}${d.change_pct}%</span></span>`;
+      return `<span class="tki" onclick="go('${sym}')"><span class="tsym">${d.symbol}</span><span class="tpx">$${d.price.toLocaleString()}</span><span class="${up?'tup':'tdn'}">${up?'+':''}${d.change_pct}%</span></span>`;
     }
   }catch(e){}
   return'';
 }
 
 async function buildTicker(){
-  const track=document.getElementById('tickerTrack');
-  let html='';
-  for(const s of TICKERS)html+=await loadTicker(s);
-  if(html)track.innerHTML=html+html;
+  const tk=document.getElementById('tktrack');
+  let h='';
+  for(const s of TKS)h+=await loadTicker(s);
+  if(h)tk.innerHTML=h+h;
 }
 
 async function loadMarket(){
   for(const m of MKT){
     try{
-      const r=await fetch(`${API}/analyze?symbol=${encodeURIComponent(m.sym)}`);
+      const r=await fetch(`${A}/analyze?symbol=${encodeURIComponent(m.s)}`);
       const d=await r.json();
-      if(d.price){
-        const el=document.getElementById(m.id);
-        if(el){
-          el.textContent=d.price.toLocaleString()+' ('+(d.change_pct>=0?'+':'')+d.change_pct+'%)';
-          el.className='mkt-val '+(d.change_pct>=0?'up':'down');
-        }
+      const el=document.getElementById(m.id);
+      if(d.price&&el){
+        el.textContent=d.price.toLocaleString()+' ('+(d.change_pct>=0?'+':'')+d.change_pct+'%)';
+        el.className='mv '+(d.change_pct>=0?'up':'dn');
+      }else if(el){
+        el.textContent='N/A';
+        el.className='mv ld';
       }
-    }catch(e){}
+    }catch(e){
+      const el=document.getElementById(m.id);
+      if(el){el.textContent='N/A';el.className='mv ld';}
+    }
   }
 }
 
 function go(sym){document.getElementById('si').value=sym;run();}
 
-let acTimer;
+let acT;
 document.getElementById('si').addEventListener('input',function(){
-  clearTimeout(acTimer);
+  clearTimeout(acT);
   const v=this.value.trim();
   if(v.length<2){document.getElementById('ac').style.display='none';return;}
-  acTimer=setTimeout(()=>suggest(v),300);
+  acT=setTimeout(()=>suggest(v),300);
 });
 
 async function suggest(q){
   try{
-    const r=await fetch(`${API}/search?q=${encodeURIComponent(q)}`);
+    const r=await fetch(`${A}/search?q=${encodeURIComponent(q)}`);
     const d=await r.json();
     const ac=document.getElementById('ac');
     if(d.results&&d.results.length){
-      ac.innerHTML=d.results.map(x=>`<div class="ac-item" onclick="go('${x.symbol}')"><span class="ac-sym">${x.symbol}</span><span class="ac-name">${x.name||''}</span></div>`).join('');
+      ac.innerHTML=d.results.map(x=>`<div class="aci" onclick="go('${x.symbol}')"><span class="acs">${x.symbol}</span><span class="acn">${x.name||''}</span></div>`).join('');
       ac.style.display='block';
     }else ac.style.display='none';
   }catch(e){}
 }
 
-document.addEventListener('click',e=>{if(!e.target.closest('.search-row'))document.getElementById('ac').style.display='none';});
+document.addEventListener('click',e=>{if(!e.target.closest('.srow'))document.getElementById('ac').style.display='none';});
 document.getElementById('si').addEventListener('keypress',e=>{if(e.key==='Enter')run();});
 
 async function run(){
   const val=document.getElementById('si').value.trim();
   if(!val)return;
   document.getElementById('ac').style.display='none';
-  document.getElementById('loadBox').classList.add('active');
-  document.getElementById('report').style.opacity='0.35';
+  document.getElementById('lb').classList.add('on');
+  document.getElementById('rpt').style.opacity='.35';
 
   try{
-    const r=await fetch(`${API}/analyze?symbol=${encodeURIComponent(val)}`);
+    const r=await fetch(`${A}/analyze?symbol=${encodeURIComponent(val)}`);
     const d=await r.json();
 
     if(d.error){
       document.getElementById('sym').textContent='NOT FOUND';
-      document.getElementById('sname').textContent=d.error;
-      document.getElementById('loadBox').classList.remove('active');
-      document.getElementById('report').style.opacity='1';
+      document.getElementById('sfull').textContent=d.error;
+      document.getElementById('lb').classList.remove('on');
+      document.getElementById('rpt').style.opacity='1';
       return;
     }
 
     document.getElementById('sym').textContent=d.symbol||val;
-    document.getElementById('sname').textContent=d.name||val;
+    document.getElementById('sfull').textContent=d.name||val;
     document.getElementById('ssect').textContent=d.sector||'';
-    document.getElementById('sprice').textContent='$'+(d.price||0).toLocaleString();
+    document.getElementById('spx').textContent='$'+(d.price||0).toLocaleString();
     document.getElementById('mp').textContent='$'+(d.price||0).toLocaleString();
 
     const chg=d.change_pct||0;
-    const chgTxt=(chg>=0?'+':'')+chg+'%';
-    document.getElementById('schg').textContent=chgTxt+' today';
-    document.getElementById('schg').className='schg '+(chg>=0?'up':'down');
-    document.getElementById('mc').textContent=chgTxt;
-    document.getElementById('mc').className='met-val '+(chg>=0?'pos':'neg');
+    const ct=(chg>=0?'+':'')+chg+'% today';
+    document.getElementById('schg').textContent=ct;
+    document.getElementById('schg').className='sc '+(chg>=0?'up':'dn');
+    document.getElementById('mc').textContent=(chg>=0?'+':'')+chg+'%';
+    document.getElementById('mc').className='mv2 '+(chg>=0?'pos':'neg');
 
     document.getElementById('ms').textContent=(d.score||0)+'/15';
     document.getElementById('mpe').textContent=d.pe_ratio||'N/A';
-    document.getElementById('mt').textContent=d.analyst_target?'$'+d.analyst_target:'N/A';
+    document.getElementById('mt').textContent=d.analyst_target&&d.analyst_target!=='N/A'?'$'+d.analyst_target:'N/A';
     document.getElementById('mm').textContent=fmt(d.market_cap);
 
     const v=d.verdict||'WATCH';
-    const vbox=document.getElementById('vbox');
-    const vbadge=document.getElementById('vbadge');
-    vbox.className='verdict-box '+v.toLowerCase();
-    vbadge.className='vbadge '+v.toLowerCase();
+    document.getElementById('vbox').className='vb '+v.toLowerCase();
+    document.getElementById('vbdg').className='vbdg '+v.toLowerCase();
     const vi={APPROVE:'&#9989;',PASS:'&#10060;',WATCH:'&#9889;'};
-    vbadge.innerHTML=vi[v]+' '+v;
-    document.getElementById('vscore').textContent='Intelligence Score: '+(d.score||0)+'/15';
+    document.getElementById('vbdg').innerHTML=vi[v]+' '+v;
+    document.getElementById('vsco').textContent='Intelligence Score: '+(d.score||0)+'/15';
     document.getElementById('vconf').textContent=d.confidence||'';
 
     if(d.reasons&&d.reasons.length){
-      document.getElementById('vreasons').innerHTML=d.reasons.map(r=>`<div class="vreason"><span class="vicon">${r.icon}</span><div><span class="vlabel">${r.label}</span><span class="vdetail">${r.detail}</span></div></div>`).join('');
+      document.getElementById('vrl').innerHTML=d.reasons.map(r=>`<div class="vr"><span class="vi">${r.icon}</span><div><span class="vlbl">${r.label}</span><span class="vdt">${r.detail}</span></div></div>`).join('');
     }
 
-    renderCongress(d.congressional||[]);
-    renderInsider(d.insider||[]);
+    renderCong(d.congressional||[]);
+    renderIns(d.insider||[]);
     renderNews(d.news||[]);
 
     const vc=v==='APPROVE'?'va':v==='PASS'?'vp':'vw';
     const panel=document.getElementById('panel');
-    const existing=panel.querySelector(`[data-s="${d.symbol}"]`);
-    const card=`<div class="sig-card" data-s="${d.symbol}" onclick="go('${d.symbol}')">
-      <div class="sig-top"><div class="sig-sym">${d.symbol}</div><div class="sig-v ${vc}">${v}</div></div>
-      <div class="sig-info">$${d.price.toLocaleString()} &nbsp; Score: ${d.score}/15 &nbsp; ${d.name}</div>
-    </div>`;
-    if(existing)existing.outerHTML=card;
+    const ex=panel.querySelector(`[data-s="${d.symbol}"]`);
+    const card=`<div class="sg" data-s="${d.symbol}" onclick="go('${d.symbol}')"><div class="sgtop"><div class="sgsym">${d.symbol}</div><div class="sgv ${vc}">${v}</div></div><div class="sgi">$${(d.price||0).toLocaleString()} &nbsp;|&nbsp; Score: ${d.score}/15 &nbsp;|&nbsp; ${d.name}</div></div>`;
+    if(ex)ex.outerHTML=card;
     else panel.insertAdjacentHTML('afterbegin',card);
 
   }catch(e){
     document.getElementById('sym').textContent='ERROR';
-    document.getElementById('sname').textContent='Connection failed. Check your internet and try again.';
+    document.getElementById('sfull').textContent='Connection failed. Check your internet and try again.';
   }
 
-  document.getElementById('loadBox').classList.remove('active');
-  document.getElementById('report').style.opacity='1';
+  document.getElementById('lb').classList.remove('on');
+  document.getElementById('rpt').style.opacity='1';
 }
 
 buildTicker();
@@ -847,40 +826,35 @@ def home():
 
 @app.route("/search")
 def search_ticker():
-    query = request.args.get("q", "").strip()
-    if not query:
-        return jsonify({"error": "No query"}), 400
+    q = request.args.get("q","").strip()
+    if not q:
+        return jsonify({"error":"No query"}),400
     try:
-        s = yf.Search(query, max_results=6)
-        results = [{"symbol": q.get("symbol"), "name": q.get("longname") or q.get("shortname")} for q in s.quotes if q.get("symbol")]
-        return jsonify({"results": results})
+        s=yf.Search(q,max_results=6)
+        return jsonify({"results":[{"symbol":x.get("symbol"),"name":x.get("longname") or x.get("shortname")} for x in s.quotes if x.get("symbol")]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error":str(e)}),500
 
 @app.route("/analyze")
 def analyze():
-    query = request.args.get("symbol", "").strip()
+    query = request.args.get("symbol","").strip()
     if not query:
-        return jsonify({"error": "No symbol provided"}), 400
+        return jsonify({"error":"No symbol provided"}),400
 
     symbol = resolve_ticker(query)
-    logger.info(f"ANALYZE REQUEST: query={query} resolved={symbol}")
+    logger.info(f"ANALYZE: query={query} symbol={symbol}")
 
     market = market_agent.get(symbol)
     if not market:
-        return jsonify({"error": f"No market data found for {symbol}. Please check the company name or ticker symbol."}), 404
+        return jsonify({"error":f"No data found for {symbol}. Please check the name or ticker symbol."}),404
 
     news = news_agent.get(symbol)
-    congressional = regulatory_agent.get_congressional(symbol)
-    insider = insider_agent.get(symbol)
-
-    verdict, confidence, reasons, score, signals = orchestrator.synthesize(symbol, market, congressional, insider, news)
-
-    logger.info(f"FINAL VERDICT: {symbol} = {verdict} score={score} signals={signals}")
+    congressional = reg_agent.get_congressional(symbol)
+    insider = ins_agent.get(symbol)
+    verdict, confidence, reasons, score, signals = orch.synthesize(symbol, market, congressional, insider, news)
 
     return jsonify({
         "symbol": symbol,
-        "query": query,
         "price": market["price"],
         "change_pct": market["change_pct"],
         "recommendation": market["recommendation"],
@@ -896,12 +870,11 @@ def analyze():
         "analyst_target": market["analyst_target"],
         "volume": market.get("volume"),
         "beta": market.get("beta"),
-        "dividend_yield": market.get("dividend_yield"),
         "news": news,
         "congressional": congressional,
         "insider": insider,
     })
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT",5000))
     app.run(host="0.0.0.0", port=port, debug=False)
