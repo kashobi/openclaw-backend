@@ -110,11 +110,17 @@ def analyze():
         rec = info.get("recommendationKey", "hold").upper()
 
         score = 0
+        sharp_drop = chg <= -8
+
         if chg > 2:
             score += 2
         elif chg > 0:
             score += 1
-        elif chg < -3:
+        elif chg <= -10:
+            score -= 5
+        elif chg <= -5:
+            score -= 3
+        elif chg <= -3:
             score -= 2
         else:
             score -= 1
@@ -124,7 +130,10 @@ def analyze():
         elif rec in ["SELL", "STRONG_SELL"]:
             score -= 2
 
-        if tgt and cur:
+        # On a sharp single-day drop the analyst target is almost certainly stale, set before
+        # the news broke. The huge upside it implies is an illusion created by the falling price,
+        # so it should not add to the score.
+        if tgt and cur and not sharp_drop:
             try:
                 up = ((float(tgt) - cur) / cur) * 100
                 if up > 10:
@@ -150,10 +159,14 @@ def analyze():
                 logger.error(f"Congressional error: {e}")
 
         cong_buys = len([t for t in congressional if "purchase" in str(t.get("action", "")).lower()])
-        if cong_buys >= 2:
+        cong_sells = len([t for t in congressional if "sale" in str(t.get("action", "")).lower()])
+        cong_net = cong_buys - cong_sells
+        if cong_net >= 2:
             score += 2
-        elif cong_buys == 1:
+        elif cong_net == 1:
             score += 1
+        elif cong_net <= -2:
+            score -= 1
 
         # Insider from Quiver
         insider = []
@@ -183,6 +196,14 @@ def analyze():
         elif score <= -2:
             verdict = "PASS"
         else:
+            verdict = "WATCH"
+
+        # Circuit breaker. Right after an unusually sharp single-day drop the situation is in
+        # flux and the bullish signals are likely stale, so the honest call is to hold at WATCH
+        # and tell the person to understand why it fell before considering anything.
+        alert = None
+        if sharp_drop:
+            alert = "sharp_drop"
             verdict = "WATCH"
 
         # News from Finnhub
@@ -215,6 +236,7 @@ def analyze():
             "change_pct": chg,
             "recommendation": rec,
             "verdict": verdict,
+            "alert": alert,
             "conviction": conviction,
             "score": score,
             "pe_ratio": pe,
