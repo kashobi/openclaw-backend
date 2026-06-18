@@ -156,6 +156,33 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .vw{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
 .sgi{font-size:12.5px;font-family:'JetBrains Mono',monospace;color:var(--muted);font-weight:600;}
 .foot{background:var(--navy);padding:22px 24px;text-align:center;font-size:11px;color:#5a80aa;font-family:'JetBrains Mono',monospace;line-height:2;}
+.discband{background:var(--surface);border-bottom:2px solid var(--border);padding:18px 24px;}
+.disctitle{font-size:18px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:8px;}
+.discsub{font-size:13.5px;color:var(--muted);font-weight:500;margin-top:6px;line-height:1.55;max-width:760px;}
+.discchips{display:flex;gap:9px;margin-top:14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+.discchips::-webkit-scrollbar{display:none;}
+.discchip{flex-shrink:0;background:var(--bg);border:2px solid var(--border);border-radius:22px;padding:9px 16px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;font-family:'Space Grotesk',sans-serif;white-space:nowrap;transition:all .2s;}
+.discchip:hover{border-color:var(--accent);color:var(--accent);}
+.discchip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.discResults{margin-top:16px;}
+.discLoading{padding:24px;text-align:center;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;line-height:1.6;}
+.discExp{background:var(--s2);border:2px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+.discExpName{font-size:18px;font-weight:800;color:var(--text);margin-bottom:10px;}
+.discExpRow{font-size:14.5px;color:var(--text);line-height:1.7;font-weight:500;margin-top:9px;}
+.discExpT{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:3px;}
+.discList{display:flex;flex-direction:column;gap:9px;}
+.discRow{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:13px 16px;cursor:pointer;transition:all .2s;}
+.discRow:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(0,62,170,.1);}
+.discRowL{min-width:0;}
+.discSym{font-size:16px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.discName{font-size:12.5px;color:var(--muted);font-weight:500;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px;}
+.discRowR{text-align:right;flex-shrink:0;}
+.discBadge{font-size:10.5px;font-weight:800;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;display:inline-block;}
+.discMeta{font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--muted);margin-top:4px;font-weight:600;}
+.discMeta .gp{color:var(--green);}
+.discMeta .gn{color:var(--red);}
+.discUp{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:700;margin-top:3px;}
+.discFoot{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:12px;line-height:1.5;font-weight:500;text-align:center;}
 </style>
 </head>
 <body>
@@ -195,6 +222,19 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div class="qp" data-sym="JPM">JPMorgan</div>
     <div class="qp" data-sym="SCHD">SCHD</div>
   </div>
+</div>
+<div class="discband">
+  <div class="disctitle">&#9889; Discover Overlooked Industries</div>
+  <div class="discsub">Most people only know the big names. The real gems hide in the industries nobody talks about. Tap an industry below to see what the engine likes right now, and learn why the space matters.</div>
+  <div class="discchips" id="discChips">
+    <div class="discchip" data-theme="semi">&#128295; Semiconductor Gear</div>
+    <div class="discchip" data-theme="power">&#9889; Power &amp; Grid</div>
+    <div class="discchip" data-theme="nuclear">&#9762;&#65039; Nuclear &amp; Uranium</div>
+    <div class="discchip" data-theme="defense">&#128752;&#65039; Defense &amp; Drones</div>
+    <div class="discchip" data-theme="automation">&#129302; Automation &amp; Robotics</div>
+    <div class="discchip" data-theme="cyber">&#128272; Cybersecurity</div>
+  </div>
+  <div class="discResults" id="discResults" style="display:none"></div>
 </div>
 <div class="main">
   <div>
@@ -570,8 +610,45 @@ function loadMarket(){
   });
 }
 
+function setActiveChip(el){
+  var chips = document.querySelectorAll(".discchip");
+  for(var i=0;i<chips.length;i++){ chips[i].classList.remove("active"); }
+  el.classList.add("active");
+}
+
+function loadTheme(key){
+  var box = document.getElementById("discResults");
+  if(!box) return;
+  box.style.display = "block";
+  box.innerHTML = "<div class=\"discLoading\">Scanning the basket. The first look takes a moment, then it is instant.</div>";
+  fetch(API + "/discover?theme=" + encodeURIComponent(key)).then(function(r){ return r.json(); }).then(function(d){
+    if(d.error || !d.results){ box.innerHTML = "<div class=\"discLoading\">Could not load this basket. Try again.</div>"; return; }
+    var head = "<div class=\"discExp\"><div class=\"discExpName\">" + esc(d.name) + "</div>"
+      + "<div class=\"discExpRow\"><span class=\"discExpT\">What it is</span>" + esc(d.explainer) + "</div>"
+      + "<div class=\"discExpRow\"><span class=\"discExpT\">Why it matters</span>" + esc(d.why) + "</div>"
+      + "<div class=\"discExpRow\"><span class=\"discExpT\">Why most people miss it</span>" + esc(d.unknown) + "</div></div>";
+    if(!d.results.length){
+      box.innerHTML = head + "<div class=\"discLoading\">Market data is busy right now. Tap this industry again in a moment.</div>";
+      return;
+    }
+    var rows = d.results.map(function(s){
+      var vc = s.verdict === "APPROVE" ? "va" : (s.verdict === "PASS" ? "vp" : "vw");
+      var chg = s.change_pct || 0;
+      var sgn = chg >= 0 ? "+" : "";
+      var up = (s.upside !== null && s.upside !== undefined) ? ((s.upside >= 0 ? "+" : "") + s.upside + "% to analyst target") : "";
+      return "<div class=\"discRow\" data-sym=\"" + esc(s.symbol) + "\"><div class=\"discRowL\"><div class=\"discSym\">" + esc(s.symbol) + "</div><div class=\"discName\">" + esc(s.name) + "</div></div>"
+        + "<div class=\"discRowR\"><div class=\"discBadge " + vc + "\">" + s.verdict + "</div>"
+        + "<div class=\"discMeta\">$" + (s.price || 0).toLocaleString() + " &#8226; <span class=\"" + (chg >= 0 ? "gp" : "gn") + "\">" + sgn + chg + "%</span></div>"
+        + "<div class=\"discUp\">" + up + "</div></div></div>";
+    }).join("");
+    box.innerHTML = head + "<div class=\"discList\">" + rows + "</div><div class=\"discFoot\">Ranked by the same engine that scores every stock on Apex Q. Tap any name for the full breakdown. Educational only, never advice.</div>";
+  }).catch(function(){ box.innerHTML = "<div class=\"discLoading\">Connection issue. Try again.</div>"; });
+}
+
 function go(sym){
   document.getElementById("si").value = sym;
+  var rpt = document.getElementById("rpt");
+  if(rpt){ rpt.scrollIntoView({behavior:"smooth", block:"start"}); }
   run();
 }
 
@@ -707,6 +784,8 @@ function run(){
 document.addEventListener("click", function(e){
   var hdr = e.target.closest(".vr-hdr");
   if(hdr){ toggleCard(hdr.getAttribute("data-bid")); return; }
+  var themeEl = e.target.closest("[data-theme]");
+  if(themeEl){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
   var symEl = e.target.closest("[data-sym]");
   if(symEl){ go(symEl.getAttribute("data-sym")); return; }
   if(e.target.id === "analyzeBtn"){ run(); return; }
