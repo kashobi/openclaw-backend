@@ -1,1 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apex Q Intelligence Terminal</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#e4ecf5;--surface:#fff;--s2:#d6e2ef;--border:#aac0d8;
+  --accent:#003eaa;--green:#004d22;--gbg:#b8f0cc;
+  --red:#8b0000;--rbg:#ffc0c0;--yellow:#5c2d00;--ybg:#ffd888;
+  --text:#040e1c;--muted:#2a4060;--navy:#040e1c;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-serif;}
+.tkbar{background:var(--navy);height:42px;overflow:hidden;display:flex;align-items:center;}
+.tkwrap{width:100%;overflow:hidden;}
+.tktrack{display:inline-flex;animation:tkscroll 60s linear infinite;white-space:nowrap;will-change:transform;}
+.tktrack:hover{animation-play-state:paused;}
+.tki{display:inline-flex;align-items:center;gap:9px;padding:0 22px;height:42px;font-family:'JetBrains Mono',monospace;font-size:12px;border-right:1px solid #1a2d50;cursor:pointer;flex-shrink:0;}
+.tki:hover{background:#1a2d50;}
+.tsym{color:#fff;font-weight:800;}
+.tpx{color:#7aabcc;font-size:11px;}
+.tup{color:#00ff99;font-weight:800;}
+.tdn{color:#ff5555;font-weight:800;}
+@keyframes tkscroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@media(max-width:768px){.tktrack{animation-duration:35s;}}
+.hdr{background:var(--surface);border-bottom:2px solid var(--border);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;}
+.logo{display:flex;align-items:center;gap:12px;}
+.lmark{width:42px;height:42px;background:linear-gradient(135deg,#003eaa,#001e77);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;}
+.lname{font-size:25px;font-weight:800;color:var(--text);}
+.lname span{color:var(--accent);}
+.badge{display:flex;align-items:center;gap:7px;background:var(--gbg);border:2px solid var(--green);border-radius:20px;padding:6px 14px;font-size:11px;color:var(--green);font-family:'JetBrains Mono',monospace;font-weight:800;}
+.dot{width:8px;height:8px;background:var(--green);border-radius:50%;animation:pulse 1.4s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+.mbar{background:var(--surface);border-bottom:2px solid var(--border);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.mbar::-webkit-scrollbar{display:none;}
+.mbari{display:flex;min-width:max-content;}
+.mi{padding:11px 22px;border-right:1px solid var(--border);cursor:pointer;transition:background .2s;min-width:150px;}
+.mi:hover{background:var(--s2);}
+.ml{font-size:9px;color:var(--muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;font-weight:800;}
+.mv{font-size:14px;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.mv.up{color:var(--green);}
+.mv.dn{color:var(--red);}
+.mv.ld{color:var(--muted);font-size:12px;}
+.swrap{background:var(--surface);border-bottom:2px solid var(--border);padding:16px 24px 14px;}
+.slbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-bottom:10px;font-family:'JetBrains Mono',monospace;font-weight:800;}
+.srow{display:flex;gap:10px;max-width:720px;position:relative;}
+.sinp{flex:1;background:var(--bg);border:2px solid var(--border);border-radius:11px;padding:13px 18px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;outline:none;transition:all .2s;}
+.sinp:focus{border-color:var(--accent);background:#fff;}
+.sinp::placeholder{color:var(--muted);}
+.sbtn{background:var(--accent);color:#fff;border:none;border-radius:11px;padding:13px 30px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;}
+.sbtn:hover{background:#002d88;}
+.ac{position:absolute;top:calc(100% + 5px);left:0;right:100px;background:#fff;border:2px solid var(--border);border-radius:11px;z-index:300;display:none;box-shadow:0 8px 28px rgba(0,0,0,.12);}
+.aci{padding:11px 16px;cursor:pointer;font-size:13px;display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--border);}
+.aci:last-child{border-bottom:none;}
+.aci:hover{background:var(--bg);}
+.acs{font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:800;min-width:64px;}
+.acn{color:var(--muted);font-size:12px;}
+.qrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+.qp{background:var(--bg);border:2px solid var(--border);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace;font-weight:700;}
+.qp:hover{border-color:var(--accent);color:var(--accent);}
+.main{padding:20px 24px 60px;display:grid;grid-template-columns:1fr 350px;gap:20px;}
+@media(max-width:960px){.main{grid-template-columns:1fr;padding:14px 14px 50px;}}
+.stitle{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:12px;display:flex;align-items:center;gap:8px;font-weight:800;}
+.stitle::after{content:'';flex:1;height:1px;background:var(--border);}
+.rc{background:var(--surface);border:2px solid var(--border);border-radius:14px;padding:22px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,.05);}
+.shdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;gap:14px;}
+.sn{font-size:32px;font-weight:800;color:var(--text);}
+.sf{font-size:13px;color:var(--muted);margin-top:3px;font-weight:500;}
+.ss{font-size:10px;color:var(--accent);margin-top:5px;font-family:'JetBrains Mono',monospace;font-weight:800;text-transform:uppercase;}
+.pb{text-align:right;flex-shrink:0;}
+.sp{font-size:32px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.sc{font-size:14px;font-family:'JetBrains Mono',monospace;margin-top:3px;font-weight:800;}
+.sc.up{color:var(--green);}
+.sc.dn{color:var(--red);}
+.vb{border-radius:14px;padding:22px;margin-bottom:20px;}
+.vb.approve{background:linear-gradient(135deg,#b8f0cc,#88e0aa);border:2px solid var(--green);}
+.vb.pass{background:linear-gradient(135deg,#ffc0c0,#ff9090);border:2px solid var(--red);}
+.vb.watch{background:linear-gradient(135deg,#ffd888,#ffbb44);border:2px solid var(--yellow);}
+.vtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
+.vbdg{font-size:20px;font-weight:900;font-family:'JetBrains Mono',monospace;letter-spacing:4px;padding:12px 28px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.2);}
+.vbdg.approve{background:var(--green);color:#fff;}
+.vbdg.pass{background:var(--red);color:#fff;}
+.vbdg.watch{background:var(--yellow);color:#fff;}
+.vsco{font-size:13px;font-family:'JetBrains Mono',monospace;color:var(--text);font-weight:800;background:rgba(255,255,255,.85);padding:8px 16px;border-radius:20px;}
+.vconf{font-size:13px;color:var(--text);margin-bottom:14px;line-height:1.7;font-weight:500;background:rgba(255,255,255,.7);padding:14px 16px;border-radius:10px;}
+.vmean{background:rgba(255,255,255,.85);border-radius:10px;padding:14px 16px;margin-bottom:14px;border-left:4px solid var(--accent);}
+.vmeant{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:6px;}
+.vmeantxt{font-size:13px;color:var(--text);line-height:1.65;font-weight:500;}
+.wguide{margin-bottom:14px;}
+.wg{background:rgba(255,255,255,.75);border-radius:10px;padding:13px 16px;margin-bottom:8px;}
+.wg.yellow{border-left:4px solid var(--yellow);}
+.wg.blue{border-left:4px solid var(--accent);}
+.wg.red{border-left:4px solid var(--red);}
+.wgt{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;font-family:'JetBrains Mono',monospace;margin-bottom:5px;}
+.wg.yellow .wgt{color:var(--yellow);}
+.wg.blue .wgt{color:var(--accent);}
+.wg.red .wgt{color:var(--red);}
+.wgtxt{font-size:13px;color:var(--text);line-height:1.6;font-weight:500;}
+.vrlist{display:flex;flex-direction:column;gap:8px;}
+.vr{background:rgba(255,255,255,.9);border-radius:11px;overflow:hidden;border:1px solid rgba(0,0,0,.06);}
+.vr.live{border:2px solid var(--accent);background:rgba(0,62,170,.06);}
+.vr-hdr{display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;user-select:none;}
+.vr-hdr:hover{background:rgba(0,62,170,.04);}
+.vi{font-size:22px;flex-shrink:0;}
+.vrm{flex:1;}
+.vlbl{font-weight:800;display:block;color:var(--text);font-size:13px;}
+.vshort{color:var(--muted);font-size:12px;margin-top:2px;display:block;font-weight:500;}
+.vbtn{font-size:11px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-weight:800;background:rgba(0,62,170,.1);padding:5px 12px;border-radius:20px;flex-shrink:0;border:1px solid rgba(0,62,170,.2);white-space:nowrap;}
+.vr-body{display:none;padding:0 16px 16px 50px;border-top:1px solid rgba(0,0,0,.07);}
+.vr-body.open{display:block;}
+.vrs{margin-top:12px;}
+.vrst{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:5px;}
+.vrstxt{font-size:13px;color:var(--text);line-height:1.7;font-weight:500;}
+.vlesson{background:var(--s2);border-radius:9px;padding:11px 14px;margin-top:10px;border-left:3px solid var(--accent);}
+.vlessont{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:4px;}
+.vlessontxt{font-size:13px;color:var(--text);line-height:1.6;font-style:italic;font-weight:500;}
+.mets{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;}
+@media(max-width:600px){.mets{grid-template-columns:repeat(2,1fr);}}
+.met{background:var(--s2);border-radius:10px;padding:13px;border:2px solid var(--border);}
+.ml2{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:5px;font-family:'JetBrains Mono',monospace;font-weight:800;}
+.mv2{font-size:17px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.mv2.pos{color:var(--green);}
+.mv2.neg{color:var(--red);}
+.mv2.neu{color:var(--accent);}
+.ic{background:var(--s2);border:2px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;}
+.ih{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.it{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;}
+.ibdg{font-size:10px;font-weight:800;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
+.bg{background:var(--gbg);color:var(--green);border:2px solid var(--green);}
+.br{background:var(--rbg);color:var(--red);border:2px solid var(--red);}
+.by{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
+.itxt{font-size:13px;color:var(--text);line-height:1.6;font-weight:500;}
+.iwhy{font-size:11.5px;color:var(--muted);line-height:1.55;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-weight:500;}
+.tr{padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;flex-wrap:wrap;gap:7px;align-items:center;}
+.tr:last-child{border-bottom:none;}
+.buy{color:var(--green);font-weight:800;font-family:'JetBrains Mono',monospace;}
+.sell{color:var(--red);font-weight:800;font-family:'JetBrains Mono',monospace;}
+.gray{color:var(--muted);font-size:11px;font-weight:500;}
+.ni{padding:11px 0;border-bottom:1px solid var(--border);}
+.ni:last-child{border-bottom:none;}
+.ns{font-size:10px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:800;margin-bottom:4px;}
+.nh{font-size:13px;color:var(--text);line-height:1.5;font-weight:600;}
+.nsum{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4;}
+.loading{display:none;padding:40px 20px;text-align:center;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;}
+.loading.on{display:block;animation:pulse 1.2s infinite;}
+.sg{background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s;}
+.sg:hover{border-color:var(--accent);}
+.sgtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.sgsym{font-size:17px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.sgv{font-size:11px;font-weight:800;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
+.va{background:var(--gbg);color:var(--green);border:2px solid var(--green);}
+.vp{background:var(--rbg);color:var(--red);border:2px solid var(--red);}
+.vw{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
+.sgi{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--muted);font-weight:600;}
+.foot{background:var(--navy);padding:22px 24px;text-align:center;font-size:11px;color:#5a80aa;font-family:'JetBrains Mono',monospace;line-height:2;}
+</style>
+</head>
+<body>
+<div class="tkbar"><div class="tkwrap"><div class="tktrack" id="tktrack"><span class="tki"><span class="tsym">APEX Q</span><span class="tpx">Loading live market data...</span></span></div></div></div>
+<div class="hdr">
+  <div class="logo"><div class="lmark">&#9889;</div><div class="lname">Apex <span>Q</span></div></div>
+  <div class="badge"><div class="dot"></div>LIVE INTEL ACTIVE</div>
+</div>
+<div class="mbar"><div class="mbari">
+  <div class="mi" data-sym="^GSPC"><div class="ml">S&amp;P 500</div><div class="mv ld" id="m0">--</div></div>
+  <div class="mi" data-sym="^IXIC"><div class="ml">NASDAQ</div><div class="mv ld" id="m1">--</div></div>
+  <div class="mi" data-sym="^DJI"><div class="ml">DOW JONES</div><div class="mv ld" id="m2">--</div></div>
+  <div class="mi" data-sym="^RUT"><div class="ml">RUSSELL 2000</div><div class="mv ld" id="m3">--</div></div>
+  <div class="mi" data-sym="^VIX"><div class="ml">VIX FEAR</div><div class="mv ld" id="m4">--</div></div>
+  <div class="mi" data-sym="GC=F"><div class="ml">GOLD FUTURES</div><div class="mv ld" id="m5">--</div></div>
+  <div class="mi" data-sym="CL=F"><div class="ml">OIL WTI</div><div class="mv ld" id="m6">--</div></div>
+  <div class="mi" data-sym="BTC-USD"><div class="ml">BITCOIN</div><div class="mv ld" id="m7">--</div></div>
+</div></div>
+<div class="swrap">
+  <div class="slbl">&#128269; Search any stock or company name</div>
+  <div class="srow">
+    <input class="sinp" id="si" type="text" placeholder="Type a company or ticker... Apple, Tesla, SpaceX, SOFI, AMD" autocomplete="off"/>
+    <div class="ac" id="ac"></div>
+    <button class="sbtn" id="analyzeBtn">ANALYZE</button>
+  </div>
+  <div class="qrow" id="qrow">
+    <div class="qp" data-sym="SOFI">SOFI</div>
+    <div class="qp" data-sym="SPCX">SpaceX</div>
+    <div class="qp" data-sym="NVDA">NVDA</div>
+    <div class="qp" data-sym="AAPL">Apple</div>
+    <div class="qp" data-sym="AMD">AMD</div>
+    <div class="qp" data-sym="TSLA">Tesla</div>
+    <div class="qp" data-sym="MSFT">Microsoft</div>
+    <div class="qp" data-sym="AMZN">Amazon</div>
+    <div class="qp" data-sym="GOOGL">Google</div>
+    <div class="qp" data-sym="META">Meta</div>
+    <div class="qp" data-sym="JPM">JPMorgan</div>
+    <div class="qp" data-sym="SCHD">SCHD</div>
+  </div>
+</div>
+<div class="main">
+  <div>
+    <div class="stitle">Full Intelligence Report</div>
+    <div class="loading" id="lb">Reading the market...</div>
+    <div id="rpt" class="rc">
+      <div class="shdr">
+        <div><div class="sn" id="sym">APEX Q</div><div class="sf" id="sfull">Search a stock above to begin</div><div class="ss" id="ssect"></div></div>
+        <div class="pb"><div class="sp" id="spx">--</div><div class="sc up" id="schg">--</div></div>
+      </div>
+      <div class="vb watch" id="vbox">
+        <div class="vtop">
+          <div class="vbdg watch" id="vbdg">&#9889; READY</div>
+          <div class="vsco" id="vsco">Market Intelligence Rating: --</div>
+        </div>
+        <div class="vconf" id="vconf">Search any stock or company name above. Apex Q reads the price, the valuation, the analyst calls, the trades made by members of Congress, and the moves made by company executives. Then it explains the why behind every signal in plain English. Tap any card to learn why it matters.</div>
+        <div class="vmean" id="vmean" style="display:none"></div>
+        <div class="wguide" id="wguide"></div>
+        <div class="vrlist" id="vrl"></div>
+      </div>
+      <div class="mets">
+        <div class="met"><div class="ml2">Current Price</div><div class="mv2 neu" id="mp">--</div></div>
+        <div class="met"><div class="ml2">Change Today</div><div class="mv2" id="mc">--</div></div>
+        <div class="met"><div class="ml2">Conviction</div><div class="mv2 neu" id="ms">--</div></div>
+        <div class="met"><div class="ml2">PE Ratio</div><div class="mv2" id="mpe">--</div></div>
+        <div class="met"><div class="ml2">Analyst Target</div><div class="mv2 pos" id="mt">--</div></div>
+        <div class="met"><div class="ml2">Market Cap</div><div class="mv2 neu" id="mm">--</div></div>
+      </div>
+      <div class="stitle">&#127963; Congressional Trading</div>
+      <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      <div class="stitle">&#128188; Insider Activity</div>
+      <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      <div class="stitle">&#128240; Live News</div>
+      <div id="news"><div class="ic"><div class="ih"><div class="it">News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+    </div>
+  </div>
+  <div>
+    <div class="stitle">Live Signals</div>
+    <div id="panel">
+      <div class="sg" data-sym="SOFI"><div class="sgtop"><div class="sgsym">SOFI</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+      <div class="sg" data-sym="NVDA"><div class="sgtop"><div class="sgsym">NVDA</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+      <div class="sg" data-sym="SPCX"><div class="sgtop"><div class="sgsym">SPCX</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+      <div class="sg" data-sym="AMD"><div class="sgtop"><div class="sgsym">AMD</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+      <div class="sg" data-sym="TSLA"><div class="sgtop"><div class="sgsym">TSLA</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+      <div class="sg" data-sym="AAPL"><div class="sgtop"><div class="sgsym">AAPL</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+      <div class="sg" data-sym="MSFT"><div class="sgtop"><div class="sgsym">MSFT</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+    </div>
+  </div>
+</div>
+<div class="foot">
+  APEX Q INTELLIGENCE TERMINAL &nbsp;|&nbsp; ANALYST AGENT &bull; REGULATORY AGENT &bull; INSIDER AGENT &bull; NEWS AGENT &bull; SYNTHESIS ENGINE<br><br>
+  The insights provided are generated by our analytical engine for educational and illustrative purposes only.<br>
+  They are not intended as financial, investment, or legal advice. Every market participant is unique.<br>
+  We encourage you to perform your own due diligence or consult with a qualified professional before making any financial decisions.
+</div>
+<script>
+var API = window.location.origin;
+var TKS = ["AAPL","MSFT","NVDA","AMD","TSLA","AMZN","GOOGL","META","SOFI","SPCX","SCHD","JPM","BAC","NFLX","BTC-USD"];
+var MKT = [
+  {s:"^GSPC",id:"m0"},{s:"^IXIC",id:"m1"},{s:"^DJI",id:"m2"},{s:"^RUT",id:"m3"},
+  {s:"^VIX",id:"m4"},{s:"GC=F",id:"m5"},{s:"CL=F",id:"m6"},{s:"BTC-USD",id:"m7"}
+];
 
+function esc(s){
+  if(s===null||s===undefined) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+function fmt(n){
+  if(!n || n==="N/A") return "N/A";
+  var x = parseFloat(n);
+  if(isNaN(x)) return "N/A";
+  if(x>=1e12) return "$"+(x/1e12).toFixed(2)+"T";
+  if(x>=1e9) return "$"+(x/1e9).toFixed(2)+"B";
+  if(x>=1e6) return "$"+(x/1e6).toFixed(2)+"M";
+  return "$"+x.toLocaleString();
+}
+
+function buildCard(r, idx, isLive){
+  var bid = "vb"+idx;
+  var body = "";
+  if(r.why){ body += "<div class=\"vrs\"><div class=\"vrst\">&#10067; Why This Matters</div><div class=\"vrstxt\">"+r.why+"</div></div>"; }
+  if(r.watch){ body += "<div class=\"vrs\"><div class=\"vrst\">&#128064; What To Watch For</div><div class=\"vrstxt\">"+r.watch+"</div></div>"; }
+  if(r.lesson){ body += "<div class=\"vlesson\"><div class=\"vlessont\">&#127891; The Lesson</div><div class=\"vlessontxt\">"+r.lesson+"</div></div>"; }
+  var cls = isLive ? "vr live" : "vr";
+  var head = "<div class=\"vr-hdr\" data-bid=\""+bid+"\"><span class=\"vi\">"+r.icon+"</span><div class=\"vrm\"><span class=\"vlbl\">"+r.label+"</span><span class=\"vshort\">"+(r.short||"")+"</span></div><span class=\"vbtn\" id=\"b"+bid+"\">&#9660; LEARN WHY</span></div>";
+  return "<div class=\""+cls+"\">"+head+"<div class=\"vr-body\" id=\""+bid+"\">"+body+"</div></div>";
+}
+
+function toggleCard(bid){
+  var body = document.getElementById(bid);
+  var btn = document.getElementById("b"+bid);
+  if(!body || !btn) return;
+  var open = body.classList.toggle("open");
+  btn.innerHTML = open ? "&#9650; CLOSE" : "&#9660; LEARN WHY";
+}
+
+function buildReasons(d){
+  var reasons = [];
+  var chg = d.change_pct || 0;
+  var rec = d.recommendation || "HOLD";
+  var tgt = d.analyst_target;
+  var price = d.price || 0;
+  var pe = d.pe_ratio;
+  var beta = d.beta;
+  var name = esc(d.name || d.symbol);
+
+  if(chg > 3){
+    reasons.push({icon:"&#128200;", label:"Strong Price Momentum: +"+chg+"%", short:"Up "+chg+"% today. Heavy buying pressure.",
+      why:name+" moved up "+chg+" percent in a single trading day. A move this sharp means buyers are strongly outnumbering sellers. Large institutional investors tend to drive moves of this size, and they do not buy in size without a reason. Think of it like a store with a line around the block. Strong demand is visible and real.",
+      watch:"Check whether the trading volume today is higher than the average volume. A big price move on heavy volume is far more meaningful than the same move on light volume.",
+      lesson:"Price momentum is the speed and direction a stock is moving. Strong upward momentum on heavy volume is one of the earliest signals that something real is happening."});
+  } else if(chg > 1){
+    reasons.push({icon:"&#128202;", label:"Positive Price Action: +"+chg+"%", short:"Up "+chg+"% today. Buyers in control.",
+      why:name+" is up "+chg+" percent today. Steady gains like this show buyers consistently winning the day without a panic spike. A calm steady climb is often healthier than an explosive jump because it tends to last longer.",
+      watch:"Look for the trend to continue over two or three days in a row. A stock that climbs steadily is stronger than one that spikes once and fades.",
+      lesson:"Steady accumulation over several days shows real ongoing demand rather than a single burst of excitement."});
+  } else if(chg > 0){
+    reasons.push({icon:"&#10145;&#65039;", label:"Slight Upward Drift: +"+chg+"%", short:"Up "+chg+"% today. Barely moving.",
+      why:name+" barely moved today, only "+chg+" percent. That means buyers and sellers are almost evenly matched and the market has no strong opinion right now. This is not bad, but it is not a green light either.",
+      watch:"Wait for a clear catalyst such as an earnings report, an analyst upgrade, or insider buying to push the stock in a clear direction.",
+      lesson:"When a stock barely moves the market is undecided. Undecided stocks are risky because a single piece of news can swing them either way."});
+  } else if(chg < -5){
+    reasons.push({icon:"&#128201;", label:"Heavy Selling Pressure: "+chg+"%", short:"Down "+Math.abs(chg)+"% today. Heavy selling.",
+      why:name+" dropped "+Math.abs(chg)+" percent in one day. A drop this size means something spooked the market. It could be a weak earnings report, bad news, or a large investor heading for the exit. The risk of further decline is elevated until the reason is understood.",
+      watch:"Find out why it dropped before you do anything. Read the news section below. A drop caused by one bad quarter is very different from a drop caused by broad market fear.",
+      lesson:"Large single day drops can be a buying opportunity or the start of a longer fall. Knowing the reason behind the drop is always the first step."});
+  } else if(chg < -2){
+    reasons.push({icon:"&#128201;", label:"Significant Decline: "+chg+"%", short:"Down "+Math.abs(chg)+"% today. Sellers winning.",
+      why:name+" is down "+Math.abs(chg)+" percent today. Sellers are outnumbering buyers. This may be a normal pullback after a run, or it may be the start of a real change in direction. On its own it is a caution sign.",
+      watch:"Check whether the stock is still holding above its recent lows. If it breaks below those lows the selling can speed up.",
+      lesson:"Not every pullback is a crisis. Healthy stocks pull back all the time. The real question is whether the underlying business is still strong."});
+  } else {
+    reasons.push({icon:"&#10145;&#65039;", label:"Minor Pullback: "+chg+"%", short:"Down "+Math.abs(chg)+"% today. Small dip.",
+      why:name+" slipped "+Math.abs(chg)+" percent today. A small move like this is often just routine profit taking after a recent climb. It is not alarming by itself, though it adds a small note of caution.",
+      watch:"If the stock was climbing before this dip it is probably just catching its breath. If it was already falling this adds to the downward trend.",
+      lesson:"Small daily declines are completely normal. Every stock rises and falls daily. What matters is the trend over weeks, not one day."});
+  }
+
+  if(rec === "BUY" || rec === "STRONG_BUY"){
+    reasons.push({icon:"&#9989;", label:"Wall Street Rating: "+rec.replace("_"," "), short:"Professional analysts rate this a Buy.",
+      why:"Analysts at major banks spend months studying "+name+". They read every financial report, they talk to the management team, and they compare the company to every competitor. When the group view is Buy, these professionals are putting their reputation behind the idea that the stock should rise. That is why an adviser target and rating carry weight.",
+      watch:"Look at the analyst price target below. A wide gap between the current price and the target tells you how much room to grow the professionals believe is left.",
+      lesson:"An adviser rating represents hundreds of hours of professional research. A Buy from several independent analysts at once is a signal worth respecting."});
+  } else if(rec === "SELL" || rec === "STRONG_SELL"){
+    reasons.push({icon:"&#9940;", label:"Wall Street Rating: "+rec.replace("_"," "), short:"Professional analysts are negative here.",
+      why:"When the professionals who study "+name+" full time put out a Sell rating it is a serious warning. Their work points to the stock falling from here. This is not one person guessing. It is the shared view of several research teams who know the company well.",
+      watch:"Read the news section to understand what is driving the negative view. Slowing growth, heavy debt, rising competition, or management trouble are common causes.",
+      lesson:"Do not fight the research. When the people who know a company best say sell, that view deserves real respect even if you like the product."});
+  } else {
+    reasons.push({icon:"&#9888;&#65039;", label:"Wall Street Rating: Hold", short:"Analysts are waiting and watching.",
+      why:"A Hold rating means analysts do not see a strong reason to buy or sell "+name+" right now. The stock may be fairly priced, or the analysts may be waiting for the next earnings report before they commit to a stronger view. The adviser view matters because it tells you where the professional money is leaning, and right now it is neutral.",
+      watch:"A Hold can flip to a Buy fast after a strong earnings beat or good news. Watch for the next earnings date as a possible turning point.",
+      lesson:"Hold does not mean nothing is happening. It usually means the professionals are waiting for more information. That is often the quiet before a real move."});
+  }
+
+  if(tgt && price && tgt !== "N/A"){
+    var up = Math.round(((parseFloat(tgt) - price) / price) * 100);
+    if(up > 15){
+      reasons.push({icon:"&#127919;", label:up+"% Upside to Analyst Target", short:"Analysts see "+up+"% more room to grow.",
+        why:"The average analyst target for "+name+" is "+fmt(tgt)+" while the stock trades at "+fmt(price)+" today. That "+up+" percent gap is the upside the professionals believe is still available based on their models of future earnings. A target call matters because it is the analyst best estimate of what the company is truly worth.",
+        watch:"Targets change after earnings. A strong beat usually pushes targets higher. A miss usually pulls them down.",
+        lesson:"A large gap between the current price and the analyst target suggests the market has not yet priced in what the professionals see. That gap is opportunity."});
+    } else if(up > 0){
+      reasons.push({icon:"&#127919;", label:up+"% Upside to Target", short:"Modest "+up+"% upside to target.",
+        why:"Analysts see "+fmt(tgt)+" as fair value for "+name+" versus the current "+fmt(price)+". That is "+up+" percent of upside. It is positive but it is not a wide gap, which means most of the easy gains may already be priced in.",
+        watch:"The closer a stock gets to its target the less room is left. From here you need analysts to raise their target to keep the upside alive.",
+        lesson:"Targets narrow as a stock rises. The best entries come when a stock sits far below its target with strong fundamentals behind it."});
+    } else if(up < -5){
+      reasons.push({icon:"&#127919;", label:"Trading "+Math.abs(up)+"% Above Target", short:"Already priced above fair value.",
+        why:name+" at "+fmt(price)+" is trading "+Math.abs(up)+" percent above the analyst target of "+fmt(tgt)+". The stock has run ahead of what the professionals think it is worth. That is a valuation warning, because price tends to drift back toward fair value over time.",
+        watch:"Stocks above their target need strong earnings just to hold the line. Any disappointment can bring a sharp drop.",
+        lesson:"When a stock trades well above its target it is priced for perfection. Any stumble tends to be punished quickly."});
+    } else {
+      reasons.push({icon:"&#127919;", label:"Near Analyst Target", short:"Trading near fair value.",
+        why:name+" at "+fmt(price)+" sits right near the analyst target of "+fmt(tgt)+". The professionals see it as fairly priced right now, neither cheap nor expensive.",
+        watch:"At fair value the next move depends on whether the company can grow faster than expected. The next earnings report becomes the key test.",
+        lesson:"Fair value is a starting line, not a finish line. Companies that keep beating expectations see their fair value rise over time."});
+    }
+  }
+
+  if(pe && pe !== "N/A"){
+    var pn = parseFloat(pe);
+    if(!isNaN(pn)){
+      if(pn < 12){
+        reasons.push({icon:"&#128176;", label:"PE "+pn.toFixed(1)+" &#8226; Potentially Undervalued", short:"Paying only "+pn.toFixed(1)+"x earnings. Average is 20x.",
+          why:"The price to earnings ratio of "+pn.toFixed(1)+" means you pay "+fmt(pn)+" for every one dollar "+name+" earns in a year. The average stock trades near twenty times earnings, so this company is priced well below average. That can mean a hidden bargain, or it can mean the market sees a problem. The PE ratio matters because it tells you how much you pay for each dollar of real profit.",
+          watch:"A low PE only helps if earnings are steady or growing. Check whether profits have been rising or falling over recent quarters.",
+          lesson:"The PE ratio is simply the price you pay per dollar of company profit. A low PE paired with growing earnings is one of the most powerful setups in investing."});
+      } else if(pn < 20){
+        reasons.push({icon:"&#128176;", label:"PE "+pn.toFixed(1)+" &#8226; Reasonably Valued", short:"PE at or below market average.",
+          why:"A PE of "+pn.toFixed(1)+" means you are paying a fair price for the earnings of "+name+". At or below the market average near twenty times, you are not overpaying. Fair pricing lowers the risk that the valuation alone drags the stock down. The PE ratio matters because an expensive stock has to grow just to justify its price.",
+          watch:"A reasonable PE plus steady earnings growth is the ideal pairing. Check that earnings have grown year over year.",
+          lesson:"The strongest long term picks combine a fair PE with growing earnings. You buy fair today and gain value as profits rise."});
+      } else if(pn > 60){
+        reasons.push({icon:"&#128184;", label:"PE "+pn.toFixed(1)+" &#8226; High Valuation", short:"Steep premium. Needs strong growth.",
+          why:"A PE of "+pn.toFixed(1)+" means you pay over "+Math.round(pn)+" dollars for every one dollar "+name+" earns. That demands exceptional future growth. If growth slows even slightly the stock can fall hard because investors stop accepting the premium. The PE ratio matters most here, because a high number means a small mistake gets punished.",
+          watch:"Ask what is driving the high PE. Is it genuine fast growth, or is it hype and momentum. Separate the story from the math.",
+          lesson:"High PE stocks need fast growth just to hold their price. When growth slows they can fall quickly. Keep position sizes smaller here."});
+      } else {
+        reasons.push({icon:"&#128203;", label:"PE "+pn.toFixed(1)+" &#8226; Growth Premium", short:"Above average. Growth must justify it.",
+          why:"A PE of "+pn.toFixed(1)+" sits above the market average near twenty. That is acceptable for a fast growing company, but the growth has to actually arrive to justify the higher price you pay today. The PE ratio matters because it sets the bar the company must clear.",
+          watch:"Compare the PE to the growth rate. A PE of thirty five with thirty percent growth is reasonable. A PE of thirty five with five percent growth is expensive.",
+          lesson:"A high PE is not automatically bad if growth backs it up. Divide the PE by the growth rate for a clearer read on true value."});
+      }
+    }
+  }
+
+  if(beta && beta !== "N/A"){
+    var b = parseFloat(beta);
+    if(!isNaN(b)){
+      if(b > 1.5){
+        reasons.push({icon:"&#127794;", label:"Beta "+b.toFixed(2)+" &#8226; High Volatility", short:"Moves "+b.toFixed(1)+"x as much as the market.",
+          why:"Beta measures how much "+name+" moves compared to the whole market. A beta of "+b.toFixed(2)+" means when the market rises one percent this stock tends to rise "+b.toFixed(2)+" percent, and it falls harder when the market drops. More reward, more risk.",
+          watch:"High volatility stocks need tighter exit plans. A ten percent market drop can hit this stock fifteen to twenty percent. Plan for that before you buy.",
+          lesson:"Beta is your risk multiplier. A high number means bigger swings both ways, so keep the position size smaller to manage risk."});
+      } else if(b < 0.5){
+        reasons.push({icon:"&#128737;&#65039;", label:"Beta "+b.toFixed(2)+" &#8226; Low Volatility", short:"Calmer than the market.",
+          why:"A beta of "+b.toFixed(2)+" means "+name+" is much steadier than the overall market. It does not swing as hard either way. This is common with defensive companies like utilities and dividend payers. Less drama, smaller swings.",
+          watch:"Low volatility stocks hold up better in downturns but tend to lag in strong bull runs. They are built for stability, not excitement.",
+          lesson:"Low volatility stocks are the shock absorbers of a portfolio. They smooth out the ride and suit anyone who cannot stomach big swings."});
+      }
+    }
+  }
+
+  if(d.congressional && d.congressional.length){
+    var cBuys = d.congressional.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("purchase") >= 0; });
+    var cSells = d.congressional.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("sale") >= 0; });
+    if(cBuys.length >= 2){
+      var cnames = cBuys.slice(0,3).map(function(b){ return esc(b.politician); }).join(", ");
+      reasons.push({icon:"&#127963;&#65039;", label:"Congressional Buying: "+cBuys.length+" purchases", short:"Members of Congress are buying this.",
+        why:"By law, every member of Congress must publicly report their stock trades within forty five days. Recently "+cBuys.length+" purchases were disclosed in "+name+", including "+cnames+". When several lawmakers buy the same stock around the same time it can hint at positive expectations about coming policy or regulation. The sentiment of the government matters because lawmakers sometimes see policy shifts before the public does, and those shifts can directly help or hurt a company.",
+        watch:"Check which committees these members sit on. A lawmaker on the committee that regulates this industry carries far more weight than an unrelated member.",
+        lesson:"Congressional trades are public and most people ignore them. They give everyday investors a window into where policy insiders are placing their own money."});
+    } else if(cBuys.length === 1){
+      reasons.push({icon:"&#127963;&#65039;", label:"Congressional Buying Detected", short:esc(cBuys[0].politician)+" bought this stock.",
+        why:esc(cBuys[0].politician)+" recently bought shares of "+name+" with personal money, disclosed under the federal STOCK Act. A single purchase is worth noting because lawmakers sometimes have early sight of policy and regulation that can move a company. The sentiment of the government matters because those policy moves can change a company outlook overnight.",
+        watch:"One member buying is interesting. Several buying the same name is far stronger. Watch for more disclosures to follow.",
+        lesson:"The STOCK Act made congressional trading public so ordinary investors can see what policy insiders are doing with their own cash."});
+    } else if(cSells.length >= 2){
+      reasons.push({icon:"&#127963;&#65039;", label:"Congressional Selling: "+cSells.length+" sales", short:"Members of Congress are selling.",
+        why:cSells.length+" members of Congress recently sold shares of "+name+". Lawmakers sell for many ordinary reasons like taxes and spreading out wealth, but several selling the same name at once can signal worry about coming policy headwinds. The sentiment of the government matters because a regulatory change can hurt a company before the wider market reacts.",
+        watch:"Check whether these members sit on a committee that regulates this industry. That makes the selling far more meaningful.",
+        lesson:"Congressional selling is a weaker signal than buying, but it is worth watching when several members exit the same name in a short window."});
+    }
+  }
+
+  if(d.insider && d.insider.length){
+    var iBuys = d.insider.filter(function(t){ return t.is_clevel && t.action === "A"; });
+    var iSells = d.insider.filter(function(t){ return t.is_clevel && t.action === "D"; });
+    if(iBuys.length >= 2){
+      var inames = iBuys.slice(0,3).map(function(t){ return esc(t.name)+" ("+esc(t.title)+")"; }).join(", ");
+      reasons.push({icon:"&#128188;", label:"Executive Cluster Buy: "+iBuys.length+" insiders", short:"Multiple executives buying their own stock.",
+        why:"Several executives, including "+inames+", recently bought shares of "+name+" with their own personal money. These people see every internal number before the public does. The only reason an executive spends personal cash on company stock is the belief that the price is going higher. When several buy at once it is one of the strongest signals in all of investing, because you cannot fake real money on the line.",
+        watch:"Look at how much they bought. A chief executive spending a million dollars of personal money is a far stronger signal than a small token purchase.",
+        lesson:"Insider buying is the ultimate vote of confidence. Real personal money from the people who know the company best deserves real attention."});
+    } else if(iBuys.length === 1){
+      var ib = iBuys[0];
+      reasons.push({icon:"&#128188;", label:"Executive Buy: "+esc(ib.title), short:esc(ib.name)+" bought shares personally.",
+        why:esc(ib.name)+", the "+esc(ib.title)+" of "+name+", recently bought shares with personal money. Executives see financial data and forward plans the public never sees. When they spend their own cash on the stock it signals they see value the market has not caught up to yet.",
+        watch:"Ask whether the purchase is large relative to their pay. A leader buying a meaningful amount is more telling than a small symbolic buy.",
+        lesson:"An open market purchase by an executive is very different from stock handed to them as pay. A purchase means they paid real money, just like any investor."});
+    } else if(iSells.length >= 2){
+      reasons.push({icon:"&#128188;", label:"Executive Selling: "+iSells.length+" insiders", short:"Multiple executives selling shares.",
+        why:iSells.length+" executives recently sold shares of "+name+". Executives sell for many ordinary reasons such as taxes and spreading out their wealth, but heavy selling by several leaders at once can sometimes signal they are bracing for weaker results. It lowers conviction without being a clear alarm.",
+        watch:"Find out whether these are pre scheduled sales set up months ago or fresh decisions to sell. Fresh decisions carry far more weight.",
+        lesson:"Context decides everything with insider selling. Routine planned sales are normal. Sudden selling by many leaders at once is the kind that carries a warning."});
+    }
+  }
+
+  if(d.news && d.news.length){
+    reasons.push({icon:"&#128240;", label:"News Coverage: "+d.news.length+" recent articles", short:"Active news flow on this name.",
+      why:"Apex Q found "+d.news.length+" recent articles on "+name+". News moves stocks in the short term faster than almost anything else. A single headline can shift the direction of a stock within minutes, which is why staying current on the story matters.",
+      watch:"Look for a pattern across the articles. Is the coverage mostly positive or mostly negative. Are the same themes repeating around growth, competition, or regulation.",
+      lesson:"News drives the short term. Fundamentals drive the long term. Use the news to read today, and use the fundamentals to decide if the price is fair."});
+  }
+
+  return reasons;
+}
+
+function renderCong(data){
+  var s = document.getElementById("cong");
+  if(!data || !data.length){
+    s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Congressional Trading</div><div class=\"ibdg bg\">CLEAN</div></div><div class=\"itxt\">No recent congressional trades on record for this stock. No members of Congress have publicly reported buying or selling it lately.<div class=\"iwhy\">Why it matters: lawmakers sometimes see policy changes before the public. A clean record is neutral, neither a plus nor a minus.</div></div></div>";
+    return;
+  }
+  var buys = data.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("purchase") >= 0; });
+  var sells = data.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("sale") >= 0; });
+  var bc = buys.length > sells.length ? "bg" : (sells.length > buys.length ? "br" : "by");
+  var bl = buys.length > sells.length ? ("BUYING ("+buys.length+")") : (sells.length > buys.length ? ("SELLING ("+sells.length+")") : "MIXED");
+  var rows = data.map(function(t){
+    var cls = (t.action && t.action.toLowerCase().indexOf("purchase") >= 0) ? "buy" : "sell";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+esc(t.action)+"</span><span>"+esc(t.politician)+"</span><span class=\"gray\">("+esc(t.party)+")</span><span class=\"gray\">"+esc(t.amount)+"</span><span class=\"gray\">"+esc(t.date)+"</span></div>";
+  }).join("");
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Congressional Trades &#8226; "+data.length+" total</div><div class=\"ibdg "+bc+"\">"+bl+"</div></div><div class=\"itxt\">"+rows+"<div class=\"iwhy\">Why it matters: members of Congress must report trades by law. When several buy or sell the same name it can hint at policy moves coming that the wider market has not priced in yet.</div></div></div>";
+}
+
+function renderIns(data){
+  var s = document.getElementById("ins");
+  if(!data || !data.length){
+    s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Activity</div><div class=\"ibdg bg\">CLEAN</div></div><div class=\"itxt\">No recent insider filings found. Company executives and directors have not reported unusual trades in their own stock lately.<div class=\"iwhy\">Why it matters: insiders know the company best. A quiet record is neutral. Heavy buying would be a strong positive, heavy selling a caution.</div></div></div>";
+    return;
+  }
+  var buys = data.filter(function(t){ return t.action === "A"; });
+  var sells = data.filter(function(t){ return t.action === "D"; });
+  var cb = data.filter(function(t){ return t.is_clevel && t.action === "A"; });
+  var bc = buys.length > sells.length ? "bg" : (sells.length > buys.length ? "br" : "by");
+  var lbl = buys.length > sells.length ? "BUYING" : "SELLING";
+  if(cb.length >= 2){ lbl = "CLUSTER BUY"; }
+  var rows = data.slice(0,8).map(function(t){
+    var cls = t.action === "A" ? "buy" : "sell";
+    var act = t.action === "A" ? "BUY" : "SELL";
+    var sh = t.shares ? ("<span class=\"gray\">"+parseInt(t.shares).toLocaleString()+" shares</span>") : "";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(t.title)+"</span>"+sh+"<span class=\"gray\">"+esc(t.date)+"</span></div>";
+  }).join("");
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Trades &#8226; "+data.length+" filings</div><div class=\"ibdg "+bc+"\">"+lbl+"</div></div><div class=\"itxt\">"+rows+"<div class=\"iwhy\">Why it matters: executives buy their own stock for only one reason, they expect it to rise. They sell for many reasons. That is why insider buying is a stronger signal than insider selling.</div></div></div>";
+}
+
+function renderNews(data){
+  var s = document.getElementById("news");
+  if(!data || !data.length){
+    s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">News Feed</div><div class=\"ibdg by\">NO RESULTS</div></div><div class=\"itxt\">No articles found in the last sixty days. Light coverage is not automatically bad. Some of the best opportunities sit in names the headlines have not found yet.</div></div>";
+    return;
+  }
+  var isGen = data.some(function(n){ return n.source && n.source.indexOf("General") >= 0; });
+  var pre = isGen ? "<div class=\"ic\" style=\"margin-bottom:8px\"><div class=\"ih\"><div class=\"it\">General Market News</div><div class=\"ibdg by\">NO COMPANY NEWS</div></div><div class=\"itxt\" style=\"font-size:12px\">No company specific news in the last sixty days. Showing general market news instead.</div></div>" : "";
+  var items = data.map(function(n){
+    var sum = n.summary ? ("<div class=\"nsum\">"+esc(n.summary)+"</div>") : "";
+    return "<div class=\"ni\"><div class=\"ns\">"+esc(n.source)+"</div><div class=\"nh\">"+esc(n.headline)+"</div>"+sum+"</div>";
+  }).join("");
+  s.innerHTML = pre + items;
+}
+
+function loadTicker(sym){
+  return fetch(API + "/analyze?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
+    if(d.price){
+      var up = d.change_pct >= 0;
+      var cls = up ? "tup" : "tdn";
+      var sign = up ? "+" : "";
+      return "<span class=\"tki\" data-sym=\""+esc(sym)+"\"><span class=\"tsym\">"+esc(d.symbol)+"</span><span class=\"tpx\">$"+d.price.toLocaleString()+"</span><span class=\""+cls+"\">"+sign+d.change_pct+"%</span></span>";
+    }
+    return "";
+  }).catch(function(){ return ""; });
+}
+
+function buildTicker(){
+  var tk = document.getElementById("tktrack");
+  var chain = Promise.resolve("");
+  TKS.forEach(function(s){
+    chain = chain.then(function(acc){
+      return loadTicker(s).then(function(html){ return acc + html; });
+    });
+  });
+  chain.then(function(all){
+    if(all){ tk.innerHTML = all + all; }
+  });
+}
+
+function loadMarket(){
+  MKT.forEach(function(m){
+    var el = document.getElementById(m.id);
+    fetch(API + "/analyze?symbol=" + encodeURIComponent(m.s)).then(function(r){ return r.json(); }).then(function(d){
+      if(d.price && el){
+        var sign = d.change_pct >= 0 ? "+" : "";
+        el.textContent = d.price.toLocaleString() + " (" + sign + d.change_pct + "%)";
+        el.className = "mv " + (d.change_pct >= 0 ? "up" : "dn");
+      } else if(el){
+        el.textContent = "N/A"; el.className = "mv ld";
+      }
+    }).catch(function(){
+      if(el){ el.textContent = "N/A"; el.className = "mv ld"; }
+    });
+  });
+}
+
+function go(sym){
+  document.getElementById("si").value = sym;
+  run();
+}
+
+function suggest(q){
+  fetch(API + "/search?q=" + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
+    var ac = document.getElementById("ac");
+    if(d.results && d.results.length){
+      ac.innerHTML = d.results.map(function(x){
+        return "<div class=\"aci\" data-sym=\""+esc(x.symbol)+"\"><span class=\"acs\">"+esc(x.symbol)+"</span><span class=\"acn\">"+esc(x.name||"")+"</span></div>";
+      }).join("");
+      ac.style.display = "block";
+    } else {
+      ac.style.display = "none";
+    }
+  }).catch(function(){});
+}
+
+var REASON_COUNT = 0;
+
+function loadLiveContext(symbol){
+  fetch(API + "/context?symbol=" + encodeURIComponent(symbol)).then(function(r){ return r.json(); }).then(function(res){
+    if(!res || !res.live){ return; }
+    var L = res.live;
+    var card = {
+      icon: "&#128225;",
+      label: "Live Market Context",
+      short: "What is happening with this name right now.",
+      why: esc(L.current_context || "") + (L.why_it_matters ? (" " + esc(L.why_it_matters)) : ""),
+      watch: esc(L.watch_for || ""),
+      lesson: esc(L.simple_lesson || "")
+    };
+    var vrl = document.getElementById("vrl");
+    if(!vrl) return;
+    var html = buildCard(card, "live0", true);
+    vrl.insertAdjacentHTML("afterbegin", html);
+  }).catch(function(){});
+}
+
+function run(){
+  var val = document.getElementById("si").value.trim();
+  if(!val) return;
+  document.getElementById("ac").style.display = "none";
+  document.getElementById("lb").classList.add("on");
+  document.getElementById("rpt").style.opacity = "0.3";
+
+  fetch(API + "/analyze?symbol=" + encodeURIComponent(val)).then(function(r){ return r.json(); }).then(function(d){
+    if(d.error){
+      document.getElementById("sym").textContent = "NOT FOUND";
+      document.getElementById("sfull").textContent = d.error;
+      document.getElementById("lb").classList.remove("on");
+      document.getElementById("rpt").style.opacity = "1";
+      return;
+    }
+
+    document.getElementById("sym").textContent = d.symbol || val;
+    document.getElementById("sfull").textContent = d.name || val;
+    document.getElementById("ssect").textContent = d.sector || "";
+    document.getElementById("spx").textContent = "$" + (d.price || 0).toLocaleString();
+    document.getElementById("mp").textContent = "$" + (d.price || 0).toLocaleString();
+
+    var chg = d.change_pct || 0;
+    var sign = chg >= 0 ? "+" : "";
+    document.getElementById("schg").textContent = sign + chg + "% today";
+    document.getElementById("schg").className = "sc " + (chg >= 0 ? "up" : "dn");
+    document.getElementById("mc").textContent = sign + chg + "%";
+    document.getElementById("mc").className = "mv2 " + (chg >= 0 ? "pos" : "neg");
+    document.getElementById("ms").textContent = d.conviction || "--";
+    document.getElementById("mpe").textContent = d.pe_ratio || "N/A";
+    document.getElementById("mt").textContent = (d.analyst_target && d.analyst_target !== "N/A") ? ("$" + d.analyst_target) : "N/A";
+    document.getElementById("mm").textContent = fmt(d.market_cap);
+
+    var v = d.verdict || "WATCH";
+    document.getElementById("vbox").className = "vb " + v.toLowerCase();
+    document.getElementById("vbdg").className = "vbdg " + v.toLowerCase();
+    var vi = {APPROVE:"&#9989;", PASS:"&#10060;", WATCH:"&#9889;"};
+    document.getElementById("vbdg").innerHTML = vi[v] + " " + v;
+    document.getElementById("vsco").textContent = "Market Intelligence Rating: " + (d.conviction || "--");
+
+    var nm = esc(d.name || d.symbol);
+    var conf = {
+      APPROVE: "The weight of evidence leans positive on " + nm + ". The signals below across price, valuation, analyst calls, and smart money line up more positive than negative. Read each one to understand the full picture before acting.",
+      PASS: "The weight of evidence leans negative on " + nm + " right now. More signals point down than up. The cards below explain exactly what is dragging on this name and what would need to change.",
+      WATCH: "The signals on " + nm + " are mixed right now. Some point up and some point down, so the patient move is to watch and wait for a clearer setup. The cards below explain each signal in plain English."
+    };
+    document.getElementById("vconf").textContent = conf[v] || "";
+
+    var meanTxt = {
+      APPROVE: "APPROVE means the data leans toward a good entry. It does not mean a sure thing. No signal is ever certain. Always size your position sensibly and decide in advance the level where you would step out if you are wrong.",
+      PASS: "PASS means the data says step aside for now. It does not mean the company is bad forever. It means today the risk outweighs the reward. Conditions can change and flip this to a WATCH or an APPROVE later.",
+      WATCH: "WATCH means do not act yet. The signals disagree, so there is no clear edge today. Patience is a position. Wait for the picture to sharpen before you commit money."
+    };
+    var vmean = document.getElementById("vmean");
+    vmean.innerHTML = "<div class=\"vmeant\">What " + v + " Means</div><div class=\"vmeantxt\">" + meanTxt[v] + "</div>";
+    vmean.style.display = "block";
+
+    var wg = document.getElementById("wguide");
+    if(v === "WATCH"){
+      wg.innerHTML = "<div class=\"wg yellow\"><div class=\"wgt\">&#128064; What To Watch For</div><div class=\"wgtxt\">A clear price move above plus two percent on heavy volume. An analyst upgrade to Buy. A C level executive buying shares. A member of Congress disclosing a purchase. Any of these would tip the balance.</div></div><div class=\"wg blue\"><div class=\"wgt\">&#9889; What Changes The Verdict</div><div class=\"wgtxt\">To reach APPROVE the positive signals need to outweigh the negative ones. An analyst upgrade or insider buying are the fastest ways to get there. To slip to PASS the price would need to break down alongside a negative analyst call.</div></div>";
+    } else if(v === "PASS"){
+      wg.innerHTML = "<div class=\"wg red\"><div class=\"wgt\">&#128064; Watch For Recovery Signs</div><div class=\"wgtxt\">Price finding a floor and holding above recent lows. An analyst upgrade. Insider or congressional buying. These would be the first hints the tide is turning.</div></div><div class=\"wg blue\"><div class=\"wgt\">&#9889; What Changes The Verdict</div><div class=\"wgtxt\">To climb to WATCH the price needs to stabilize and at least one negative signal needs to flip positive. To reach APPROVE several signals would need to line up positive at once.</div></div>";
+    } else {
+      wg.innerHTML = "";
+    }
+
+    var reasons = buildReasons(d);
+    REASON_COUNT = reasons.length;
+    var vrl = document.getElementById("vrl");
+    vrl.innerHTML = reasons.map(function(r, i){ return buildCard(r, i, false); }).join("");
+
+    renderCong(d.congressional || []);
+    renderIns(d.insider || []);
+    renderNews(d.news || []);
+
+    var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
+    var panel = document.getElementById("panel");
+    var ex = panel.querySelector("[data-sym=\"" + d.symbol + "\"]");
+    var pcard = "<div class=\"sg\" data-sym=\"" + esc(d.symbol) + "\"><div class=\"sgtop\"><div class=\"sgsym\">" + esc(d.symbol) + "</div><div class=\"sgv " + vc + "\">" + v + "</div></div><div class=\"sgi\">$" + (d.price || 0).toLocaleString() + " | " + esc(d.conviction || "") + " | " + esc(d.name) + "</div></div>";
+    if(ex){ ex.outerHTML = pcard; }
+    else { panel.insertAdjacentHTML("afterbegin", pcard); }
+
+    // Fire the live context request AFTER the report is on screen. It can only add, never block.
+    loadLiveContext(d.symbol || val);
+
+  }).catch(function(){
+    document.getElementById("sym").textContent = "ERROR";
+    document.getElementById("sfull").textContent = "Connection failed. Please try again.";
+  }).then(function(){
+    document.getElementById("lb").classList.remove("on");
+    document.getElementById("rpt").style.opacity = "1";
+  });
+}
+
+document.addEventListener("click", function(e){
+  var hdr = e.target.closest(".vr-hdr");
+  if(hdr){ toggleCard(hdr.getAttribute("data-bid")); return; }
+  var symEl = e.target.closest("[data-sym]");
+  if(symEl){ go(symEl.getAttribute("data-sym")); return; }
+  if(e.target.id === "analyzeBtn"){ run(); return; }
+  if(!e.target.closest(".srow")){ document.getElementById("ac").style.display = "none"; }
+});
+
+var acT;
+document.getElementById("si").addEventListener("input", function(){
+  clearTimeout(acT);
+  var v = this.value.trim();
+  if(v.length < 2){ document.getElementById("ac").style.display = "none"; return; }
+  acT = setTimeout(function(){ suggest(v); }, 300);
+});
+
+document.getElementById("si").addEventListener("keypress", function(e){
+  if(e.key === "Enter"){ run(); }
+});
+
+buildTicker();
+loadMarket();
+</script>
+</body>
+</html>
