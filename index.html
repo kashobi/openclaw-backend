@@ -183,6 +183,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .discMeta .gn{color:var(--red);}
 .discUp{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:700;margin-top:3px;}
 .discFoot{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:12px;line-height:1.5;font-weight:500;text-align:center;}
+.vdrop{background:rgba(139,0,0,.12);border:2px solid var(--red);border-radius:10px;padding:13px 16px;margin-bottom:12px;font-size:14.5px;color:var(--red);font-weight:600;line-height:1.65;}
 </style>
 </head>
 <body>
@@ -733,7 +734,11 @@ function run(){
       PASS: "The weight of evidence leans negative on " + nm + " right now. More signals point down than up. The cards below explain exactly what is dragging on this name and what would need to change.",
       WATCH: "The signals on " + nm + " are mixed right now. Some point up and some point down, so the patient move is to watch and wait for a clearer setup. The cards below explain each signal in plain English."
     };
-    document.getElementById("vconf").textContent = conf[v] || "";
+    var alertHtml = "";
+    if(d.alert === "sharp_drop"){
+      alertHtml = "<div class=\"vdrop\">&#9888;&#65039; This stock just had an unusually sharp drop. The analyst target and rating shown below were most likely set before the drop, so they may be stale and the upside they imply can be an illusion created by the falling price. Understand why it fell before considering anything. That is why the call is held at WATCH.</div>";
+    }
+    document.getElementById("vconf").innerHTML = alertHtml + (conf[v] || "");
 
     var meanTxt = {
       APPROVE: "APPROVE means the data leans toward a good entry. It does not mean a sure thing. No signal is ever certain. Always size your position sensibly and decide in advance the level where you would step out if you are wrong.",
