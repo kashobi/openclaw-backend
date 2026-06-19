@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, session
 from flask_cors import CORS
 import yfinance as yf
 import requests
@@ -30,6 +30,106 @@ def get_cache(key):
 
 def set_cache(key, data):
     CACHE[key] = (data, time.time())
+
+
+# ---------- Database and accounts ----------
+import secrets as _secrets
+try:
+    import psycopg2
+except Exception as _e:
+    psycopg2 = None
+    logger.error("psycopg2 not available: %s" % _e)
+from werkzeug.security import generate_password_hash, check_password_hash
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+def get_db():
+    if not DATABASE_URL or psycopg2 is None:
+        return None
+    return psycopg2.connect(DATABASE_URL)
+
+
+def ensure_db():
+    conn = get_db()
+    if conn is None:
+        logger.error("ensure_db: no database connection")
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS users ("
+            "id SERIAL PRIMARY KEY,"
+            "username TEXT UNIQUE NOT NULL,"
+            "password_hash TEXT NOT NULL,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS app_settings ("
+            "key TEXT PRIMARY KEY,"
+            "value TEXT NOT NULL)"
+        )
+        conn.commit()
+        cur.close()
+        logger.info("ensure_db: tables ready")
+    except Exception as e:
+        logger.error("ensure_db error: %s" % e)
+    finally:
+        conn.close()
+
+
+def get_secret_key():
+    env_secret = os.environ.get("SECRET_KEY", "")
+    if env_secret:
+        return env_secret
+    conn = get_db()
+    if conn is None:
+        return "apexq-temporary-dev-secret"
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM app_settings WHERE key = 'secret_key'")
+        row = cur.fetchone()
+        if row:
+            cur.close()
+            return row[0]
+        new_secret = _secrets.token_hex(32)
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('secret_key', %s) "
+            "ON CONFLICT (key) DO NOTHING",
+            (new_secret,),
+        )
+        conn.commit()
+        cur.execute("SELECT value FROM app_settings WHERE key = 'secret_key'")
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else new_secret
+    except Exception as e:
+        logger.error("get_secret_key error: %s" % e)
+        return "apexq-temporary-dev-secret"
+    finally:
+        conn.close()
+
+
+try:
+    ensure_db()
+except Exception as _e:
+    logger.error("startup ensure_db failed: %s" % _e)
+
+app.secret_key = get_secret_key()
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
+)
+
+
+def current_user():
+    uid = session.get("user_id")
+    uname = session.get("username")
+    if uid and uname:
+        return {"id": uid, "username": uname}
+    return None
 
 def resolve_ticker(query):
     query = query.strip()
@@ -97,6 +197,81 @@ def icon_512():
 @app.route("/apple-touch-icon.png")
 def apple_touch_icon():
     return _serve_file("apple-touch-icon.png", "image/png", binary=True)
+
+
+@app.route("/auth/me")
+def auth_me():
+    return jsonify({"user": current_user()})
+
+
+@app.route("/auth/signup", methods=["POST"])
+def auth_signup():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if len(username) < 3 or len(username) > 30:
+        return jsonify({"error": "Username must be 3 to 30 characters."}), 400
+    if not all(c.isalnum() or c in "_." for c in username):
+        return jsonify({"error": "Username can use letters, numbers, underscore, and period only."}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Accounts are not available right now."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
+        if cur.fetchone():
+            cur.close()
+            return jsonify({"error": "That username is taken."}), 409
+        pw_hash = generate_password_hash(password)
+        cur.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id", (username, pw_hash))
+        uid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        session.permanent = True
+        session["user_id"] = uid
+        session["username"] = username
+        return jsonify({"ok": True, "user": {"id": uid, "username": username}})
+    except Exception as e:
+        logger.error("signup error: %s" % e)
+        return jsonify({"error": "Could not create account. Try again."}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/auth/login", methods=["POST"])
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        return jsonify({"error": "Enter your username and password."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Accounts are not available right now."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, username, password_hash FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
+        row = cur.fetchone()
+        cur.close()
+        if not row or not check_password_hash(row[2], password):
+            return jsonify({"error": "Wrong username or password."}), 401
+        session.permanent = True
+        session["user_id"] = row[0]
+        session["username"] = row[1]
+        return jsonify({"ok": True, "user": {"id": row[0], "username": row[1]}})
+    except Exception as e:
+        logger.error("login error: %s" % e)
+        return jsonify({"error": "Could not log in. Try again."}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return jsonify({"ok": True})
 
 
 @app.route("/search")
