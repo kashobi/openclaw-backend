@@ -219,6 +219,20 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .authSubmit{width:100%;background:var(--accent);color:#fff;border:none;border-radius:11px;padding:14px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:800;cursor:pointer;}
 .authSubmit:hover{background:#002d88;}
 .authSubmit:disabled{opacity:.6;cursor:default;}
+.vconfidence{padding:11px 14px;border-radius:9px;margin-bottom:12px;}
+.vconfidence .cf-row{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:1px;}
+.vconfidence .cf-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.vconfidence .cf-exp{font-size:13px;font-weight:500;line-height:1.55;margin-top:6px;color:var(--text);}
+.cf-high{background:rgba(0,77,34,.1);color:var(--green);}
+.cf-high .cf-dot{background:var(--green);}
+.cf-med{background:rgba(92,45,0,.12);color:var(--yellow);}
+.cf-med .cf-dot{background:var(--yellow);}
+.cf-low{background:rgba(139,0,0,.1);color:var(--red);}
+.cf-low .cf-dot{background:var(--red);}
+.vflags{display:flex;flex-direction:column;gap:7px;margin-bottom:14px;}
+.vflag{font-size:13px;font-weight:500;line-height:1.55;padding:11px 14px;border-radius:9px;color:var(--text);}
+.vflag.warn{background:rgba(139,0,0,.08);border-left:3px solid var(--red);}
+.vflag.info{background:var(--s2);border-left:3px solid var(--accent);}
 </style>
 </head>
 <body>
@@ -304,7 +318,9 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
           <div class="vbdg watch" id="vbdg">&#9889; READY</div>
           <div class="vsco" id="vsco">Market Intelligence Rating: --</div>
         </div>
+        <div class="vconfidence" id="vconfidence" style="display:none"></div>
         <div class="vconf" id="vconf">Search any stock or company name above. Apex Q reads the price, the valuation, the analyst calls, the trades made by members of Congress, and the moves made by company executives. Then it explains the why behind every signal in plain English. Tap any card to learn why it matters.</div>
+        <div class="vflags" id="vflags" style="display:none"></div>
         <div class="vmean" id="vmean" style="display:none"></div>
         <div class="wguide" id="wguide"></div>
         <div class="vrlist" id="vrl"></div>
@@ -809,6 +825,32 @@ function run(){
       alertHtml = "<div class=\"vdrop\">&#9888;&#65039; This stock just had an unusually sharp drop. The analyst target and rating shown below were most likely set before the drop, so they may be stale and the upside they imply can be an illusion created by the falling price. Understand why it fell before considering anything. That is why the call is held at WATCH.</div>";
     }
     document.getElementById("vconf").innerHTML = alertHtml + (conf[v] || "");
+
+    var confLevel = d.confidence || "Medium";
+    var cmap = {
+      High: {t: "High", c: "cf-high", x: "The data came back complete and consistent. This is a full picture."},
+      Medium: {t: "Medium", c: "cf-med", x: "Some data was missing or worth a second look. A solid read, but verify the key points yourself."},
+      Low: {t: "Low", c: "cf-low", x: "Key data was missing or looked off. Lean on your own research here and treat this as a starting point only."}
+    };
+    var ci = cmap[confLevel] || cmap.Medium;
+    var ce = document.getElementById("vconfidence");
+    ce.className = "vconfidence " + ci.c;
+    ce.innerHTML = "<div class=\"cf-row\"><span class=\"cf-dot\"></span>DATA CONFIDENCE: " + ci.t.toUpperCase() + "</div><div class=\"cf-exp\">" + ci.x + "</div>";
+    ce.style.display = "block";
+
+    var flags = d.flags || [];
+    var fe = document.getElementById("vflags");
+    if(flags.length){
+      fe.innerHTML = flags.map(function(f){
+        var cls = f.level === "warn" ? "vflag warn" : "vflag info";
+        var ic = f.level === "warn" ? "&#9888;&#65039; " : "&#8505;&#65039; ";
+        return "<div class=\"" + cls + "\">" + ic + esc(f.text) + "</div>";
+      }).join("");
+      fe.style.display = "block";
+    } else {
+      fe.innerHTML = "";
+      fe.style.display = "none";
+    }
 
     var meanTxt = {
       APPROVE: "APPROVE means the data leans toward a good entry. It does not mean a sure thing. No signal is ever certain. Always size your position sensibly and decide in advance the level where you would step out if you are wrong.",
