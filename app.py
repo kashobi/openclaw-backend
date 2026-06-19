@@ -67,6 +67,38 @@ def home():
     return Response(html, mimetype="text/html")
 
 
+def _serve_file(filename, mimetype, binary=False):
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+    if binary:
+        return Response(open(path, "rb").read(), mimetype=mimetype)
+    return Response(open(path, encoding="utf-8").read(), mimetype=mimetype)
+
+
+@app.route("/manifest.json")
+def manifest():
+    return _serve_file("manifest.json", "application/json")
+
+
+@app.route("/sw.js")
+def service_worker():
+    return _serve_file("sw.js", "application/javascript")
+
+
+@app.route("/icon-192.png")
+def icon_192():
+    return _serve_file("icon-192.png", "image/png", binary=True)
+
+
+@app.route("/icon-512.png")
+def icon_512():
+    return _serve_file("icon-512.png", "image/png", binary=True)
+
+
+@app.route("/apple-touch-icon.png")
+def apple_touch_icon():
+    return _serve_file("apple-touch-icon.png", "image/png", binary=True)
+
+
 @app.route("/search")
 def search_ticker():
     q = request.args.get("q", "").strip()
