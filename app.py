@@ -286,6 +286,79 @@ def search_ticker():
         return jsonify({"error": str(e)}), 500
 
 
+def run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider):
+    # The referee checks every number for sanity before it reaches the screen,
+    # raises plain English flags for anything stale, missing, or unusual, and
+    # scores how much of the picture is solid so the report can state its confidence honestly.
+    flags = []
+
+    def warn(t):
+        flags.append({"level": "warn", "text": t})
+
+    def note(t):
+        flags.append({"level": "info", "text": t})
+
+    price_ok = isinstance(cur, (int, float)) and cur > 0
+    if not price_ok:
+        warn("The live price did not come back cleanly, so this read may be unreliable. Check the price on another source before trusting it.")
+
+    target_ok = (tgt != "N/A" and tgt is not None)
+    if target_ok and price_ok:
+        try:
+            ratio = float(tgt) / cur
+            if ratio > 3 or ratio < 0.34:
+                warn("The analyst price target is very far from the current price, which usually means it is stale or has not been updated after recent news. Treat the upside it implies with caution.")
+        except Exception:
+            pass
+
+    pe_ok = (pe != "N/A" and pe is not None)
+    if pe_ok:
+        try:
+            pn = float(pe)
+            if pn < 0:
+                warn("This company has no positive earnings right now, so the PE ratio is not meaningful. That is common for fast growing or turnaround companies, but it adds risk.")
+            elif pn > 200:
+                warn("The PE ratio is extremely high, which means either very high growth expectations or unusually low earnings. Either way the valuation is stretched.")
+        except Exception:
+            pe_ok = False
+
+    beta_ok = (beta != "N/A" and beta is not None)
+    if beta_ok:
+        try:
+            b = float(beta)
+            if b < -1 or b > 4:
+                warn("The volatility reading is unusual, which can happen with newer or thinly traded stocks. The risk numbers here may be less reliable.")
+        except Exception:
+            beta_ok = False
+
+    vol_ok = isinstance(volume, (int, float)) and volume > 0
+    if vol_ok and volume < 100000:
+        warn("This stock trades on low daily volume. Thinly traded stocks can swing hard and can be harder to buy or sell at a fair price.")
+
+    mc_ok = isinstance(market_cap, (int, float))
+    if mc_ok and market_cap < 300000000:
+        warn("This is a very small company. Small companies can grow fast but are more volatile and carry higher risk.")
+
+    news_ok = bool(news)
+    if not news_ok:
+        note("No recent company news was found, so this read leans on the numbers more than the story.")
+
+    smart_ok = bool(congressional) or bool(insider)
+    hist_ok = hist is not None and len(hist) >= 2
+
+    data_points = sum(1 for x in [price_ok, hist_ok, pe_ok, target_ok, beta_ok, mc_ok, news_ok, smart_ok] if x)
+    warns = len([f for f in flags if f["level"] == "warn"])
+
+    if (not price_ok) or warns >= 2 or data_points <= 3:
+        confidence = "Low"
+    elif warns >= 1 or data_points <= 5:
+        confidence = "Medium"
+    else:
+        confidence = "High"
+
+    return confidence, flags
+
+
 @app.route("/analyze")
 def analyze():
     query = request.args.get("symbol", "").strip()
@@ -435,6 +508,11 @@ def analyze():
             except Exception as e:
                 logger.error(f"News error: {e}")
 
+        market_cap = info.get("marketCap", "N/A")
+        volume = int(hist["Volume"].iloc[-1]) if not hist.empty else 0
+        beta = fmt_price(info.get("beta"))
+        confidence, flags = run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider)
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -448,9 +526,11 @@ def analyze():
             "score": score,
             "pe_ratio": pe,
             "analyst_target": tgt,
-            "market_cap": info.get("marketCap", "N/A"),
-            "volume": int(hist["Volume"].iloc[-1]),
-            "beta": fmt_price(info.get("beta")),
+            "market_cap": market_cap,
+            "volume": volume,
+            "beta": beta,
+            "confidence": confidence,
+            "flags": flags,
             "news": news,
             "congressional": congressional,
             "insider": insider,
