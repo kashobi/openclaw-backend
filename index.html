@@ -237,7 +237,11 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .saveBtn{width:100%;background:var(--s2);color:var(--accent);border:2px solid var(--accent);border-radius:11px;padding:12px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;}
 .saveBtn:hover{background:#fff;}
 .saveBtn.saved{background:var(--gbg);color:var(--green);border-color:var(--green);}
-.watchCard{position:relative;}
+.watchCard{position:relative;padding-right:34px;}
+.sgv.loading{background:var(--s2);color:var(--muted);border:2px solid var(--border);}
+.sgi .wPrice{font-weight:800;color:var(--text);}
+.sgi .wUp{color:var(--green);font-weight:700;}
+.sgi .wDn{color:var(--red);font-weight:700;}
 .watchRemove{position:absolute;top:8px;right:10px;background:none;border:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;font-weight:700;padding:0 4px;}
 .watchRemove:hover{color:var(--red);}
 </style>
@@ -1054,28 +1058,42 @@ function renderWatchCards(items){
   if(!panel) return;
   panel.innerHTML = items.map(function(it){
     var sid = it.symbol.replace(/[^A-Za-z0-9]/g, "_");
+    var nm = (it.name && it.name !== it.symbol) ? it.name : "";
     return "<div class=\"sg watchCard\" data-sym=\"" + esc(it.symbol) + "\">"
-      + "<button class=\"watchRemove\" data-remove=\"" + esc(it.symbol) + "\">&times;</button>"
-      + "<div class=\"sgtop\"><div class=\"sgsym\">" + esc(it.symbol) + "</div><div class=\"sgv vw\" id=\"wv_" + sid + "\">...</div></div>"
-      + "<div class=\"sgi\" id=\"wi_" + sid + "\">" + esc(it.name || "") + "</div></div>";
+      + "<button class=\"watchRemove\" data-remove=\"" + esc(it.symbol) + "\" aria-label=\"Remove\">&times;</button>"
+      + "<div class=\"sgtop\"><div class=\"sgsym\">" + esc(it.symbol) + "</div><div class=\"sgv loading\" id=\"wv_" + sid + "\">&#8230;</div></div>"
+      + "<div class=\"sgi\" id=\"wi_" + sid + "\">" + (nm ? esc(nm) : "Tap to open report") + "</div></div>";
   }).join("");
 }
 
 function fillWatchCard(it){
   var sid = it.symbol.replace(/[^A-Za-z0-9]/g, "_");
-  fetch(API + "/analyze?symbol=" + encodeURIComponent(it.symbol)).then(function(r){ return r.json(); }).then(function(d){
+  return fetch(API + "/analyze?symbol=" + encodeURIComponent(it.symbol)).then(function(r){ return r.json(); }).then(function(d){
     var v = document.getElementById("wv_" + sid);
     var i = document.getElementById("wi_" + sid);
-    if(d && d.verdict && v){
-      var vc = d.verdict === "APPROVE" ? "va" : (d.verdict === "PASS" ? "vp" : "vw");
-      v.className = "sgv " + vc;
-      v.textContent = d.verdict;
+    if(v){
+      if(d && d.verdict){
+        var vc = d.verdict === "APPROVE" ? "va" : (d.verdict === "PASS" ? "vp" : "vw");
+        v.className = "sgv " + vc;
+        v.textContent = d.verdict;
+      } else {
+        v.className = "sgv loading";
+        v.textContent = "N/A";
+      }
     }
-    if(d && d.price && i){
-      var sgn = (d.change_pct >= 0 ? "+" : "");
-      i.textContent = "$" + d.price.toLocaleString() + " | " + sgn + (d.change_pct || 0) + "%";
+    if(i){
+      if(d && d.price){
+        var sgn = (d.change_pct >= 0 ? "+" : "");
+        var nm = d.name || it.name || "";
+        i.innerHTML = "<span class=\"wPrice\">$" + d.price.toLocaleString() + "</span> <span class=\"" + (d.change_pct >= 0 ? "wUp" : "wDn") + "\">" + sgn + (d.change_pct || 0) + "%</span>" + (nm ? " &bull; " + esc(nm) : "");
+      } else {
+        i.textContent = "Tap to open report";
+      }
     }
-  }).catch(function(){});
+  }).catch(function(){
+    var i = document.getElementById("wi_" + sid);
+    if(i) i.textContent = "Tap to open report";
+  });
 }
 
 function loadWatchlist(){
@@ -1100,7 +1118,13 @@ function loadWatchlist(){
     if(t) t.style.display = "flex";
     if(p) p.style.display = "block";
     renderWatchCards(items);
-    items.forEach(fillWatchCard);
+    var idx = 0;
+    function nextFill(){
+      if(idx >= items.length) return;
+      var it = items[idx++];
+      fillWatchCard(it).then(function(){ setTimeout(nextFill, 150); });
+    }
+    nextFill();
   }).catch(function(){});
 }
 
