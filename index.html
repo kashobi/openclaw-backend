@@ -233,6 +233,13 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .vflag{font-size:13px;font-weight:500;line-height:1.55;padding:11px 14px;border-radius:9px;color:var(--text);}
 .vflag.warn{background:rgba(139,0,0,.08);border-left:3px solid var(--red);}
 .vflag.info{background:var(--s2);border-left:3px solid var(--accent);}
+.saveRow{margin-bottom:16px;}
+.saveBtn{width:100%;background:var(--s2);color:var(--accent);border:2px solid var(--accent);border-radius:11px;padding:12px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;}
+.saveBtn:hover{background:#fff;}
+.saveBtn.saved{background:var(--gbg);color:var(--green);border-color:var(--green);}
+.watchCard{position:relative;}
+.watchRemove{position:absolute;top:8px;right:10px;background:none;border:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;font-weight:700;padding:0 4px;}
+.watchRemove:hover{color:var(--red);}
 </style>
 </head>
 <body>
@@ -313,6 +320,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div><div class="sn" id="sym">APEX Q</div><div class="sf" id="sfull">Search a stock above to begin</div><div class="ss" id="ssect"></div></div>
         <div class="pb"><div class="sp" id="spx">--</div><div class="sc up" id="schg">--</div></div>
       </div>
+      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button></div>
       <div class="vb watch" id="vbox">
         <div class="vtop">
           <div class="vbdg watch" id="vbdg">&#9889; READY</div>
@@ -342,6 +350,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     </div>
   </div>
   <div>
+    <div class="stitle" id="watchTitle" style="display:none">&#11088; My Watchlist</div>
+    <div id="watchPanel" style="display:none"></div>
     <div class="stitle">Live Signals</div>
     <div id="panel">
       <div class="sg" data-sym="SOFI"><div class="sgtop"><div class="sgsym">SOFI</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
@@ -805,9 +815,14 @@ function run(){
       document.getElementById("sfull").textContent = d.error;
       document.getElementById("lb").classList.remove("on");
       document.getElementById("rpt").style.opacity = "1";
+      currentSymbol = null;
+      updateSaveBtn();
       return;
     }
 
+    currentSymbol = d.symbol || val;
+    currentName = d.name || "";
+    updateSaveBtn();
     document.getElementById("sym").textContent = d.symbol || val;
     document.getElementById("sfull").textContent = d.name || val;
     document.getElementById("ssect").textContent = d.sector || "";
@@ -919,6 +934,8 @@ function run(){
 document.addEventListener("click", function(e){
   var hdr = e.target.closest(".vr-hdr");
   if(hdr){ toggleCard(hdr.getAttribute("data-bid")); return; }
+  var rem = e.target.closest("[data-remove]");
+  if(rem){ e.stopPropagation(); removeFromWatch(rem.getAttribute("data-remove")); return; }
   var themeEl = e.target.closest("[data-theme]");
   if(themeEl){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
   var symEl = e.target.closest("[data-sym]");
@@ -944,6 +961,9 @@ loadMarket();
 
 var currentUser = null;
 var authMode = "login";
+var watchSymbols = [];
+var currentSymbol = null;
+var currentName = "";
 
 function setAuthMode(mode){
   authMode = mode;
@@ -1014,6 +1034,110 @@ function refreshMe(){
     if(!b) return;
     if(currentUser){ b.textContent = currentUser.username; b.classList.add("loggedin"); }
     else { b.textContent = "Log In"; b.classList.remove("loggedin"); }
+    loadWatchlist();
+  }).catch(function(){});
+}
+
+function updateSaveBtn(){
+  var row = document.getElementById("saveRow");
+  var btn = document.getElementById("saveBtn");
+  if(!btn || !row) return;
+  if(!currentSymbol){ row.style.display = "none"; return; }
+  row.style.display = "block";
+  var saved = watchSymbols.indexOf(currentSymbol) >= 0;
+  if(saved){ btn.className = "saveBtn saved"; btn.innerHTML = "&#11088; Saved to Watchlist"; }
+  else { btn.className = "saveBtn"; btn.innerHTML = "&#9734; Save to Watchlist"; }
+}
+
+function renderWatchCards(items){
+  var panel = document.getElementById("watchPanel");
+  if(!panel) return;
+  panel.innerHTML = items.map(function(it){
+    var sid = it.symbol.replace(/[^A-Za-z0-9]/g, "_");
+    return "<div class=\"sg watchCard\" data-sym=\"" + esc(it.symbol) + "\">"
+      + "<button class=\"watchRemove\" data-remove=\"" + esc(it.symbol) + "\">&times;</button>"
+      + "<div class=\"sgtop\"><div class=\"sgsym\">" + esc(it.symbol) + "</div><div class=\"sgv vw\" id=\"wv_" + sid + "\">...</div></div>"
+      + "<div class=\"sgi\" id=\"wi_" + sid + "\">" + esc(it.name || "") + "</div></div>";
+  }).join("");
+}
+
+function fillWatchCard(it){
+  var sid = it.symbol.replace(/[^A-Za-z0-9]/g, "_");
+  fetch(API + "/analyze?symbol=" + encodeURIComponent(it.symbol)).then(function(r){ return r.json(); }).then(function(d){
+    var v = document.getElementById("wv_" + sid);
+    var i = document.getElementById("wi_" + sid);
+    if(d && d.verdict && v){
+      var vc = d.verdict === "APPROVE" ? "va" : (d.verdict === "PASS" ? "vp" : "vw");
+      v.className = "sgv " + vc;
+      v.textContent = d.verdict;
+    }
+    if(d && d.price && i){
+      var sgn = (d.change_pct >= 0 ? "+" : "");
+      i.textContent = "$" + d.price.toLocaleString() + " | " + sgn + (d.change_pct || 0) + "%";
+    }
+  }).catch(function(){});
+}
+
+function loadWatchlist(){
+  var t = document.getElementById("watchTitle");
+  var p = document.getElementById("watchPanel");
+  if(!currentUser){
+    watchSymbols = [];
+    if(t) t.style.display = "none";
+    if(p){ p.style.display = "none"; p.innerHTML = ""; }
+    updateSaveBtn();
+    return;
+  }
+  fetch(API + "/watchlist", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    var items = (d && d.items) ? d.items : [];
+    watchSymbols = items.map(function(x){ return x.symbol; });
+    updateSaveBtn();
+    if(!items.length){
+      if(t) t.style.display = "none";
+      if(p){ p.style.display = "none"; p.innerHTML = ""; }
+      return;
+    }
+    if(t) t.style.display = "flex";
+    if(p) p.style.display = "block";
+    renderWatchCards(items);
+    items.forEach(fillWatchCard);
+  }).catch(function(){});
+}
+
+function toggleSave(){
+  if(!currentSymbol) return;
+  if(!currentUser){ openAuth("login"); return; }
+  var saved = watchSymbols.indexOf(currentSymbol) >= 0;
+  var path = saved ? "/watchlist/remove" : "/watchlist/add";
+  fetch(API + path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({symbol: currentSymbol, name: currentName})
+  }).then(function(r){ return r.json(); }).then(function(res){
+    if(res && res.ok){
+      if(saved){ watchSymbols = watchSymbols.filter(function(s){ return s !== currentSymbol; }); }
+      else { watchSymbols.push(currentSymbol); }
+      updateSaveBtn();
+      loadWatchlist();
+    } else if(res && res.error === "not_logged_in"){
+      openAuth("login");
+    }
+  }).catch(function(){});
+}
+
+function removeFromWatch(sym){
+  fetch(API + "/watchlist/remove", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({symbol: sym})
+  }).then(function(r){ return r.json(); }).then(function(res){
+    if(res && res.ok){
+      watchSymbols = watchSymbols.filter(function(s){ return s !== sym; });
+      updateSaveBtn();
+      loadWatchlist();
+    }
   }).catch(function(){});
 }
 
@@ -1028,6 +1152,7 @@ document.getElementById("authClose").addEventListener("click", closeAuth);
 document.getElementById("tabLogin").addEventListener("click", function(){ setAuthMode("login"); });
 document.getElementById("tabSignup").addEventListener("click", function(){ setAuthMode("signup"); });
 document.getElementById("authSubmit").addEventListener("click", submitAuth);
+document.getElementById("saveBtn").addEventListener("click", toggleSave);
 document.getElementById("authOverlay").addEventListener("click", function(e){ if(e.target.id === "authOverlay"){ closeAuth(); } });
 document.getElementById("authPass").addEventListener("keypress", function(e){ if(e.key === "Enter"){ submitAuth(); } });
 refreshMe();
