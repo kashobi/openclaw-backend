@@ -345,6 +345,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div class="met"><div class="ml2">Analyst Target</div><div class="mv2 pos" id="mt">--</div></div>
         <div class="met"><div class="ml2">Market Cap</div><div class="mv2 neu" id="mm">--</div></div>
       </div>
+      <div class="stitle" id="gradeTitle" style="display:none">&#128202; Analyst Rating Changes</div>
+      <div id="grades" style="display:none"></div>
       <div class="stitle">&#127963; Congressional Trading</div>
       <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128188; Insider Activity</div>
@@ -634,6 +636,34 @@ function buildReasons(d){
   return reasons;
 }
 
+function renderGrades(fmp){
+  var title = document.getElementById("gradeTitle");
+  var s = document.getElementById("grades");
+  if(!s || !title) return;
+  var grades = (fmp && fmp.grades) ? fmp.grades : [];
+  if(!grades.length){
+    title.style.display = "none";
+    s.style.display = "none";
+    s.innerHTML = "";
+    return;
+  }
+  var ups = 0, downs = 0;
+  var rows = grades.map(function(g){
+    var act = (g.action || "").toLowerCase();
+    var cls = "gray", lab = "";
+    if(act.indexOf("up") >= 0){ cls = "buy"; lab = "UPGRADE"; ups++; }
+    else if(act.indexOf("down") >= 0){ cls = "sell"; lab = "DOWNGRADE"; downs++; }
+    else { cls = "gray"; lab = "RATING"; }
+    var change = g.prev ? (esc(g.prev) + " &rarr; " + esc(g.new)) : esc(g.new);
+    return "<div class=\"tr\"><span class=\"" + cls + "\">" + lab + "</span><span>" + esc(g.firm) + "</span><span class=\"gray\">" + change + "</span><span class=\"gray\">" + esc(usDate(g.date)) + "</span></div>";
+  }).join("");
+  var bc = ups > downs ? "bg" : (downs > ups ? "br" : "by");
+  var bl = ups > downs ? "MORE UPGRADES" : (downs > ups ? "MORE DOWNGRADES" : "MIXED");
+  title.style.display = "block";
+  s.style.display = "block";
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Recent Analyst Moves</div><div class=\"ibdg " + bc + "\">" + bl + "</div></div><div class=\"itxt\">" + rows + "<div class=\"iwhy\">Why it matters: a target is just a number, but the direction analysts are moving is the live signal. A run of upgrades means the pros are turning more positive. A run of downgrades is a warning the story may be weakening.</div></div></div>";
+}
+
 function renderCong(data){
   var s = document.getElementById("cong");
   if(!data || !data.length){
@@ -860,6 +890,8 @@ function run(){
     var alertHtml = "";
     if(d.alert === "sharp_drop"){
       alertHtml = "<div class=\"vdrop\">&#9888;&#65039; This stock just had an unusually sharp drop. The analyst target and rating shown below were most likely set before the drop, so they may be stale and the upside they imply can be an illusion created by the falling price. Understand why it fell before considering anything. That is why the call is held at WATCH.</div>";
+    } else if(d.alert === "insider_selling"){
+      alertHtml = "<div class=\"vdrop\">&#9888;&#65039; Several company executives recently sold large amounts of their own stock. Insiders sell for many reasons, so this is not proof of trouble, but a cluster of top officers selling at once is a real caution. That is why the call is held at WATCH. Read the Insider Activity section below.</div>";
     }
     document.getElementById("vconf").innerHTML = alertHtml + (conf[v] || "");
 
@@ -915,6 +947,7 @@ function run(){
     renderCong(d.congressional || []);
     renderIns(d.insider || []);
     renderNews(d.news || []);
+    renderGrades(d.fmp || {});
 
     var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
     var panel = document.getElementById("panel");
