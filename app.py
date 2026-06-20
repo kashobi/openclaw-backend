@@ -5,6 +5,8 @@ import requests
 import os
 import time
 import json
+import re
+import html
 import logging
 from datetime import datetime, timedelta
 
@@ -286,6 +288,40 @@ def search_ticker():
         return jsonify({"error": str(e)}), 500
 
 
+def clean_text(s):
+    # Strips HTML, decodes entities, normalizes odd characters, and rejoins broken
+    # ordinals like "16 th" so news text reads clean instead of garbled.
+    if not s:
+        return ""
+    s = str(s)
+    s = html.unescape(s)
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = html.unescape(s)
+    repl = {
+        "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+        "\u2013": " ", "\u2014": " ", "\u2026": "...", "\u00a0": " ",
+        "\u00ad": "", "\ufffd": "", "\u2022": " ", "\u200b": "",
+    }
+    for k, v in repl.items():
+        s = s.replace(k, v)
+    s = re.sub(r"(\d)\s+(st|nd|rd|th)\b", r"\1\2", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def trim_words(s, limit=170):
+    # Trims to a clean word boundary so summaries never cut off mid word.
+    if not s:
+        return ""
+    if len(s) <= limit:
+        return s
+    cut = s[:limit]
+    sp = cut.rfind(" ")
+    if sp > 50:
+        cut = cut[:sp]
+    return cut.rstrip(" ,.;:") + "..."
+
+
 def run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider):
     # The referee checks every number for sanity before it reaches the screen,
     # raises plain English flags for anything stale, missing, or unusual, and
@@ -448,10 +484,54 @@ def analyze():
         elif cong_net <= -2:
             score -= 1
 
-        # Insider from Quiver
+        # Insider activity. Primary source is yfinance (free, same source as the price data
+        # that already works), with Quiver as a fallback if a key is present.
         insider = []
-        CLEVEL = ["CEO", "CFO", "COO", "PRESIDENT", "CHAIRMAN", "CTO", "DIRECTOR"]
-        if QUIVER_KEY:
+        CLEVEL = ["CHIEF", "CEO", "CFO", "COO", "CTO", "PRESIDENT", "CHAIR", "DIRECTOR", "OFFICER", "FOUNDER", "10%", "VICE PRESIDENT", "EVP", "SVP"]
+
+        def classify_action(text):
+            t = str(text).lower()
+            if any(w in t for w in ["purchase", "buy", "bought", "acqui"]):
+                return "A"
+            if any(w in t for w in ["sale", "sell", "sold", "dispos"]):
+                return "D"
+            return ""
+
+        try:
+            it = ticker.insider_transactions
+            if it is not None and not it.empty:
+                def pick(row, *names):
+                    for n in names:
+                        if n in row and row.get(n) is not None:
+                            return row.get(n)
+                    return None
+                for _, rrow in it.head(12).iterrows():
+                    row = rrow.to_dict()
+                    name = pick(row, "Insider", "Name") or "Unknown"
+                    pos = pick(row, "Position", "Title", "Relation") or ""
+                    txt = pick(row, "Transaction", "Text") or ""
+                    shares = pick(row, "Shares") or 0
+                    date_raw = pick(row, "Start Date", "Date", "startDate")
+                    action = classify_action(txt) or classify_action(pos)
+                    title_up = str(pos).upper()
+                    try:
+                        shares_val = int(float(shares))
+                    except Exception:
+                        shares_val = 0
+                    date_str = str(date_raw)[:10] if date_raw is not None else ""
+                    insider.append({
+                        "name": str(name),
+                        "title": str(pos),
+                        "action": action,
+                        "shares": shares_val,
+                        "price": 0,
+                        "date": date_str,
+                        "is_clevel": any(c in title_up for c in CLEVEL),
+                    })
+        except Exception as e:
+            logger.error("yfinance insider error: %s" % e)
+
+        if not insider and QUIVER_KEY:
             try:
                 url = f"https://api.quiverquant.com/beta/historical/insiders/{symbol}"
                 h = {"Authorization": f"Token {QUIVER_KEY}", "Accept": "application/json"}
@@ -461,7 +541,7 @@ def analyze():
                         title = str(t.get("Title", "")).upper()
                         insider.append({"name": t.get("Name", "Unknown"), "title": t.get("Title", ""), "action": t.get("AcquiredDisposed", ""), "shares": t.get("Shares", 0), "price": fmt_price(t.get("Price", 0)), "date": t.get("Date", ""), "is_clevel": any(c in title for c in CLEVEL)})
             except Exception as e:
-                logger.error(f"Insider error: {e}")
+                logger.error(f"Insider Quiver fallback error: {e}")
 
         ins_buys = len([t for t in insider if t.get("is_clevel") and t.get("action") == "A"])
         if ins_buys >= 2:
@@ -497,14 +577,14 @@ def analyze():
                 if r.status_code == 200:
                     for n in r.json()[:6]:
                         if n.get("headline"):
-                            news.append({"headline": n["headline"], "source": n.get("source", "News"), "summary": n.get("summary", "")[:150]})
+                            news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": trim_words(clean_text(n.get("summary", "")))})
                 if not news:
                     url2 = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
                     r2 = requests.get(url2, timeout=8)
                     if r2.status_code == 200:
                         for n in r2.json()[:4]:
                             if n.get("headline"):
-                                news.append({"headline": n["headline"], "source": n.get("source", "Market News") + " (General)", "summary": n.get("summary", "")[:150]})
+                                news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": trim_words(clean_text(n.get("summary", "")))})
             except Exception as e:
                 logger.error(f"News error: {e}")
 
