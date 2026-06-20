@@ -71,6 +71,15 @@ def ensure_db():
             "key TEXT PRIMARY KEY,"
             "value TEXT NOT NULL)"
         )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS watchlist ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "symbol TEXT NOT NULL,"
+            "name TEXT,"
+            "added_at TIMESTAMP DEFAULT NOW(),"
+            "UNIQUE (user_id, symbol))"
+        )
         conn.commit()
         cur.close()
         logger.info("ensure_db: tables ready")
@@ -274,6 +283,82 @@ def auth_login():
 def auth_logout():
     session.clear()
     return jsonify({"ok": True})
+
+
+@app.route("/watchlist", methods=["GET"])
+def watchlist_list():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, name FROM watchlist WHERE user_id = %s ORDER BY added_at DESC", (u["id"],))
+        rows = cur.fetchall()
+        cur.close()
+        return jsonify({"items": [{"symbol": r[0], "name": r[1] or r[0]} for r in rows]})
+    except Exception as e:
+        logger.error("watchlist list error: %s" % e)
+        return jsonify({"error": "Could not load your watchlist."}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/watchlist/add", methods=["POST"])
+def watchlist_add():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get("symbol") or "").strip().upper()
+    name = (data.get("name") or "").strip()
+    if not symbol or len(symbol) > 15:
+        return jsonify({"error": "Invalid symbol."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO watchlist (user_id, symbol, name) VALUES (%s, %s, %s) "
+            "ON CONFLICT (user_id, symbol) DO UPDATE SET name = EXCLUDED.name",
+            (u["id"], symbol, name),
+        )
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("watchlist add error: %s" % e)
+        return jsonify({"error": "Could not save to your watchlist."}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/watchlist/remove", methods=["POST"])
+def watchlist_remove():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get("symbol") or "").strip().upper()
+    if not symbol:
+        return jsonify({"error": "Invalid symbol."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM watchlist WHERE user_id = %s AND symbol = %s", (u["id"], symbol))
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("watchlist remove error: %s" % e)
+        return jsonify({"error": "Could not remove from your watchlist."}), 500
+    finally:
+        conn.close()
 
 
 @app.route("/search")
