@@ -694,8 +694,8 @@ function renderIns(data){
   var lbl = buys.length > sells.length ? "BUYING" : "SELLING";
   if(cb.length >= 2){ lbl = "CLUSTER BUY"; }
   var rows = data.slice(0,8).map(function(t){
-    var cls = t.action === "A" ? "buy" : "sell";
-    var act = t.action === "A" ? "BUY" : "SELL";
+    var cls = t.action === "A" ? "buy" : (t.action === "D" ? "sell" : "gray");
+    var act = t.action === "A" ? "BUY" : (t.action === "D" ? "SELL" : "FILED");
     var sh = t.shares ? ("<span class=\"gray\">"+parseInt(t.shares).toLocaleString()+" shares</span>") : "";
     return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(t.title)+"</span>"+sh+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
   }).join("");
