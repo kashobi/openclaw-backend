@@ -19,6 +19,24 @@ CORS(app)
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 QUIVER_KEY = os.environ.get("QUIVER_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
+FMP_KEY = os.environ.get("FMP_KEY", "")
+FMP_BASE = "https://financialmodelingprep.com"
+
+
+def fmp_get(path):
+    # Safe FMP call. Reads the key from the environment, never raises, and returns None on
+    # any failure so the main report is never affected if FMP is missing or a plan limits it.
+    if not FMP_KEY:
+        return None
+    try:
+        sep = "&" if "?" in path else "?"
+        url = FMP_BASE + path + sep + "apikey=" + FMP_KEY
+        r = requests.get(url, timeout=8)
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        logger.error("fmp_get error %s: %s" % (path, e))
+    return None
 
 CACHE = {}
 CACHE_TTL = 60 * 60 * 4
@@ -407,6 +425,23 @@ def trim_words(s, limit=170):
     return cut.rstrip(" ,.;:") + "..."
 
 
+def flip_name(s):
+    # Insider feeds list names last name first (RISHEL JEREMY DYLAN). Flip to natural
+    # first name first and clean the capitalization (Jeremy Dylan Rishel).
+    if not s:
+        return ""
+    s = str(s).strip()
+    if "," in s:
+        parts = [p.strip() for p in s.split(",")]
+        if len(parts) == 2:
+            s = parts[1] + " " + parts[0]
+    else:
+        toks = s.split()
+        if len(toks) >= 2:
+            s = " ".join(toks[1:] + [toks[0]])
+    return " ".join(w.capitalize() for w in s.split())
+
+
 def run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider):
     # The referee checks every number for sanity before it reaches the screen,
     # raises plain English flags for anything stale, missing, or unusual, and
@@ -605,7 +640,7 @@ def analyze():
                         shares_val = 0
                     date_str = str(date_raw)[:10] if date_raw is not None else ""
                     insider.append({
-                        "name": str(name),
+                        "name": flip_name(name),
                         "title": str(pos),
                         "action": action,
                         "shares": shares_val,
@@ -629,10 +664,21 @@ def analyze():
                 logger.error(f"Insider Quiver fallback error: {e}")
 
         ins_buys = len([t for t in insider if t.get("is_clevel") and t.get("action") == "A"])
+        ins_sells = len([t for t in insider if t.get("is_clevel") and t.get("action") == "D"])
         if ins_buys >= 2:
             score += 3
         elif ins_buys == 1:
             score += 2
+        # Insider selling is a softer signal than buying, since executives sell for many
+        # ordinary reasons. But a broad cluster of top officers selling at once is a real
+        # caution, so it pulls the score down, scaled to how many are selling.
+        if ins_sells >= 4:
+            score -= 4
+        elif ins_sells >= 2:
+            score -= 2
+        elif ins_sells == 1:
+            score -= 1
+        heavy_insider_selling = ins_sells >= 3
 
         conviction = score_to_conviction(score)
 
@@ -650,6 +696,13 @@ def analyze():
         if sharp_drop:
             alert = "sharp_drop"
             verdict = "WATCH"
+
+        # Insider selling cap. When a cluster of executives is selling, the verdict cannot sit
+        # at APPROVE while the people who know the company best are heading for the exit.
+        if heavy_insider_selling and verdict == "APPROVE":
+            verdict = "WATCH"
+            if alert is None:
+                alert = "insider_selling"
 
         # News from Finnhub
         news = []
@@ -678,6 +731,30 @@ def analyze():
         beta = fmt_price(info.get("beta"))
         confidence, flags = run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider)
 
+        # FMP second source. Additive and non blocking: display first so it can be verified,
+        # then it will sharpen the verdict in a later step. Behind the 4 hour cache below.
+        fmp = {"grades": [], "insider_stats": None}
+        if FMP_KEY:
+            ud = fmp_get("/api/v4/upgrades-downgrades?symbol=%s" % symbol)
+            if not isinstance(ud, list) or not ud:
+                ud = fmp_get("/api/v3/grade/%s" % symbol)
+            if isinstance(ud, list):
+                for g in ud[:5]:
+                    firm = g.get("gradingCompany") or g.get("analystCompany") or g.get("company") or ""
+                    prev = g.get("previousGrade") or ""
+                    new = g.get("newGrade") or g.get("grade") or ""
+                    action = str(g.get("action") or "").lower()
+                    gdate = str(g.get("date") or g.get("publishedDate") or "")[:10]
+                    if firm or new:
+                        fmp["grades"].append({"firm": str(firm), "prev": str(prev), "new": str(new), "action": action, "date": gdate})
+            st = fmp_get("/api/v4/insider-trading/statistics?symbol=%s" % symbol)
+            if isinstance(st, list) and st:
+                s0 = st[0] or {}
+                buys = s0.get("purchases") or s0.get("totalPurchases") or s0.get("acquiredTransactions") or 0
+                sells = s0.get("sales") or s0.get("totalSales") or s0.get("disposedTransactions") or 0
+                ratio = s0.get("buySellRatio")
+                fmp["insider_stats"] = {"buys": buys, "sells": sells, "ratio": ratio}
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -696,6 +773,7 @@ def analyze():
             "beta": beta,
             "confidence": confidence,
             "flags": flags,
+            "fmp": fmp,
             "news": news,
             "congressional": congressional,
             "insider": insider,
