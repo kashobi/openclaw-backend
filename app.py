@@ -629,10 +629,13 @@ def analyze():
                     row = rrow.to_dict()
                     name = pick(row, "Insider", "Name") or "Unknown"
                     pos = pick(row, "Position", "Title", "Relation") or ""
-                    txt = pick(row, "Transaction", "Text") or ""
                     shares = pick(row, "Shares") or 0
                     date_raw = pick(row, "Start Date", "Date", "startDate")
-                    action = classify_action(txt) or classify_action(pos)
+                    # Scan every field in the record for the buy or sell wording, because the
+                    # column that holds it varies and is sometimes blank. This is what makes the
+                    # selling penalty reliable instead of missing rows the screen shows as sells.
+                    combined = " ".join(str(v) for v in row.values())
+                    action = classify_action(combined)
                     title_up = str(pos).upper()
                     try:
                         shares_val = int(float(shares))
