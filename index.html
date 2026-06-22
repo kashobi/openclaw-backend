@@ -247,6 +247,9 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .isum{background:rgba(139,0,0,.07);border-left:3px solid var(--red);padding:10px 13px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.55;color:var(--text);}
 .isum b{color:var(--red);font-weight:800;}
 .idesc{font-style:italic;opacity:.85;}
+.qlabel{font-size:12px;font-weight:800;color:var(--muted);font-family:'JetBrains Mono',monospace;letter-spacing:1px;text-transform:uppercase;margin:14px 0 8px;}
+.qp .qup{color:var(--green);font-weight:700;font-size:11px;}
+.qp .qdn{color:var(--red);font-weight:700;font-size:11px;}
 </style>
 </head>
 <body>
@@ -275,20 +278,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div class="ac" id="ac"></div>
     <button class="sbtn" id="analyzeBtn">ANALYZE</button>
   </div>
-  <div class="qrow" id="qrow">
-    <div class="qp" data-sym="SOFI">SOFI</div>
-    <div class="qp" data-sym="SPCX">SpaceX</div>
-    <div class="qp" data-sym="NVDA">NVDA</div>
-    <div class="qp" data-sym="AAPL">Apple</div>
-    <div class="qp" data-sym="AMD">AMD</div>
-    <div class="qp" data-sym="TSLA">Tesla</div>
-    <div class="qp" data-sym="MSFT">Microsoft</div>
-    <div class="qp" data-sym="AMZN">Amazon</div>
-    <div class="qp" data-sym="GOOGL">Google</div>
-    <div class="qp" data-sym="META">Meta</div>
-    <div class="qp" data-sym="JPM">JPMorgan</div>
-    <div class="qp" data-sym="SCHD">SCHD</div>
-  </div>
+  <div class="qlabel" id="qlabel" style="display:none">Trending Today</div>
+  <div class="qrow" id="qrow"></div>
 </div>
 <div class="discband">
   <div class="disctitle">&#9889; Discover Overlooked Industries</div>
@@ -1236,7 +1227,26 @@ document.getElementById("authSubmit").addEventListener("click", submitAuth);
 document.getElementById("saveBtn").addEventListener("click", toggleSave);
 document.getElementById("authOverlay").addEventListener("click", function(e){ if(e.target.id === "authOverlay"){ closeAuth(); } });
 document.getElementById("authPass").addEventListener("keypress", function(e){ if(e.key === "Enter"){ submitAuth(); } });
+function loadTrending(){
+  fetch(API + "/trending").then(function(r){ return r.json(); }).then(function(d){
+    var items = (d && d.items) ? d.items : [];
+    var row = document.getElementById("qrow");
+    var lab = document.getElementById("qlabel");
+    if(!row) return;
+    if(!items.length){ row.innerHTML = ""; if(lab) lab.style.display = "none"; return; }
+    if(lab) lab.style.display = "block";
+    row.innerHTML = items.map(function(it){
+      var chg = "";
+      if(it.change_pct !== null && it.change_pct !== undefined){
+        chg = " <span class=\"" + (it.change_pct >= 0 ? "qup" : "qdn") + "\">" + (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%</span>";
+      }
+      return "<div class=\"qp\" data-sym=\"" + esc(it.symbol) + "\">" + esc(it.symbol) + chg + "</div>";
+    }).join("");
+  }).catch(function(){});
+}
+
 refreshMe();
+loadTrending();
 
 if("serviceWorker" in navigator){
   window.addEventListener("load", function(){
