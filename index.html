@@ -615,23 +615,30 @@ function buildReasons(d){
   if(d.insider && d.insider.length){
     var iBuys = d.insider.filter(function(t){ return t.is_clevel && t.action === "A"; });
     var iSells = d.insider.filter(function(t){ return t.is_clevel && t.action === "D"; });
-    if(iBuys.length >= 2){
+    var buysDominate = iBuys.length > iSells.length;
+    if(iBuys.length >= 2 && buysDominate){
       var inames = iBuys.slice(0,3).map(function(t){ return esc(t.name)+" ("+esc(t.title)+")"; }).join(", ");
       reasons.push({icon:"&#128188;", label:"Executive Cluster Buy", short:"Multiple executives buying their own stock.",
         why:"Several executives, including "+inames+", recently bought shares of "+name+" with their own personal money. These people see every internal number before the public does. The only reason an executive spends personal cash on company stock is the belief that the price is going higher. When several buy at once it is one of the strongest signals in all of investing, because you cannot fake real money on the line.",
         watch:"Look at how much they bought. A chief executive spending a million dollars of personal money is a far stronger signal than a small token purchase.",
         lesson:"Insider buying is the ultimate vote of confidence. Real personal money from the people who know the company best deserves real attention."});
-    } else if(iBuys.length === 1){
+    } else if(iBuys.length === 1 && buysDominate){
       var ib = iBuys[0];
       reasons.push({icon:"&#128188;", label:"Executive Buy: "+esc(ib.title), short:esc(ib.name)+" bought shares personally.",
         why:esc(ib.name)+", the "+esc(ib.title)+" of "+name+", recently bought shares with personal money. Executives see financial data and forward plans the public never sees. When they spend their own cash on the stock it signals they see value the market has not caught up to yet.",
         watch:"Ask whether the purchase is large relative to their pay. A leader buying a meaningful amount is more telling than a small symbolic buy.",
         lesson:"An open market purchase by an executive is very different from stock handed to them as pay. A purchase means they paid real money, just like any investor."});
     } else if(iSells.length >= 2){
-      reasons.push({icon:"&#128188;", label:"Executive Selling Detected", short:"Multiple executives selling shares.",
+      reasons.push({icon:"&#128188;", label:"Executive Selling Cluster", short:"Multiple executives selling shares.",
         why:"Several executives recently sold shares of "+name+". Executives sell for many ordinary reasons such as taxes and spreading out their wealth, but heavy selling by several leaders at once can sometimes signal they are bracing for weaker results. It lowers conviction without being a clear alarm.",
         watch:"Find out whether these are pre scheduled sales set up months ago or fresh decisions to sell. Fresh decisions carry far more weight.",
         lesson:"Context decides everything with insider selling. Routine planned sales are normal. Sudden selling by many leaders at once is the kind that carries a warning."});
+    } else if(iSells.length === 1){
+      var isl = iSells[0];
+      reasons.push({icon:"&#128188;", label:"Executive Sale: "+esc(isl.title), short:esc(isl.name)+" sold shares.",
+        why:esc(isl.name)+", the "+esc(isl.title)+" of "+name+", recently sold shares. A single insider sale is weak as a signal on its own, because executives sell for many ordinary reasons. It is worth noting but not alarming by itself.",
+        watch:"Watch whether more insiders follow. One sale is noise. A cluster of leaders selling is the real signal.",
+        lesson:"One insider selling tells you little. Weigh it lightly unless others join in."});
     }
   }
 
@@ -701,7 +708,7 @@ function renderIns(data, sellValue, bigBlock){
   var cb = data.filter(function(t){ return t.is_clevel && t.action === "A"; });
   var bc = buys.length > sells.length ? "bg" : (sells.length > buys.length ? "br" : "by");
   var lbl = buys.length > sells.length ? "BUYING" : "SELLING";
-  if(cb.length >= 2){ lbl = "CLUSTER BUY"; }
+  if(cb.length >= 2 && buys.length > sells.length){ lbl = "CLUSTER BUY"; }
   var rows = data.slice(0,8).map(function(t){
     var cls = t.action === "A" ? "buy" : (t.action === "D" ? "sell" : "gray");
     var act = t.action === "A" ? "BUY" : (t.action === "D" ? "SELL" : "FILED");
