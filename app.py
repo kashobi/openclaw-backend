@@ -442,6 +442,57 @@ def flip_name(s):
     return " ".join(w.capitalize() for w in s.split())
 
 
+INSIDER_CLEVEL = ["CHIEF", "CEO", "CFO", "COO", "CTO", "PRESIDENT", "CHAIR", "DIRECTOR", "OFFICER", "FOUNDER", "10%", "VICE PRESIDENT", "EVP", "SVP"]
+
+
+def classify_insider_kind(text):
+    # Shared with the full report so the sector list and the report can never disagree.
+    t = str(text).lower()
+    if any(w in t for w in ["award", "grant", "gift", "bonus"]):
+        return "grant"
+    if any(w in t for w in ["exercise", "conversion", "convert", "option", "derivative"]):
+        return "option"
+    if any(w in t for w in ["tax", "withh", "surrender", "forfeit"]):
+        return "tax"
+    if any(w in t for w in ["sale", "sold", "sell"]):
+        return "sell"
+    if any(w in t for w in ["purchase", "bought"]):
+        return "buy"
+    if "dispos" in t:
+        return "sell"
+    if "acqui" in t:
+        return "buy"
+    return "other"
+
+
+def insider_selling_cap(ticker_obj, cur_price):
+    # Returns True when a cluster of executives is selling, the same rule the full report uses
+    # to refuse an APPROVE. Used by the sector list so it never contradicts the full report.
+    try:
+        it = ticker_obj.insider_transactions
+        if it is None or it.empty:
+            return False
+        clevel_sells = 0
+        exec_value = 0
+        price = cur_price if isinstance(cur_price, (int, float)) and cur_price > 0 else 0
+        for _, rr in it.head(12).iterrows():
+            row = rr.to_dict()
+            pos = row.get("Position") or row.get("Title") or row.get("Relation") or ""
+            desc = row.get("Transaction") or row.get("Text") or ""
+            basis = str(desc) if str(desc).strip() else " ".join(str(v) for v in row.values())
+            kind = classify_insider_kind(basis)
+            is_cl = any(c in str(pos).upper() for c in INSIDER_CLEVEL)
+            if is_cl and kind == "sell":
+                clevel_sells += 1
+                try:
+                    exec_value += int(float(row.get("Shares") or 0)) * price
+                except Exception:
+                    pass
+        return clevel_sells >= 3 or exec_value >= 20000000
+    except Exception:
+        return False
+
+
 def run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider):
     # The referee checks every number for sanity before it reaches the screen,
     # raises plain English flags for anything stale, missing, or unusual, and
@@ -1080,6 +1131,10 @@ def light_score(symbol):
                 pass
         conviction = score_to_conviction(score)
         verdict = "APPROVE" if score >= 4 else ("PASS" if score <= -2 else "WATCH")
+        # Same insider selling cap the full report uses, so the sector list can never show
+        # APPROVE on a stock the full report would hold at WATCH.
+        if verdict == "APPROVE" and insider_selling_cap(t, cur):
+            verdict = "WATCH"
         res = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
