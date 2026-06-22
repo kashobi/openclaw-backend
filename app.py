@@ -1100,6 +1100,45 @@ def light_score(symbol):
         return None
 
 
+_TREND = {"data": None, "ts": 0}
+
+
+@app.route("/trending")
+def trending():
+    # The day's trending stocks, the names most actively traded right now. Pulled live from
+    # FMP and refreshed every half hour so it stays current without burning the daily call budget.
+    now = time.time()
+    if _TREND["data"] is not None and now - _TREND["ts"] < 1800:
+        return jsonify(_TREND["data"])
+
+    def parse_pct(v):
+        try:
+            return round(float(str(v).replace("%", "").replace("(", "-").replace(")", "").strip()), 2)
+        except Exception:
+            return None
+
+    items = []
+    data = fmp_get("/api/v3/stock_market/actives")
+    if not isinstance(data, list) or not data:
+        data = fmp_get("/api/v3/stock_market/gainers")
+    if isinstance(data, list):
+        for d in data[:12]:
+            sym = d.get("symbol")
+            if not sym or len(sym) > 6:
+                continue
+            items.append({
+                "symbol": sym,
+                "name": d.get("name") or sym,
+                "change_pct": parse_pct(d.get("changesPercentage")),
+                "price": d.get("price"),
+            })
+
+    out = {"items": items}
+    _TREND["data"] = out
+    _TREND["ts"] = now
+    return jsonify(out)
+
+
 @app.route("/themes")
 def themes():
     out = []
