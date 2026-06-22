@@ -250,6 +250,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .qlabel{font-size:12px;font-weight:800;color:var(--muted);font-family:'JetBrains Mono',monospace;letter-spacing:1px;text-transform:uppercase;margin:14px 0 8px;}
 .qp .qup{color:var(--green);font-weight:700;font-size:11px;}
 .qp .qdn{color:var(--red);font-weight:700;font-size:11px;}
+.sgempty{font-size:13px;line-height:1.55;color:var(--muted);padding:14px;border:1px dashed var(--border);border-radius:11px;}
 </style>
 </head>
 <body>
@@ -354,13 +355,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div id="watchPanel" style="display:none"></div>
     <div class="stitle">Live Signals</div>
     <div id="panel">
-      <div class="sg" data-sym="SOFI"><div class="sgtop"><div class="sgsym">SOFI</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
-      <div class="sg" data-sym="NVDA"><div class="sgtop"><div class="sgsym">NVDA</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
-      <div class="sg" data-sym="SPCX"><div class="sgtop"><div class="sgsym">SPCX</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
-      <div class="sg" data-sym="AMD"><div class="sgtop"><div class="sgsym">AMD</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
-      <div class="sg" data-sym="TSLA"><div class="sgtop"><div class="sgsym">TSLA</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
-      <div class="sg" data-sym="AAPL"><div class="sgtop"><div class="sgsym">AAPL</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
-      <div class="sg" data-sym="MSFT"><div class="sgtop"><div class="sgsym">MSFT</div><div class="sgv vw">WATCH</div></div><div class="sgi">Click to analyze</div></div>
+      <div class="sgempty" id="panelEmpty">Analyze any stock and it appears here with its real verdict and price. Every signal shown is live, never a placeholder.</div>
     </div>
   </div>
 </div>
@@ -966,10 +961,14 @@ function run(){
 
     var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
     var panel = document.getElementById("panel");
+    var emptyEl = document.getElementById("panelEmpty");
+    if(emptyEl){ emptyEl.remove(); }
     var ex = panel.querySelector("[data-sym=\"" + d.symbol + "\"]");
     var pcard = "<div class=\"sg\" data-sym=\"" + esc(d.symbol) + "\"><div class=\"sgtop\"><div class=\"sgsym\">" + esc(d.symbol) + "</div><div class=\"sgv " + vc + "\">" + v + "</div></div><div class=\"sgi\">$" + (d.price || 0).toLocaleString() + " | " + esc(d.conviction || "") + " | " + esc(d.name) + "</div></div>";
     if(ex){ ex.outerHTML = pcard; }
     else { panel.insertAdjacentHTML("afterbegin", pcard); }
+    var pcards = panel.querySelectorAll(".sg");
+    for(var ci = pcards.length - 1; ci >= 12; ci--){ pcards[ci].remove(); }
 
     // Fire the live context request AFTER the report is on screen. It can only add, never block.
     loadLiveContext(d.symbol || val);
