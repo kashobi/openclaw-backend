@@ -244,6 +244,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .sgi .wDn{color:var(--red);font-weight:700;}
 .watchRemove{position:absolute;top:8px;right:10px;background:none;border:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;font-weight:700;padding:0 4px;}
 .watchRemove:hover{color:var(--red);}
+.isum{background:rgba(139,0,0,.07);border-left:3px solid var(--red);padding:10px 13px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.55;color:var(--text);}
+.isum b{color:var(--red);font-weight:800;}
 </style>
 </head>
 <body>
@@ -407,6 +409,13 @@ function esc(s){
 }
 
 var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtMoney(n){
+  n = Number(n) || 0;
+  if(n >= 1e9) return "$" + (n/1e9).toFixed(1) + "B";
+  if(n >= 1e6) return "$" + (n/1e6).toFixed(1) + "M";
+  if(n >= 1e3) return "$" + (n/1e3).toFixed(0) + "K";
+  return "$" + n.toFixed(0);
+}
 function usDate(s){
   if(!s) return "";
   s = String(s).trim();
@@ -681,7 +690,7 @@ function renderCong(data){
   s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Congressional Trades</div><div class=\"ibdg "+bc+"\">"+bl+"</div></div><div class=\"itxt\">"+rows+"<div class=\"iwhy\">Why it matters: members of Congress must report trades by law. When several buy or sell the same name it can hint at policy moves coming that the wider market has not priced in yet.</div></div></div>";
 }
 
-function renderIns(data){
+function renderIns(data, sellValue, bigBlock){
   var s = document.getElementById("ins");
   if(!data || !data.length){
     s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Activity</div><div class=\"ibdg bg\">CLEAN</div></div><div class=\"itxt\">No recent insider filings found. Company executives and directors have not reported unusual trades in their own stock lately.<div class=\"iwhy\">Why it matters: insiders know the company best. A quiet record is neutral. Heavy buying would be a strong positive, heavy selling a caution.</div></div></div>";
@@ -697,9 +706,14 @@ function renderIns(data){
     var cls = t.action === "A" ? "buy" : (t.action === "D" ? "sell" : "gray");
     var act = t.action === "A" ? "BUY" : (t.action === "D" ? "SELL" : "FILED");
     var sh = t.shares ? ("<span class=\"gray\">"+parseInt(t.shares).toLocaleString()+" shares</span>") : "";
-    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(t.title)+"</span>"+sh+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
+    var val = t.value ? ("<span class=\"gray\">"+fmtMoney(t.value)+"</span>") : "";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(t.title)+"</span>"+sh+val+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
   }).join("");
-  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Trades</div><div class=\"ibdg "+bc+"\">"+lbl+"</div></div><div class=\"itxt\">"+rows+"<div class=\"iwhy\">Why it matters: executives buy their own stock for only one reason, they expect it to rise. They sell for many reasons. That is why insider buying is a stronger signal than insider selling.</div></div></div>";
+  var sellNote = "";
+  if(sellValue && sellValue > 0){
+    sellNote = "<div class=\"isum\">Estimated value of recent insider selling: <b>"+fmtMoney(sellValue)+"</b>" + (bigBlock ? ". This includes one unusually large block sale. Very large blocks sometimes come from a big holder rebalancing rather than an executive, so read it in context." : "") + "</div>";
+  }
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Trades</div><div class=\"ibdg "+bc+"\">"+lbl+"</div></div><div class=\"itxt\">"+sellNote+rows+"<div class=\"iwhy\">Why it matters: executives buy their own stock for only one reason, they expect it to rise. They sell for many reasons. That is why insider buying is a stronger signal than insider selling, but a large cluster of executives selling, or a very large dollar amount, is a real caution.</div></div></div>";
 }
 
 function renderNews(data){
@@ -945,7 +959,7 @@ function run(){
     vrl.innerHTML = reasons.map(function(r, i){ return buildCard(r, i, false); }).join("");
 
     renderCong(d.congressional || []);
-    renderIns(d.insider || []);
+    renderIns(d.insider || [], d.insider_sell_value || 0, d.insider_big_block || false);
     renderNews(d.news || []);
     renderGrades(d.fmp || {});
 
