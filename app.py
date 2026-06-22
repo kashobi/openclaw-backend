@@ -669,6 +669,20 @@ def analyze():
         except Exception as e:
             logger.error("yfinance insider error: %s" % e)
 
+        # Grant detection fallback. When the data source gives no transaction wording (a blank
+        # description leaves a row as "other"), use the unmistakable fingerprint of a board grant:
+        # several insiders receiving the same share count on the same day. That pattern is annual
+        # director or executive stock pay, not selling, so label it GRANT and keep it neutral.
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for t in insider:
+            if t.get("kind") == "other" and t.get("shares"):
+                groups[(t.get("date"), t.get("shares"))].append(t)
+        for keypair, rows in groups.items():
+            if len(rows) >= 3:
+                for t in rows:
+                    t["kind"] = "grant"
+
         if not insider and QUIVER_KEY:
             try:
                 url = f"https://api.quiverquant.com/beta/historical/insiders/{symbol}"
