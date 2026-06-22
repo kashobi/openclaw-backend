@@ -681,7 +681,37 @@ def analyze():
             score -= 2
         elif ins_sells == 1:
             score -= 1
-        heavy_insider_selling = ins_sells >= 3
+
+        # Weigh the size of the selling, not just the count. Estimate the dollar value of each
+        # sale using the current price, attach it to every row so it can be shown, and total it.
+        price_for_value = cur if isinstance(cur, (int, float)) and cur > 0 else 0
+        for t in insider:
+            try:
+                t["value"] = int(t.get("shares") or 0) * price_for_value
+            except Exception:
+                t["value"] = 0
+        exec_sell_value = sum(t.get("value", 0) for t in insider if t.get("is_clevel") and t.get("action") == "D")
+        all_sell_values = [t.get("value", 0) for t in insider if t.get("action") == "D"]
+        total_sell_value = sum(all_sell_values)
+        max_single_sell = max(all_sell_values) if all_sell_values else 0
+
+        # Conservative size add-on. Only genuinely large executive selling deepens the penalty,
+        # so routine insider sales never trip it. Tuned to dollar value of executive sells.
+        if exec_sell_value >= 50000000:
+            score -= 2
+        elif exec_sell_value >= 20000000:
+            score -= 1
+
+        # Very large single block detection (any insider, including big holders). A block this
+        # size is market relevant, but big holders sometimes sell for portfolio reasons, so it
+        # adds a mild caution and a clear note rather than dominating the verdict.
+        mc_num = info.get("marketCap") if isinstance(info.get("marketCap"), (int, float)) else 0
+        big_block = False
+        if max_single_sell >= 100000000 or (mc_num > 0 and max_single_sell >= 0.01 * mc_num):
+            big_block = True
+            score -= 1
+
+        heavy_insider_selling = ins_sells >= 3 or exec_sell_value >= 20000000
 
         conviction = score_to_conviction(score)
 
@@ -777,6 +807,8 @@ def analyze():
             "confidence": confidence,
             "flags": flags,
             "fmp": fmp,
+            "insider_sell_value": total_sell_value,
+            "insider_big_block": big_block,
             "news": news,
             "congressional": congressional,
             "insider": insider,
