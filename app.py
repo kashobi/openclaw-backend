@@ -609,13 +609,25 @@ def analyze():
         insider = []
         CLEVEL = ["CHIEF", "CEO", "CFO", "COO", "CTO", "PRESIDENT", "CHAIR", "DIRECTOR", "OFFICER", "FOUNDER", "10%", "VICE PRESIDENT", "EVP", "SVP"]
 
-        def classify_action(text):
+        def classify_kind(text):
+            # Read what the filing actually is. Only real open market buys and sells move the
+            # verdict. Grants, option exercises, and tax withholding are routine and stay neutral.
             t = str(text).lower()
-            if any(w in t for w in ["purchase", "buy", "bought", "acqui"]):
-                return "A"
-            if any(w in t for w in ["sale", "sell", "sold", "dispos"]):
-                return "D"
-            return ""
+            if any(w in t for w in ["award", "grant", "gift", "bonus"]):
+                return "grant"
+            if any(w in t for w in ["exercise", "conversion", "convert", "option", "derivative"]):
+                return "option"
+            if any(w in t for w in ["tax", "withh", "surrender", "forfeit"]):
+                return "tax"
+            if any(w in t for w in ["sale", "sold", "sell"]):
+                return "sell"
+            if any(w in t for w in ["purchase", "bought"]):
+                return "buy"
+            if "dispos" in t:
+                return "sell"
+            if "acqui" in t:
+                return "buy"
+            return "other"
 
         try:
             it = ticker.insider_transactions
@@ -631,11 +643,12 @@ def analyze():
                     pos = pick(row, "Position", "Title", "Relation") or ""
                     shares = pick(row, "Shares") or 0
                     date_raw = pick(row, "Start Date", "Date", "startDate")
-                    # Scan every field in the record for the buy or sell wording, because the
-                    # column that holds it varies and is sometimes blank. This is what makes the
-                    # selling penalty reliable instead of missing rows the screen shows as sells.
-                    combined = " ".join(str(v) for v in row.values())
-                    action = classify_action(combined)
+                    # Read the actual filing type. Prefer the transaction description, fall back
+                    # to scanning the whole row, then map to buy or sell only for real trades.
+                    desc = pick(row, "Transaction", "Text") or ""
+                    basis = str(desc) if str(desc).strip() else " ".join(str(v) for v in row.values())
+                    kind = classify_kind(basis)
+                    action = "D" if kind == "sell" else ("A" if kind == "buy" else "")
                     title_up = str(pos).upper()
                     try:
                         shares_val = int(float(shares))
@@ -646,6 +659,8 @@ def analyze():
                         "name": flip_name(name),
                         "title": str(pos),
                         "action": action,
+                        "kind": kind,
+                        "desc": str(desc)[:70],
                         "shares": shares_val,
                         "price": 0,
                         "date": date_str,
@@ -662,7 +677,9 @@ def analyze():
                 if r.status_code == 200:
                     for t in r.json()[:10]:
                         title = str(t.get("Title", "")).upper()
-                        insider.append({"name": t.get("Name", "Unknown"), "title": t.get("Title", ""), "action": t.get("AcquiredDisposed", ""), "shares": t.get("Shares", 0), "price": fmt_price(t.get("Price", 0)), "date": t.get("Date", ""), "is_clevel": any(c in title for c in CLEVEL)})
+                        ad = t.get("AcquiredDisposed", "")
+                        k = "sell" if ad == "D" else ("buy" if ad == "A" else "other")
+                        insider.append({"name": t.get("Name", "Unknown"), "title": t.get("Title", ""), "action": ad, "kind": k, "desc": "", "shares": t.get("Shares", 0), "price": fmt_price(t.get("Price", 0)), "date": t.get("Date", ""), "is_clevel": any(c in title for c in CLEVEL)})
             except Exception as e:
                 logger.error(f"Insider Quiver fallback error: {e}")
 
