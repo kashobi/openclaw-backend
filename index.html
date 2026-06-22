@@ -246,6 +246,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .watchRemove:hover{color:var(--red);}
 .isum{background:rgba(139,0,0,.07);border-left:3px solid var(--red);padding:10px 13px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.55;color:var(--text);}
 .isum b{color:var(--red);font-weight:800;}
+.idesc{font-style:italic;opacity:.85;}
 </style>
 </head>
 <body>
@@ -709,12 +710,14 @@ function renderIns(data, sellValue, bigBlock){
   var bc = buys.length > sells.length ? "bg" : (sells.length > buys.length ? "br" : "by");
   var lbl = buys.length > sells.length ? "BUYING" : "SELLING";
   if(cb.length >= 2 && buys.length > sells.length){ lbl = "CLUSTER BUY"; }
+  var kindMap = {sell:{c:"sell",l:"SELL"}, buy:{c:"buy",l:"BUY"}, grant:{c:"gray",l:"GRANT"}, option:{c:"gray",l:"OPTION"}, tax:{c:"gray",l:"TAX"}, other:{c:"gray",l:"FILED"}};
   var rows = data.slice(0,8).map(function(t){
-    var cls = t.action === "A" ? "buy" : (t.action === "D" ? "sell" : "gray");
-    var act = t.action === "A" ? "BUY" : (t.action === "D" ? "SELL" : "FILED");
+    var k = kindMap[t.kind] || (t.action === "A" ? kindMap.buy : (t.action === "D" ? kindMap.sell : kindMap.other));
+    var cls = k.c, act = k.l;
     var sh = t.shares ? ("<span class=\"gray\">"+parseInt(t.shares).toLocaleString()+" shares</span>") : "";
     var val = t.value ? ("<span class=\"gray\">"+fmtMoney(t.value)+"</span>") : "";
-    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(t.title)+"</span>"+sh+val+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
+    var dsc = t.desc ? ("<span class=\"gray idesc\">"+esc(t.desc)+"</span>") : "";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(t.title)+"</span>"+sh+val+dsc+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
   }).join("");
   var sellNote = "";
   if(sellValue && sellValue > 0){
