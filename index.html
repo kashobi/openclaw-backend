@@ -312,6 +312,14 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .alertPositive .alertTag{color:var(--green);}
 .alertReason{font-size:13px;line-height:1.5;margin-top:7px;}
 .alertEmpty{font-size:13px;line-height:1.6;color:var(--muted);padding:14px;border:1px dashed var(--border);border-radius:11px;text-align:center;}
+.askInputs{display:flex;flex-direction:column;gap:9px;margin:10px 0 8px;}
+.askChips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;margin-bottom:6px;-webkit-overflow-scrolling:touch;}
+.askChips::-webkit-scrollbar{display:none;}
+.askChip{flex:0 0 auto;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:8px 13px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.askCard{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px;margin-top:6px;}
+.askQ2{font-size:13px;font-weight:800;color:var(--accent);margin-bottom:8px;}
+.askVerdict{display:inline-block;margin-bottom:10px;}
+.askA{font-size:14px;line-height:1.65;}
 </style>
 </head>
 <body>
@@ -477,13 +485,21 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 <div class="view" id="view-ask">
   <div class="vhead">
     <div class="vhead-t">Ask</div>
-    <div class="vhead-s">Ask a plain question about any stock and get a plain answer, grounded in the same data the engine uses. A real explanation, not a chatbot guessing.</div>
+    <div class="vhead-s">Ask a plain question about any stock and get a plain answer, grounded in the same numbers the engine uses. A real explanation, not a chatbot guessing.</div>
   </div>
-  <div class="vsec">
-    <div class="vsec-h">How it will work</div>
-    <div class="vsec-p">Ask things like why is this a watch, or what would change the call, or explain the insider selling. The answer comes from the live numbers on the stock, in everyday language.</div>
-    <div class="soon">Building this next. A question box and answers will live here.</div>
+  <div class="askInputs">
+    <input class="cmpInp" id="askSym" type="text" placeholder="Ticker, like AAPL" autocomplete="off"/>
+    <input class="cmpInp" id="askQ" type="text" placeholder="Your question, like why is this a watch" autocomplete="off"/>
+    <button class="cmpBtn" id="askBtn">Ask</button>
   </div>
+  <div class="askChips" id="askChips">
+    <button class="askChip" data-q="Why is this a watch?">Why this verdict</button>
+    <button class="askChip" data-q="What would change the call?">What would change it</button>
+    <button class="askChip" data-q="Explain the insider selling">Insider activity</button>
+    <button class="askChip" data-q="Is it expensive?">Valuation</button>
+  </div>
+  <div class="loading" id="askLoad">Thinking it through...</div>
+  <div id="askAnswer"></div>
 </div>
 </div>
 <div class="foot">
@@ -1489,6 +1505,32 @@ function loadMovers(){
     if(u){ u.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
     if(n){ n.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
   });
+}
+
+function runAsk(){
+  var sym = document.getElementById("askSym").value.trim();
+  var q = document.getElementById("askQ").value.trim();
+  var ans = document.getElementById("askAnswer");
+  if(!ans){ return; }
+  if(!sym){ ans.innerHTML = "<div class=\"scanEmpty\">Type a ticker first, like AAPL.</div>"; return; }
+  if(!q){ ans.innerHTML = "<div class=\"scanEmpty\">Type a question, or tap one of the suggestions.</div>"; return; }
+  var load = document.getElementById("askLoad");
+  if(load){ load.classList.add("on"); }
+  ans.innerHTML = "";
+  fetch(API + "/ask?symbol=" + encodeURIComponent(sym) + "&q=" + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
+    if(load){ load.classList.remove("on"); }
+    var a = (d && d.answer) ? d.answer : "No answer came back. Try rephrasing the question.";
+    var v = d && d.verdict;
+    var badge = "";
+    if(v){ var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw"); badge = "<div class=\"askVerdict scanV " + vc + "\">" + v + "</div>"; }
+    ans.innerHTML = "<div class=\"askCard\"><div class=\"askQ2\">" + esc(q) + "</div>" + badge + "<div class=\"askA\">" + esc(a) + "</div></div>";
+  }).catch(function(){ if(load){ load.classList.remove("on"); } ans.innerHTML = "<div class=\"scanEmpty\">Could not get an answer right now. Try again.</div>"; });
+}
+var _askBtn = document.getElementById("askBtn");
+if(_askBtn){ _askBtn.addEventListener("click", runAsk); }
+var _askChips = document.querySelectorAll(".askChip");
+for(var _ac=0; _ac<_askChips.length; _ac++){
+  _askChips[_ac].addEventListener("click", function(){ document.getElementById("askQ").value = this.getAttribute("data-q"); runAsk(); });
 }
 
 function loadAlerts(){
