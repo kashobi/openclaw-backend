@@ -1353,6 +1353,54 @@ def movers():
     return jsonify(out)
 
 
+@app.route("/alerts")
+def alerts():
+    # Reads the logged in user's saved stocks, scores each one, and surfaces only the names
+    # that warrant a look right now. This is the in app feed. A push to the phone is the next layer.
+    u = current_user()
+    if not u:
+        return jsonify({"status": "logged_out", "alerts": []})
+    conn = get_db()
+    if conn is None:
+        return jsonify({"status": "error", "alerts": []})
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, name FROM watchlist WHERE user_id = %s ORDER BY added_at DESC", (u["id"],))
+        rows = cur.fetchall()
+        cur.close()
+    except Exception as e:
+        logger.error("alerts list error: %s" % e)
+        return jsonify({"status": "error", "alerts": []})
+    finally:
+        conn.close()
+
+    if not rows:
+        return jsonify({"status": "empty", "alerts": []})
+
+    out = []
+    for sym, nm in rows:
+        r = light_score(sym)
+        if not r:
+            continue
+        chg = r.get("change_pct")
+        v = r.get("verdict")
+        name = r.get("name") or nm or sym
+        alert = None
+        if isinstance(chg, (int, float)) and chg <= -5:
+            alert = {"kind": "caution", "reason": "Down %s%% today, a sharp move worth checking." % abs(chg)}
+        elif v == "PASS":
+            alert = {"kind": "caution", "reason": "The engine has turned cautious on it. Open the full report for why."}
+        elif v == "APPROVE":
+            alert = {"kind": "positive", "reason": "The engine currently leans positive on it."}
+        elif isinstance(chg, (int, float)) and chg >= 5:
+            alert = {"kind": "positive", "reason": "Up %s%% today, a notable move." % chg}
+        if alert:
+            alert.update({"symbol": sym, "name": name, "change_pct": chg, "verdict": v})
+            out.append(alert)
+    out.sort(key=lambda a: 0 if a["kind"] == "caution" else 1)
+    return jsonify({"status": "ok", "alerts": out, "total_saved": len(rows)})
+
+
 @app.route("/trending")
 def trending():
     # The day's trending stocks, the names most actively traded right now. Pulled live from
