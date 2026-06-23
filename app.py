@@ -1458,6 +1458,7 @@ def ask_gemini(symbol, q, d, ins):
             "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
             "Here are the engine's current facts for this stock: " + facts + " "
             "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
+            "Do not use any dashes or hyphens, use plain words. "
             "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
         )
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
@@ -1516,26 +1517,154 @@ def ask_fallback(symbol, q, d, ins):
     return " ".join(parts)
 
 
+NAME_TO_TICKER = {
+    "bank of america": "BAC", "bofa": "BAC",
+    "jpmorgan chase": "JPM", "jp morgan chase": "JPM", "jpmorgan": "JPM", "jp morgan": "JPM", "chase": "JPM",
+    "wells fargo": "WFC", "citigroup": "C", "citi": "C", "goldman sachs": "GS", "goldman": "GS",
+    "morgan stanley": "MS", "us bancorp": "USB", "us bank": "USB",
+    "apple": "AAPL", "microsoft": "MSFT", "alphabet": "GOOGL", "google": "GOOGL", "amazon": "AMZN",
+    "meta": "META", "facebook": "META", "nvidia": "NVDA", "tesla": "TSLA", "netflix": "NFLX",
+    "broadcom": "AVGO", "oracle": "ORCL", "salesforce": "CRM", "adobe": "ADBE", "qualcomm": "QCOM",
+    "intel": "INTC", "palantir": "PLTR",
+    "exxon mobil": "XOM", "exxon": "XOM", "chevron": "CVX", "conocophillips": "COP", "occidental": "OXY",
+    "walmart": "WMT", "costco": "COST", "target": "TGT", "home depot": "HD", "nike": "NKE",
+    "mcdonalds": "MCD", "starbucks": "SBUX", "coca cola": "KO", "coke": "KO", "pepsico": "PEP", "pepsi": "PEP",
+    "disney": "DIS", "johnson and johnson": "JNJ", "pfizer": "PFE", "merck": "MRK", "eli lilly": "LLY",
+    "lilly": "LLY", "unitedhealth": "UNH", "boeing": "BA", "caterpillar": "CAT", "ford": "F",
+    "general motors": "GM", "verizon": "VZ", "visa": "V", "mastercard": "MA",
+}
+
+SECTOR_TO_TICKER = {
+    "energy": "XOM", "oil and gas": "XOM", "oil": "XOM",
+    "technology": "AAPL", "tech": "AAPL",
+    "banking": "JPM", "financials": "JPM", "financial": "JPM", "banks": "JPM", "bank": "JPM",
+    "healthcare": "JNJ", "health care": "JNJ", "health": "JNJ",
+    "retail": "WMT", "automotive": "TSLA", "auto": "TSLA", "cars": "TSLA",
+    "semiconductors": "NVDA", "semiconductor": "NVDA", "chips": "NVDA", "chip": "NVDA",
+    "defense": "BA", "artificial intelligence": "NVDA",
+}
+
+COMMON_TICKERS = set(NAME_TO_TICKER.values()) | set(SECTOR_TO_TICKER.values()) | set(SCAN_UNIVERSE)
+
+
+def extract_entities(text):
+    tl = " " + text.lower() + " "
+    found = []
+    seen = set()
+    for tok in re.findall(r"\b[A-Z]{2,5}\b", text):
+        if tok in COMMON_TICKERS and tok not in seen:
+            found.append((tok, tok, False))
+            seen.add(tok)
+    for name in sorted(NAME_TO_TICKER, key=len, reverse=True):
+        if any(name + suff in tl for suff in [" ", ",", ".", "?"]) and (" " + name) in tl:
+            tkr = NAME_TO_TICKER[name]
+            if tkr not in seen:
+                found.append((tkr, name.title(), False))
+                seen.add(tkr)
+    for sec in sorted(SECTOR_TO_TICKER, key=len, reverse=True):
+        if any(sec + suff in tl for suff in [" ", ",", ".", "?"]) and (" " + sec) in tl:
+            tkr = SECTOR_TO_TICKER[sec]
+            if tkr not in seen:
+                found.append((tkr, sec.title() + " stocks, using " + tkr + " as a bellwether", True))
+                seen.add(tkr)
+    return found
+
+
+def coach_answer(q, entities):
+    scored = []
+    for tkr, label, is_sec in entities[:4]:
+        r = light_score(tkr)
+        if r:
+            scored.append((label, is_sec, r))
+    if not scored:
+        return "I could not match that to stocks I can read. Try naming the companies or tickers directly, like Bank of America, JPMorgan, and Exxon."
+    parts = ["First, the honest part. I am an educational tool, not a financial advisor, so I will not tell you where to put your money. That is your call, and a real one. What I can do is show you how each of these looks on the signals right now, in plain language, so you can think it through yourself."]
+    for label, is_sec, r in scored:
+        v = r.get("verdict", "WATCH")
+        chg = r.get("change_pct")
+        up = r.get("upside")
+        pe = r.get("pe_ratio")
+        line = label + " is at " + v + " right now."
+        bits = []
+        if isinstance(chg, (int, float)):
+            bits.append("%s%% %s today" % (abs(chg), "up" if chg >= 0 else "down"))
+        if isinstance(up, (int, float)):
+            bits.append("analysts see about %s%% %s their average target" % (abs(up), "above" if up >= 0 else "below"))
+        try:
+            bits.append("around %s times earnings" % round(float(pe), 1))
+        except (TypeError, ValueError):
+            pass
+        if bits:
+            line += " It is " + ", ".join(bits) + "."
+        parts.append(line)
+    parts.append("How to think about it, without anyone deciding for you. The amount of money, including the figure you mentioned, does not change what the signals say about each name. What matters more is your own time horizon, how much risk you can sit with, and whether you spread money out rather than put it all in one place. Concentrating everything in a single stock is how beginners get hurt.")
+    parts.append("None of this is a recommendation. For a real decision with real money, your own homework and a licensed professional are the right next step. Educational only, never advice.")
+    return " ".join(parts)
+
+
+def coach_gemini(q, entities):
+    facts = []
+    for tkr, label, is_sec in entities[:4]:
+        r = light_score(tkr)
+        if r:
+            facts.append("%s (%s): verdict %s, %s percent today, analyst upside %s percent, PE %s" % (label, tkr, r.get("verdict"), r.get("change_pct"), r.get("upside"), r.get("pe_ratio")))
+    if not facts:
+        return None
+    prompt = (
+        "You are the educational explanation layer of a stock app for everyday people and beginners. "
+        "The user asked, possibly by voice: \"" + q + "\". "
+        "Here are the engine's current live facts: " + "; ".join(facts) + ". "
+        "STRICT RULES: You are not a financial advisor. Do not tell the user where to invest, do not recommend a specific stock to buy, and do not suggest how to split any amount of money. "
+        "Instead, explain in simple plain language how each option looks based on the facts, what the differences mean, and how a beginner should think the decision through themselves, including risk, time horizon, and not concentrating money in one name. "
+        "Make clear the dollar amount does not change what the signals say. "
+        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. End by clearly stating this is educational only, not advice, and that they should do their own research and consider a licensed professional. Return plain text only, no markdown."
+    )
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
+        payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.3, "maxOutputTokens": 500}}
+        r = requests.post(url, json=payload, timeout=12)
+        if r.status_code == 200:
+            data = r.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        logger.error("coach_gemini: %s" % e)
+    return None
+
+
 @app.route("/ask")
 def ask():
     symbol = (request.args.get("symbol") or "").strip().upper()
     q = (request.args.get("q") or "").strip()
-    if not symbol:
-        return jsonify({"answer": "Tell me which stock you are asking about. Type a ticker first."})
     if not q:
-        return jsonify({"answer": "Ask a question about " + symbol + ", like why is this a watch, or what would change the call."})
-    d = light_score(symbol)
-    if not d:
-        return jsonify({"answer": "I could not read " + symbol + " right now. Check the ticker and try again."})
+        return jsonify({"answer": "Ask a question, like why is this a watch, or name a few stocks and ask how they compare."})
     ql = q.lower()
+    entities = extract_entities(q)
+    allocation = any(p in ql for p in [
+        "where should i", "where do i", "should i invest", "invest", "put my money",
+        "put $", "split", "allocate", "best to buy", "which should i buy",
+        "which one should i", "what should i buy", "better buy", "worth buying",
+    ])
+    if len(entities) >= 2 or (allocation and len(entities) >= 1):
+        if GEMINI_KEY:
+            a = coach_gemini(q, entities)
+            if a:
+                return jsonify({"answer": a})
+        return jsonify({"answer": coach_answer(q, entities)})
+
+    sym = symbol or (entities[0][0] if entities else "")
+    if not sym:
+        return jsonify({"answer": "Tell me which stock you mean. Type a ticker in the box, or name the company in your question."})
+    d = light_score(sym)
+    if not d:
+        return jsonify({"answer": "I could not read " + sym + " right now. Check the ticker and try again."})
     ins = None
     if any(w in ql for w in ["insider", "executive", "exec", "selling", "sold", "buying", "bought"]):
-        ins = insider_brief(symbol, d.get("price"))
+        ins = insider_brief(sym, d.get("price"))
     if GEMINI_KEY:
-        a = ask_gemini(symbol, q, d, ins)
+        a = ask_gemini(sym, q, d, ins)
         if a:
             return jsonify({"answer": a, "verdict": d.get("verdict")})
-    return jsonify({"answer": ask_fallback(symbol, q, d, ins), "verdict": d.get("verdict")})
+    return jsonify({"answer": ask_fallback(sym, q, d, ins), "verdict": d.get("verdict")})
 
 
 @app.route("/trending")
