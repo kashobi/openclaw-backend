@@ -251,6 +251,22 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .qp .qup{color:var(--green);font-weight:700;font-size:11px;}
 .qp .qdn{color:var(--red);font-weight:700;font-size:11px;}
 .sgempty{font-size:13px;line-height:1.55;color:var(--muted);padding:14px;border:1px dashed var(--border);border-radius:11px;}
+.views{padding-bottom:80px;}
+.view{display:none;}
+.view.active{display:block;}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:300;display:flex;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -3px 18px rgba(0,0,0,.07);padding:6px 2px calc(6px + env(safe-area-inset-bottom));}
+.tab{flex:1;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 1px;cursor:pointer;color:var(--muted);font-family:inherit;-webkit-tap-highlight-color:transparent;}
+.tab .tabi{font-size:19px;line-height:1;}
+.tab .tabt{font-size:10px;font-weight:700;letter-spacing:.2px;}
+.tab.active{color:var(--accent);}
+.tab.active .tabt{color:var(--accent);}
+.vhead{padding:18px 4px 4px;}
+.vhead-t{font-size:24px;font-weight:800;letter-spacing:-.5px;}
+.vhead-s{font-size:13px;line-height:1.6;color:var(--muted);margin-top:6px;}
+.vsec{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin:14px 0;}
+.vsec-h{font-size:17px;font-weight:800;margin-bottom:8px;}
+.vsec-p{font-size:13px;line-height:1.6;color:var(--muted);margin-bottom:14px;}
+.soon{font-size:12px;font-weight:800;color:var(--accent);padding:13px;border:1px dashed var(--border);border-radius:11px;text-align:center;letter-spacing:.3px;}
 </style>
 </head>
 <body>
@@ -262,6 +278,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <button id="acctBtn" class="acctBtn">Log In</button>
   </div>
 </div>
+<div class="views">
+<div class="view active" id="view-home">
 <div class="mbar"><div class="mbari">
   <div class="mi" data-sym="^GSPC"><div class="ml">S&amp;P 500</div><div class="mv ld" id="m0">--</div></div>
   <div class="mi" data-sym="^IXIC"><div class="ml">NASDAQ</div><div class="mv ld" id="m1">--</div></div>
@@ -282,35 +300,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   <div class="qlabel" id="qlabel" style="display:none">Trending Today</div>
   <div class="qrow" id="qrow"></div>
 </div>
-<div class="discband">
-  <div class="disctitle">&#9889; Discover Overlooked Industries</div>
-  <div class="discsub">Most people only know the big names. The real gems hide in the industries nobody talks about. Tap any one to see what the engine likes right now, and learn why the space matters.</div>
-  <div class="discgroup">The 11 Market Sectors</div>
-  <div class="discchips">
-    <div class="discchip" data-theme="tech">&#128187; Technology</div>
-    <div class="discchip" data-theme="health">&#129658; Health Care</div>
-    <div class="discchip" data-theme="financials">&#127974; Financials</div>
-    <div class="discchip" data-theme="discretionary">&#128717;&#65039; Consumer Discretionary</div>
-    <div class="discchip" data-theme="comm">&#128225; Communication Services</div>
-    <div class="discchip" data-theme="industrials">&#127959;&#65039; Industrials</div>
-    <div class="discchip" data-theme="staples">&#128722; Consumer Staples</div>
-    <div class="discchip" data-theme="energy">&#128738; Energy</div>
-    <div class="discchip" data-theme="utilities">&#128161; Utilities</div>
-    <div class="discchip" data-theme="realestate">&#127970; Real Estate</div>
-    <div class="discchip" data-theme="materials">&#9935;&#65039; Materials</div>
-  </div>
-  <div class="discgroup">Sharp Niche Themes</div>
-  <div class="discchips">
-    <div class="discchip" data-theme="semi">&#128295; Semiconductor Gear</div>
-    <div class="discchip" data-theme="power">&#9889; Power &amp; Grid</div>
-    <div class="discchip" data-theme="nuclear">&#9762;&#65039; Nuclear &amp; Uranium</div>
-    <div class="discchip" data-theme="defense">&#128752;&#65039; Defense &amp; Drones</div>
-    <div class="discchip" data-theme="automation">&#129302; Automation &amp; Robotics</div>
-    <div class="discchip" data-theme="cyber">&#128272; Cybersecurity</div>
-  </div>
-  <div class="discResults" id="discResults" style="display:none"></div>
-</div>
 <div class="main">
+
   <div>
     <div class="stitle">Full Intelligence Report</div>
     <div class="loading" id="lb">Reading the market...</div>
@@ -350,14 +341,93 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div id="news"><div class="ic"><div class="ih"><div class="it">News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
     </div>
   </div>
-  <div>
-    <div class="stitle" id="watchTitle" style="display:none">&#11088; My Watchlist</div>
+</div>
+</div>
+<div class="view" id="view-discover">
+<div class="discband">
+  <div class="disctitle">&#9889; Discover Overlooked Industries</div>
+  <div class="discsub">Most people only know the big names. The real gems hide in the industries nobody talks about. Tap any one to see what the engine likes right now, and learn why the space matters.</div>
+  <div class="discgroup">The 11 Market Sectors</div>
+  <div class="discchips">
+    <div class="discchip" data-theme="tech">&#128187; Technology</div>
+    <div class="discchip" data-theme="health">&#129658; Health Care</div>
+    <div class="discchip" data-theme="financials">&#127974; Financials</div>
+    <div class="discchip" data-theme="discretionary">&#128717;&#65039; Consumer Discretionary</div>
+    <div class="discchip" data-theme="comm">&#128225; Communication Services</div>
+    <div class="discchip" data-theme="industrials">&#127959;&#65039; Industrials</div>
+    <div class="discchip" data-theme="staples">&#128722; Consumer Staples</div>
+    <div class="discchip" data-theme="energy">&#128738; Energy</div>
+    <div class="discchip" data-theme="utilities">&#128161; Utilities</div>
+    <div class="discchip" data-theme="realestate">&#127970; Real Estate</div>
+    <div class="discchip" data-theme="materials">&#9935;&#65039; Materials</div>
+  </div>
+  <div class="discgroup">Sharp Niche Themes</div>
+  <div class="discchips">
+    <div class="discchip" data-theme="semi">&#128295; Semiconductor Gear</div>
+    <div class="discchip" data-theme="power">&#9889; Power &amp; Grid</div>
+    <div class="discchip" data-theme="nuclear">&#9762;&#65039; Nuclear &amp; Uranium</div>
+    <div class="discchip" data-theme="defense">&#128752;&#65039; Defense &amp; Drones</div>
+    <div class="discchip" data-theme="automation">&#129302; Automation &amp; Robotics</div>
+    <div class="discchip" data-theme="cyber">&#128272; Cybersecurity</div>
+  </div>
+  <div class="discResults" id="discResults" style="display:none"></div>
+</div>
+  <div class="vsec" id="discExtra">
+    <div class="vsec-h">More ways to find names</div>
+    <div class="vsec-p">Beyond sectors, two live lists are coming here: stocks hitting new 52 week highs, and the biggest movers of the day. Real names, pulled live, each one tappable for the full report.</div>
+    <div class="soon">Building this next.</div>
+  </div>
+</div>
+<div class="view" id="view-scans">
+  <div class="vhead">
+    <div class="vhead-t">Scans</div>
+    <div class="vhead-s">Point the engine at the whole market through a few plain English lenses. Each one runs the same scoring you see in a full report, then shows the names that pass and why.</div>
+  </div>
+  <div class="vsec">
+    <div class="vsec-h">The lenses</div>
+    <div class="vsec-p">Insiders are buying. Analysts just upgraded. Unusually strong today. Near new highs. Value, growth, and dividend views. Tap a lens, get a ranked list, tap any name for the full breakdown.</div>
+    <div class="soon">Building this next. The lenses will appear here as buttons you tap.</div>
+  </div>
+</div>
+<div class="view" id="view-compare">
+  <div class="vhead">
+    <div class="vhead-t">Compare</div>
+    <div class="vhead-s">Two stocks, side by side, in plain English. Which one is stronger right now, and why. The question everyone actually asks.</div>
+  </div>
+  <div class="vsec">
+    <div class="vsec-h">How it will work</div>
+    <div class="vsec-p">Type two tickers. The engine reads both, lines up price, analyst calls, congressional and insider activity, and tells you which looks stronger and the reason, with no jargon.</div>
+    <div class="soon">Building this next. Two search boxes and a verdict will live here.</div>
+  </div>
+</div>
+<div class="view" id="view-watch">
+  <div class="vhead">
+    <div class="vhead-t">Saved and Alerts</div>
+    <div class="vhead-s">Your saved stocks, and the heads up when one of them moves. The watchlist that watches itself.</div>
+  </div>
+  <div class="vsec" id="alertsSec">
+    <div class="vsec-h">Alerts</div>
+    <div class="vsec-p">When a saved stock changes its verdict or a real signal fires, it shows up here so you never miss it. The next layer is a push to your phone the way a brokerage app pings you.</div>
+    <div class="soon">Building this next.</div>
+  </div>
+  <div class="stitle" id="watchTitle" style="display:none">&#11088; My Watchlist</div>
     <div id="watchPanel" style="display:none"></div>
     <div class="stitle">Live Signals</div>
     <div id="panel">
       <div class="sgempty" id="panelEmpty">Analyze any stock and it appears here with its real verdict and price. Every signal shown is live, never a placeholder.</div>
     </div>
+</div>
+<div class="view" id="view-ask">
+  <div class="vhead">
+    <div class="vhead-t">Ask</div>
+    <div class="vhead-s">Ask a plain question about any stock and get a plain answer, grounded in the same data the engine uses. A real explanation, not a chatbot guessing.</div>
   </div>
+  <div class="vsec">
+    <div class="vsec-h">How it will work</div>
+    <div class="vsec-p">Ask things like why is this a watch, or what would change the call, or explain the insider selling. The answer comes from the live numbers on the stock, in everyday language.</div>
+    <div class="soon">Building this next. A question box and answers will live here.</div>
+  </div>
+</div>
 </div>
 <div class="foot">
   APEX Q INTELLIGENCE TERMINAL &nbsp;|&nbsp; ANALYST AGENT &bull; REGULATORY AGENT &bull; INSIDER AGENT &bull; NEWS AGENT &bull; SYNTHESIS ENGINE<br><br>
@@ -382,6 +452,14 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   </div>
 </div>
 <button id="installBtn" class="installBtn">&#9889; Install Apex Q</button>
+<nav class="tabbar" id="tabbar">
+  <button class="tab active" data-view="home"><span class="tabi">&#128269;</span><span class="tabt">Home</span></button>
+  <button class="tab" data-view="discover"><span class="tabi">&#129517;</span><span class="tabt">Discover</span></button>
+  <button class="tab" data-view="scans"><span class="tabi">&#128225;</span><span class="tabt">Scans</span></button>
+  <button class="tab" data-view="compare"><span class="tabi">&#9878;&#65039;</span><span class="tabt">Compare</span></button>
+  <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Saved</span></button>
+  <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
+</nav>
 <script>
 var API = window.location.origin;
 var TKS = ["AAPL","MSFT","NVDA","AMD","TSLA","AMZN","GOOGL","META","SOFI","SPCX","SCHD","JPM","BAC","NFLX","BTC-USD"];
@@ -692,24 +770,40 @@ function renderIns(data, sellValue, bigBlock){
   }
   var buys = data.filter(function(t){ return t.action === "A"; });
   var sells = data.filter(function(t){ return t.action === "D"; });
-  var cb = data.filter(function(t){ return t.is_clevel && t.action === "A"; });
+  var cb = data.filter(function(t){ return t.is_clevel && t.action === "A" && !t.is_holder; });
   var bc = buys.length > sells.length ? "bg" : (sells.length > buys.length ? "br" : "by");
   var lbl = buys.length > sells.length ? "BUYING" : "SELLING";
   if(cb.length >= 2 && buys.length > sells.length){ lbl = "CLUSTER BUY"; }
   var kindMap = {sell:{c:"sell",l:"SELL"}, buy:{c:"buy",l:"BUY"}, grant:{c:"gray",l:"GRANT"}, option:{c:"gray",l:"OPTION"}, tax:{c:"gray",l:"TAX"}, other:{c:"gray",l:"FILED"}};
-  var rows = data.slice(0,8).map(function(t){
-    var k = kindMap[t.kind] || (t.action === "A" ? kindMap.buy : (t.action === "D" ? kindMap.sell : kindMap.other));
+  var shown = data.slice(0,8);
+  var insiderTotal = 0, holderTotal = 0;
+  shown.forEach(function(t){
+    if(t.kind === "sell" || t.action === "D"){
+      if(t.is_holder){ holderTotal += (t.value || 0); }
+      else { insiderTotal += (t.value || 0); }
+    }
+  });
+  var rows = shown.map(function(t){
+    var isSell = (t.kind === "sell" || t.action === "D");
+    var k;
+    if(t.is_holder && isSell){ k = {c:"gray", l:"FUND SELL"}; }
+    else { k = kindMap[t.kind] || (t.action === "A" ? kindMap.buy : (t.action === "D" ? kindMap.sell : kindMap.other)); }
     var cls = k.c, act = k.l;
+    var titleText = t.title;
+    if(t.is_holder && (!titleText || titleText.toLowerCase() === "unknown")){ titleText = "Outside Holder"; }
     var sh = t.shares ? ("<span class=\"gray\">"+parseInt(t.shares).toLocaleString()+" shares</span>") : "";
     var val = t.value ? ("<span class=\"gray\">"+fmtMoney(t.value)+"</span>") : "";
     var dsc = t.desc ? ("<span class=\"gray idesc\">"+esc(t.desc)+"</span>") : "";
-    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(t.title)+"</span>"+sh+val+dsc+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(titleText)+"</span>"+sh+val+dsc+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
   }).join("");
   var sellNote = "";
-  if(sellValue && sellValue > 0){
-    sellNote = "<div class=\"isum\">Estimated value of recent insider selling: <b>"+fmtMoney(sellValue)+"</b>" + (bigBlock ? ". This includes one unusually large block sale. Very large blocks sometimes come from a big holder rebalancing rather than an executive, so read it in context." : "") + "</div>";
+  if(insiderTotal > 0){
+    sellNote += "<div class=\"isum\">Recent selling by company insiders, the executives and directors: <b>"+fmtMoney(insiderTotal)+"</b></div>";
   }
-  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Trades</div><div class=\"ibdg "+bc+"\">"+lbl+"</div></div><div class=\"itxt\">"+sellNote+rows+"<div class=\"iwhy\">Why it matters: executives buy their own stock for only one reason, they expect it to rise. They sell for many reasons. That is why insider buying is a stronger signal than insider selling, but a large cluster of executives selling, or a very large dollar amount, is a real caution.</div></div></div>";
+  if(holderTotal > 0){
+    sellNote += "<div class=\"isum holder\">A large outside holder also sold about <b>"+fmtMoney(holderTotal)+"</b>. This is a fund or major shareholder, not company management, so it is counted separately. Big holders often sell for portfolio reasons that say little about the business.</div>";
+  }
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Trades</div><div class=\"ibdg "+bc+"\">"+lbl+"</div></div><div class=\"itxt\">"+sellNote+rows+"<div class=\"iwhy\">Why it matters: executives buy their own stock for only one reason, they expect it to rise. They sell for many reasons. That is why insider buying is a stronger signal than insider selling, but a large cluster of executives selling, or a very large dollar amount, is a real caution. Sales by outside funds are shown separately because they are a weaker signal about the company itself.</div></div></div>";
 }
 
 function renderNews(data){
@@ -805,6 +899,7 @@ function loadTheme(key){
 }
 
 function go(sym){
+  showView("home");
   document.getElementById("si").value = sym;
   var rpt = document.getElementById("rpt");
   if(rpt){ rpt.scrollIntoView({behavior:"smooth", block:"start"}); }
@@ -1242,6 +1337,20 @@ function loadTrending(){
       return "<div class=\"qp\" data-sym=\"" + esc(it.symbol) + "\">" + esc(it.symbol) + chg + "</div>";
     }).join("");
   }).catch(function(){});
+}
+
+function showView(name){
+  var vs = document.querySelectorAll(".view");
+  for(var i=0;i<vs.length;i++){ vs[i].classList.remove("active"); }
+  var el = document.getElementById("view-" + name);
+  if(el){ el.classList.add("active"); }
+  var ts = document.querySelectorAll(".tab");
+  for(var j=0;j<ts.length;j++){ ts[j].classList.toggle("active", ts[j].getAttribute("data-view") === name); }
+  window.scrollTo(0, 0);
+}
+var _tabs = document.querySelectorAll(".tab");
+for(var _t=0; _t<_tabs.length; _t++){
+  _tabs[_t].addEventListener("click", function(){ showView(this.getAttribute("data-view")); });
 }
 
 refreshMe();
