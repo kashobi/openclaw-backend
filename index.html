@@ -280,6 +280,28 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .scanReason{font-size:13px;line-height:1.5;margin-top:9px;}
 .scanMeta{font-size:13px;font-weight:700;margin-top:9px;}
 .scanEmpty{font-size:13px;line-height:1.6;color:var(--muted);padding:16px;border:1px dashed var(--border);border-radius:12px;text-align:center;}
+.cmpInputs{display:flex;flex-direction:column;gap:9px;margin:10px 0 6px;}
+.cmpInp{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:13px 14px;font-size:15px;font-family:inherit;color:var(--text);}
+.cmpBtn{background:var(--accent);color:#fff;border:none;border-radius:11px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:.5px;}
+.cmpV{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px;margin:12px 0;}
+.cmpVh{font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin-bottom:7px;}
+.cmpVt{font-size:14px;line-height:1.6;}
+.cmpCard{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:15px;margin-bottom:11px;cursor:pointer;position:relative;}
+.cmpBest{border-color:var(--accent);border-width:2px;}
+.cmpFlag{position:absolute;top:-9px;left:14px;background:var(--accent);color:#fff;font-size:10px;font-weight:800;letter-spacing:.5px;padding:3px 9px;border-radius:7px;}
+.cmpTop{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.cmpSym{font-size:18px;font-weight:800;}
+.cmpName{font-size:12px;color:var(--muted);margin-top:2px;}
+.cmpGrid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:12px;}
+.cmpL{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);}
+.cmpVal{font-size:14px;font-weight:700;margin-top:2px;}
+.moversWrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.moversH{font-size:12px;font-weight:800;letter-spacing:.4px;margin-bottom:8px;}
+.moversH.up{color:var(--green);}
+.moversH.dn{color:var(--red);}
+.moverRow{display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:7px;cursor:pointer;font-size:13px;font-weight:700;gap:8px;}
+.moverSym{font-weight:800;}
+.moversEmpty{font-size:12px;color:var(--muted);padding:10px;}
 </style>
 </head>
 <body>
@@ -386,9 +408,12 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   <div class="discResults" id="discResults" style="display:none"></div>
 </div>
   <div class="vsec" id="discExtra">
-    <div class="vsec-h">More ways to find names</div>
-    <div class="vsec-p">Beyond sectors, two live lists are coming here: stocks hitting new 52 week highs, and the biggest movers of the day. Real names, pulled live, each one tappable for the full report.</div>
-    <div class="soon">Building this next.</div>
+    <div class="vsec-h">Market movers today</div>
+    <div class="vsec-p">The biggest gainers and the biggest decliners across the whole market right now, including names you would never think to search. Tap any one for the full report.</div>
+    <div class="moversWrap">
+      <div class="moversCol"><div class="moversH up">Biggest gainers</div><div id="moversUp"></div></div>
+      <div class="moversCol"><div class="moversH dn">Biggest decliners</div><div id="moversDn"></div></div>
+    </div>
   </div>
 </div>
 <div class="view" id="view-scans">
@@ -410,13 +435,17 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 <div class="view" id="view-compare">
   <div class="vhead">
     <div class="vhead-t">Compare</div>
-    <div class="vhead-s">Two stocks, side by side, in plain English. Which one is stronger right now, and why. The question everyone actually asks.</div>
+    <div class="vhead-s">Put up to three stocks side by side. The engine reads each one and tells you which looks strongest right now, and why, in plain English.</div>
   </div>
-  <div class="vsec">
-    <div class="vsec-h">How it will work</div>
-    <div class="vsec-p">Type two tickers. The engine reads both, lines up price, analyst calls, congressional and insider activity, and tells you which looks stronger and the reason, with no jargon.</div>
-    <div class="soon">Building this next. Two search boxes and a verdict will live here.</div>
+  <div class="cmpInputs">
+    <input class="cmpInp" id="cmp0" type="text" placeholder="First ticker, like AAPL" autocomplete="off"/>
+    <input class="cmpInp" id="cmp1" type="text" placeholder="Second ticker, like MSFT" autocomplete="off"/>
+    <input class="cmpInp" id="cmp2" type="text" placeholder="Third ticker, optional" autocomplete="off"/>
+    <button class="cmpBtn" id="cmpBtn">Compare</button>
   </div>
+  <div class="loading" id="cmpLoad">Reading each stock...</div>
+  <div id="cmpVerdict"></div>
+  <div id="cmpResults"></div>
 </div>
 <div class="view" id="view-watch">
   <div class="vhead">
@@ -1392,6 +1421,66 @@ for(var _l=0; _l<_lensBtns.length; _l++){
   _lensBtns[_l].addEventListener("click", function(){ loadScan(this.getAttribute("data-lens")); });
 }
 
+function runCompare(){
+  var syms = [];
+  ["cmp0", "cmp1", "cmp2"].forEach(function(id){ var v = document.getElementById(id).value.trim(); if(v){ syms.push(v); } });
+  var verd = document.getElementById("cmpVerdict");
+  var res = document.getElementById("cmpResults");
+  if(syms.length < 2){ verd.innerHTML = "<div class=\"scanEmpty\">Type at least two tickers to compare.</div>"; res.innerHTML = ""; return; }
+  var load = document.getElementById("cmpLoad");
+  if(load){ load.classList.add("on"); }
+  verd.innerHTML = ""; res.innerHTML = "";
+  fetch(API + "/compare?symbols=" + encodeURIComponent(syms.join(","))).then(function(r){ return r.json(); }).then(function(d){
+    if(load){ load.classList.remove("on"); }
+    var items = (d && d.items) ? d.items : [];
+    if(!items.length){ verd.innerHTML = "<div class=\"scanEmpty\">Could not read those tickers. Check the symbols and try again.</div>"; return; }
+    if(d.reason){ verd.innerHTML = "<div class=\"cmpV\"><div class=\"cmpVh\">Which looks strongest</div><div class=\"cmpVt\">" + esc(d.reason) + "</div></div>"; }
+    res.innerHTML = items.map(function(it){
+      var v = it.verdict || "WATCH";
+      var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
+      var best = (it.symbol === d.strongest);
+      var c = (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%";
+      var cc = it.change_pct >= 0 ? "pos" : "neg";
+      var pe = (it.pe_ratio && it.pe_ratio !== "N/A") ? it.pe_ratio : "n/a";
+      var up = (it.upside !== null && it.upside !== undefined) ? (it.upside + "%") : "n/a";
+      return "<div class=\"cmpCard" + (best ? " cmpBest" : "") + "\" data-sym=\"" + esc(it.symbol) + "\">"
+        + (best ? "<div class=\"cmpFlag\">Strongest here</div>" : "")
+        + "<div class=\"cmpTop\"><div class=\"cmpSym\">" + esc(it.symbol) + "</div><div class=\"scanV " + vc + "\">" + v + "</div></div>"
+        + "<div class=\"cmpName\">" + esc(it.name || "") + "</div>"
+        + "<div class=\"cmpGrid\">"
+          + "<div><div class=\"cmpL\">Price</div><div class=\"cmpVal\">$" + (it.price || 0).toLocaleString() + "</div></div>"
+          + "<div><div class=\"cmpL\">Today</div><div class=\"cmpVal " + cc + "\">" + c + "</div></div>"
+          + "<div><div class=\"cmpL\">Upside</div><div class=\"cmpVal\">" + up + "</div></div>"
+          + "<div><div class=\"cmpL\">PE</div><div class=\"cmpVal\">" + pe + "</div></div>"
+        + "</div></div>";
+    }).join("");
+  }).catch(function(){ if(load){ load.classList.remove("on"); } verd.innerHTML = "<div class=\"scanEmpty\">Could not run the compare. Try again.</div>"; });
+}
+var _cmpBtn = document.getElementById("cmpBtn");
+if(_cmpBtn){ _cmpBtn.addEventListener("click", runCompare); }
+
+var _moversLoaded = false;
+function loadMovers(){
+  fetch(API + "/movers").then(function(r){ return r.json(); }).then(function(d){
+    function fill(id, arr){
+      var el = document.getElementById(id);
+      if(!el){ return; }
+      if(!arr || !arr.length){ el.innerHTML = "<div class=\"moversEmpty\">Live list unavailable right now.</div>"; return; }
+      el.innerHTML = arr.map(function(it){
+        var c = (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%";
+        var cc = it.change_pct >= 0 ? "pos" : "neg";
+        return "<div class=\"moverRow\" data-sym=\"" + esc(it.symbol) + "\"><span class=\"moverSym\">" + esc(it.symbol) + "</span><span class=\"" + cc + "\">" + c + "</span></div>";
+      }).join("");
+    }
+    fill("moversUp", d && d.gainers);
+    fill("moversDn", d && d.losers);
+  }).catch(function(){
+    var u = document.getElementById("moversUp"), n = document.getElementById("moversDn");
+    if(u){ u.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
+    if(n){ n.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
+  });
+}
+
 function showView(name){
   var vs = document.querySelectorAll(".view");
   for(var i=0;i<vs.length;i++){ vs[i].classList.remove("active"); }
@@ -1400,6 +1489,7 @@ function showView(name){
   var ts = document.querySelectorAll(".tab");
   for(var j=0;j<ts.length;j++){ ts[j].classList.toggle("active", ts[j].getAttribute("data-view") === name); }
   if(name === "scans" && !_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
+  if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
