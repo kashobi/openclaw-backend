@@ -701,6 +701,10 @@ def analyze():
                     kind = classify_kind(basis)
                     action = "D" if kind == "sell" else ("A" if kind == "buy" else "")
                     title_up = str(pos).upper()
+                    name_up = str(name).upper()
+                    is_cl = any(c in title_up for c in CLEVEL)
+                    fundish = any(w in name_up for w in ["L.P", "PARTNERS", "MANAGEMENT", "CAPITAL", " FUND", "FUND ", "LLC", "TRUST", "HOLDINGS", "ADVISOR", "ASSOCIATES", "GROUP"])
+                    is_holder = (not is_cl) or fundish or ("10%" in title_up)
                     try:
                         shares_val = int(float(shares))
                     except Exception:
@@ -715,7 +719,8 @@ def analyze():
                         "shares": shares_val,
                         "price": 0,
                         "date": date_str,
-                        "is_clevel": any(c in title_up for c in CLEVEL),
+                        "is_clevel": is_cl,
+                        "is_holder": is_holder,
                     })
         except Exception as e:
             logger.error("yfinance insider error: %s" % e)
@@ -744,9 +749,14 @@ def analyze():
                         title = str(t.get("Title", "")).upper()
                         ad = t.get("AcquiredDisposed", "")
                         k = "sell" if ad == "D" else ("buy" if ad == "A" else "other")
-                        insider.append({"name": t.get("Name", "Unknown"), "title": t.get("Title", ""), "action": ad, "kind": k, "desc": "", "shares": t.get("Shares", 0), "price": fmt_price(t.get("Price", 0)), "date": t.get("Date", ""), "is_clevel": any(c in title for c in CLEVEL)})
+                        nm_q = str(t.get("Name", "")).upper()
+                        is_cl_q = any(c in title for c in CLEVEL)
+                        fundish_q = any(w in nm_q for w in ["L.P", "PARTNERS", "MANAGEMENT", "CAPITAL", " FUND", "FUND ", "LLC", "TRUST", "HOLDINGS", "ADVISOR", "ASSOCIATES", "GROUP"])
+                        insider.append({"name": t.get("Name", "Unknown"), "title": t.get("Title", ""), "action": ad, "kind": k, "desc": "", "shares": t.get("Shares", 0), "price": fmt_price(t.get("Price", 0)), "date": t.get("Date", ""), "is_clevel": is_cl_q, "is_holder": (not is_cl_q) or fundish_q or ("10%" in title)})
             except Exception as e:
                 logger.error(f"Insider Quiver fallback error: {e}")
+
+        insider = insider[:8]
 
         ins_buys = len([t for t in insider if t.get("is_clevel") and t.get("action") == "A"])
         ins_sells = len([t for t in insider if t.get("is_clevel") and t.get("action") == "D"])
@@ -776,6 +786,11 @@ def analyze():
         all_sell_values = [t.get("value", 0) for t in insider if t.get("action") == "D"]
         total_sell_value = sum(all_sell_values)
         max_single_sell = max(all_sell_values) if all_sell_values else 0
+        # Split the selling. The headline counts only the company's own people (executives,
+        # officers, directors). Outside holders like activist funds are counted separately so
+        # a fund trimming a position never inflates the insider figure.
+        insider_sell_value = sum(t.get("value", 0) for t in insider if t.get("action") == "D" and not t.get("is_holder"))
+        holder_sell_value = sum(t.get("value", 0) for t in insider if t.get("action") == "D" and t.get("is_holder"))
 
         # Conservative size add-on. Only genuinely large executive selling deepens the penalty,
         # so routine insider sales never trip it. Tuned to dollar value of executive sells.
@@ -889,7 +904,8 @@ def analyze():
             "confidence": confidence,
             "flags": flags,
             "fmp": fmp,
-            "insider_sell_value": total_sell_value,
+            "insider_sell_value": insider_sell_value,
+            "holder_sell_value": holder_sell_value,
             "insider_big_block": big_block,
             "news": news,
             "congressional": congressional,
@@ -1135,6 +1151,29 @@ def light_score(symbol):
         # APPROVE on a stock the full report would hold at WATCH.
         if verdict == "APPROVE" and insider_selling_cap(t, cur):
             verdict = "WATCH"
+        # Extra fields used by the Scans lenses, read from the same data we already have.
+        div_yield = None
+        drate = info.get("dividendRate")
+        if drate and cur:
+            try:
+                div_yield = round(float(drate) / cur * 100, 2)
+            except Exception:
+                div_yield = None
+        if div_yield is None:
+            raw_dy = info.get("dividendYield")
+            if raw_dy:
+                try:
+                    v = float(raw_dy)
+                    div_yield = round(v * 100, 2) if v < 1 else round(v, 2)
+                except Exception:
+                    div_yield = None
+        near_high = None
+        hi = info.get("fiftyTwoWeekHigh")
+        if hi and cur:
+            try:
+                near_high = round(cur / float(hi) * 100, 1)
+            except Exception:
+                near_high = None
         res = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -1144,6 +1183,8 @@ def light_score(symbol):
             "pe_ratio": pe,
             "analyst_target": tgt,
             "upside": upside,
+            "div_yield": div_yield,
+            "near_high": near_high,
             "conviction": conviction,
             "score": score,
             "verdict": verdict,
@@ -1156,6 +1197,79 @@ def light_score(symbol):
 
 
 _TREND = {"data": None, "ts": 0}
+
+
+SCAN_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "AVGO", "JPM",
+    "BAC", "V", "MA", "UNH", "JNJ", "LLY", "XOM", "CVX", "WMT", "COST",
+    "HD", "PG", "KO", "DIS", "NFLX", "CRM", "ORCL", "ADBE", "INTC", "QCOM",
+    "VZ", "PFE", "MRK", "CAT", "BA", "NKE",
+]
+
+_SCAN = {"data": None, "ts": 0}
+
+
+def scan_universe():
+    # Scores a broad set of large, widely held US stocks once and caches the whole set for
+    # half an hour. Each symbol is cached on its own too, so this shares work with the sector
+    # lists and stays cheap after the first warmup.
+    now = time.time()
+    if _SCAN["data"] is not None and now - _SCAN["ts"] < 1800:
+        return _SCAN["data"]
+    rows = []
+    for sym in SCAN_UNIVERSE:
+        r = light_score(sym)
+        if r:
+            rows.append(r)
+    _SCAN["data"] = rows
+    _SCAN["ts"] = now
+    return rows
+
+
+@app.route("/scan")
+def scan():
+    lens = (request.args.get("lens") or "strong").lower()
+    rows = scan_universe()
+    out = []
+
+    def num(v):
+        return isinstance(v, (int, float))
+
+    if lens == "highs":
+        cand = [r for r in rows if num(r.get("near_high")) and r["near_high"] >= 90]
+        cand.sort(key=lambda r: r["near_high"], reverse=True)
+        for r in cand[:12]:
+            out.append(dict(r, reason="Trading at %s%% of its 52 week high, near the top of its range." % r["near_high"]))
+    elif lens == "growth":
+        cand = [r for r in rows if num(r.get("upside")) and r["upside"] > 0]
+        cand.sort(key=lambda r: r["upside"], reverse=True)
+        for r in cand[:12]:
+            out.append(dict(r, reason="Analysts see about %s%% upside to their average price target." % r["upside"]))
+    elif lens == "value":
+        cand = []
+        for r in rows:
+            try:
+                pen = float(r.get("pe_ratio"))
+            except (TypeError, ValueError):
+                continue
+            if 3 <= pen <= 18:
+                cand.append((pen, r))
+        cand.sort(key=lambda x: x[0])
+        for pen, r in cand[:12]:
+            out.append(dict(r, reason="Priced at about %s times earnings, on the lower, more value leaning end." % pen))
+    elif lens == "dividend":
+        cand = [r for r in rows if num(r.get("div_yield")) and r["div_yield"] >= 1.5]
+        cand.sort(key=lambda r: r["div_yield"], reverse=True)
+        for r in cand[:12]:
+            out.append(dict(r, reason="Pays about a %s%% dividend yield, toward the higher end of the group." % r["div_yield"]))
+    else:
+        lens = "strong"
+        cand = [r for r in rows if num(r.get("change_pct")) and r["change_pct"] > 0]
+        cand.sort(key=lambda r: r["change_pct"], reverse=True)
+        for r in cand[:12]:
+            out.append(dict(r, reason="Up %s%% today, among the strongest movers in the group." % r["change_pct"]))
+
+    return jsonify({"lens": lens, "items": out})
 
 
 @app.route("/trending")
