@@ -267,6 +267,19 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .vsec-h{font-size:17px;font-weight:800;margin-bottom:8px;}
 .vsec-p{font-size:13px;line-height:1.6;color:var(--muted);margin-bottom:14px;}
 .soon{font-size:12px;font-weight:800;color:var(--accent);padding:13px;border:1px dashed var(--border);border-radius:11px;text-align:center;letter-spacing:.3px;}
+.lensrow{display:flex;gap:8px;overflow-x:auto;padding:4px 0 2px;margin:8px 0 4px;-webkit-overflow-scrolling:touch;}
+.lensrow::-webkit-scrollbar{display:none;}
+.lens{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.lens.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+.scanNote{font-size:12px;line-height:1.55;color:var(--muted);margin:8px 2px 14px;}
+.scanRow{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:14px;margin-bottom:10px;cursor:pointer;}
+.scanTop{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.scanSym{font-size:17px;font-weight:800;}
+.scanV{font-size:11px;font-weight:800;padding:3px 9px;border-radius:7px;letter-spacing:.5px;}
+.scanName{font-size:12px;color:var(--muted);margin-top:2px;}
+.scanReason{font-size:13px;line-height:1.5;margin-top:9px;}
+.scanMeta{font-size:13px;font-weight:700;margin-top:9px;}
+.scanEmpty{font-size:13px;line-height:1.6;color:var(--muted);padding:16px;border:1px dashed var(--border);border-radius:12px;text-align:center;}
 </style>
 </head>
 <body>
@@ -381,13 +394,18 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 <div class="view" id="view-scans">
   <div class="vhead">
     <div class="vhead-t">Scans</div>
-    <div class="vhead-s">Point the engine at the whole market through a few plain English lenses. Each one runs the same scoring you see in a full report, then shows the names that pass and why.</div>
+    <div class="vhead-s">Point the engine at the whole market through plain lenses. Each one runs the same scoring you see in a full report. Tap a lens, then tap any name for the full breakdown.</div>
   </div>
-  <div class="vsec">
-    <div class="vsec-h">The lenses</div>
-    <div class="vsec-p">Insiders are buying. Analysts just upgraded. Unusually strong today. Near new highs. Value, growth, and dividend views. Tap a lens, get a ranked list, tap any name for the full breakdown.</div>
-    <div class="soon">Building this next. The lenses will appear here as buttons you tap.</div>
+  <div class="lensrow" id="lensrow">
+    <button class="lens active" data-lens="strong">Strong Today</button>
+    <button class="lens" data-lens="highs">Near Highs</button>
+    <button class="lens" data-lens="growth">Most Upside</button>
+    <button class="lens" data-lens="value">Value Leaning</button>
+    <button class="lens" data-lens="dividend">Dividend</button>
   </div>
+  <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names, and an insiders buying lens, are coming as we expand the universe. Educational only, never advice.</div>
+  <div class="loading" id="scanLoad">Scanning the market...</div>
+  <div id="scanResults"></div>
 </div>
 <div class="view" id="view-compare">
   <div class="vhead">
@@ -1339,6 +1357,41 @@ function loadTrending(){
   }).catch(function(){});
 }
 
+var _scanLoaded = false;
+function loadScan(lens){
+  var btns = document.querySelectorAll(".lens");
+  for(var i=0;i<btns.length;i++){ btns[i].classList.toggle("active", btns[i].getAttribute("data-lens") === lens); }
+  var load = document.getElementById("scanLoad");
+  var res = document.getElementById("scanResults");
+  if(load){ load.classList.add("on"); }
+  if(res){ res.innerHTML = ""; }
+  fetch(API + "/scan?lens=" + encodeURIComponent(lens)).then(function(r){ return r.json(); }).then(function(d){
+    if(load){ load.classList.remove("on"); }
+    var items = (d && d.items) ? d.items : [];
+    if(!res){ return; }
+    if(!items.length){ res.innerHTML = "<div class=\"scanEmpty\">No names match this lens right now. Markets shift through the day, so check back later or try another lens.</div>"; return; }
+    res.innerHTML = items.map(function(it){
+      var v = it.verdict || "WATCH";
+      var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
+      var c = (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%";
+      var cc = it.change_pct >= 0 ? "pos" : "neg";
+      return "<div class=\"scanRow\" data-sym=\"" + esc(it.symbol) + "\">"
+        + "<div class=\"scanTop\"><div class=\"scanSym\">" + esc(it.symbol) + "</div><div class=\"scanV " + vc + "\">" + v + "</div></div>"
+        + "<div class=\"scanName\">" + esc(it.name || "") + "</div>"
+        + "<div class=\"scanReason\">" + esc(it.reason || "") + "</div>"
+        + "<div class=\"scanMeta\"><span class=\"" + cc + "\">" + c + "</span> <span class=\"gray\">$" + (it.price || 0).toLocaleString() + "</span></div>"
+        + "</div>";
+    }).join("");
+  }).catch(function(){
+    if(load){ load.classList.remove("on"); }
+    if(res){ res.innerHTML = "<div class=\"scanEmpty\">Could not load the scan. Check your connection and try again.</div>"; }
+  });
+}
+var _lensBtns = document.querySelectorAll(".lens");
+for(var _l=0; _l<_lensBtns.length; _l++){
+  _lensBtns[_l].addEventListener("click", function(){ loadScan(this.getAttribute("data-lens")); });
+}
+
 function showView(name){
   var vs = document.querySelectorAll(".view");
   for(var i=0;i<vs.length;i++){ vs[i].classList.remove("active"); }
@@ -1346,6 +1399,7 @@ function showView(name){
   if(el){ el.classList.add("active"); }
   var ts = document.querySelectorAll(".tab");
   for(var j=0;j<ts.length;j++){ ts[j].classList.toggle("active", ts[j].getAttribute("data-view") === name); }
+  if(name === "scans" && !_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
