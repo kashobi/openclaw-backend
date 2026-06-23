@@ -1401,6 +1401,143 @@ def alerts():
     return jsonify({"status": "ok", "alerts": out, "total_saved": len(rows)})
 
 
+def fmt_money_py(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "an unclear amount"
+    if v >= 1e9:
+        return "$%.1fB" % (v / 1e9)
+    if v >= 1e6:
+        return "$%.1fM" % (v / 1e6)
+    if v >= 1e3:
+        return "$%.0fK" % (v / 1e3)
+    return "$%.0f" % v
+
+
+def _safe_float(v, default):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def insider_brief(symbol, price):
+    try:
+        t = yf.Ticker(symbol)
+        it = t.insider_transactions
+        if it is None or it.empty:
+            return {"selling": False, "clevel_sells": 0, "sell_value": 0}
+        clevel_sells = 0
+        sell_value = 0
+        p = price if isinstance(price, (int, float)) and price > 0 else 0
+        for _, rr in it.head(12).iterrows():
+            row = rr.to_dict()
+            pos = row.get("Position") or row.get("Title") or row.get("Relation") or ""
+            desc = row.get("Transaction") or row.get("Text") or ""
+            basis = str(desc) if str(desc).strip() else " ".join(str(x) for x in row.values())
+            if any(c in str(pos).upper() for c in INSIDER_CLEVEL) and classify_insider_kind(basis) == "sell":
+                clevel_sells += 1
+                try:
+                    sell_value += int(float(row.get("Shares") or 0)) * p
+                except Exception:
+                    pass
+        return {"selling": clevel_sells >= 1, "clevel_sells": clevel_sells, "sell_value": sell_value}
+    except Exception:
+        return {"selling": False, "clevel_sells": 0, "sell_value": 0}
+
+
+def ask_gemini(symbol, q, d, ins):
+    try:
+        facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
+                 % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
+        if ins is not None:
+            facts += " Insider picture: about %s recent C level sales." % ins.get("clevel_sells")
+        prompt = (
+            "You are the explanation layer for an educational stock app for everyday people and beginners. "
+            "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
+            "Here are the engine's current facts for this stock: " + facts + " "
+            "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
+            "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
+        )
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
+        payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400}}
+        r = requests.post(url, json=payload, timeout=12)
+        if r.status_code == 200:
+            data = r.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        logger.error("ask_gemini %s: %s" % (symbol, e))
+    return None
+
+
+def ask_fallback(symbol, q, d, ins):
+    ql = q.lower()
+    v = d.get("verdict", "WATCH")
+    chg = d.get("change_pct")
+    pe = d.get("pe_ratio")
+    up = d.get("upside")
+    parts = []
+    if any(w in ql for w in ["why", "watch", "verdict", "call", "rating", "approve", "pass", "buy", "hold"]):
+        if v == "WATCH":
+            parts.append("%s is at WATCH, which means the signals disagree, so there is no clear edge today and the patient move is to wait for the picture to sharpen." % symbol)
+        elif v == "APPROVE":
+            parts.append("%s is at APPROVE, which means the positive signals currently outweigh the negative ones." % symbol)
+        elif v == "PASS":
+            parts.append("%s is at PASS, which means the negatives outweigh the positives right now." % symbol)
+    if any(w in ql for w in ["change", "would", "flip", "improve", "turn", "move it"]):
+        parts.append("To move toward APPROVE the engine wants the positives to outweigh the negatives. The fastest ways are an analyst upgrade to Buy, a C level executive buying shares, or a clear price move up on heavy volume. It slips toward PASS if the price breaks down alongside a negative analyst call or heavy executive selling.")
+    if ins is not None:
+        if ins.get("selling"):
+            n = ins.get("clevel_sells")
+            parts.append("On insiders: company people have been selling, about %s C level sale%s recently, roughly %s in value. Executives sell for many reasons, so selling alone is a softer signal than buying, but a cluster is a caution." % (n, "" if n == 1 else "s", fmt_money_py(ins.get("sell_value"))))
+        else:
+            parts.append("On insiders: no notable cluster of executive selling is showing up right now, which is neutral.")
+    if any(w in ql for w in ["valuation", "expensive", "cheap", "pe", "p/e", "earnings", "overvalued", "undervalued", "value"]):
+        if pe and str(pe) != "N/A":
+            tail = " That is on the higher side, so a lot of growth is already priced in." if _safe_float(pe, 0) > 40 else (" That is on the lower, more value leaning side." if _safe_float(pe, 99) < 18 else " That sits in a middle range.")
+            parts.append("On valuation: it trades at about %s times earnings." % pe + tail)
+        else:
+            parts.append("On valuation: a price to earnings number is not available for it right now, which is common for companies without steady profits.")
+    if any(w in ql for w in ["target", "upside", "analyst", "potential", "go up"]):
+        if isinstance(up, (int, float)):
+            parts.append("On the analyst view: the average price target sits about %s%% %s today's price." % (abs(up), "above" if up >= 0 else "below"))
+    if any(w in ql for w in ["today", "moving", "doing", "price today"]):
+        if isinstance(chg, (int, float)):
+            parts.append("Today it is %s%% %s." % (abs(chg), "up" if chg >= 0 else "down"))
+    if not parts:
+        parts.append("%s is at %s right now." % (symbol, v))
+        if isinstance(chg, (int, float)):
+            parts.append("It is %s%% %s today." % (abs(chg), "up" if chg >= 0 else "down"))
+        if isinstance(up, (int, float)):
+            parts.append("Analysts see about %s%% %s their average target." % (abs(up), "above" if up >= 0 else "below"))
+        parts.append("Open the full report for the complete breakdown.")
+    parts.append("This is educational, not advice.")
+    return " ".join(parts)
+
+
+@app.route("/ask")
+def ask():
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    q = (request.args.get("q") or "").strip()
+    if not symbol:
+        return jsonify({"answer": "Tell me which stock you are asking about. Type a ticker first."})
+    if not q:
+        return jsonify({"answer": "Ask a question about " + symbol + ", like why is this a watch, or what would change the call."})
+    d = light_score(symbol)
+    if not d:
+        return jsonify({"answer": "I could not read " + symbol + " right now. Check the ticker and try again."})
+    ql = q.lower()
+    ins = None
+    if any(w in ql for w in ["insider", "executive", "exec", "selling", "sold", "buying", "bought"]):
+        ins = insider_brief(symbol, d.get("price"))
+    if GEMINI_KEY:
+        a = ask_gemini(symbol, q, d, ins)
+        if a:
+            return jsonify({"answer": a, "verdict": d.get("verdict")})
+    return jsonify({"answer": ask_fallback(symbol, q, d, ins), "verdict": d.get("verdict")})
+
+
 @app.route("/trending")
 def trending():
     # The day's trending stocks, the names most actively traded right now. Pulled live from
