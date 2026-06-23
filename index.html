@@ -302,6 +302,16 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .moverRow{display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:7px;cursor:pointer;font-size:13px;font-weight:700;gap:8px;}
 .moverSym{font-weight:800;}
 .moversEmpty{font-size:12px;color:var(--muted);padding:10px;}
+.alertRow{border-radius:12px;padding:14px;margin-bottom:9px;cursor:pointer;border:1px solid var(--border);background:var(--surface);border-left-width:4px;}
+.alertCaution{border-left-color:var(--red);}
+.alertPositive{border-left-color:var(--green);}
+.alertTop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.alertSym{font-size:16px;font-weight:800;}
+.alertTag{font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--muted);}
+.alertCaution .alertTag{color:var(--red);}
+.alertPositive .alertTag{color:var(--green);}
+.alertReason{font-size:13px;line-height:1.5;margin-top:7px;}
+.alertEmpty{font-size:13px;line-height:1.6;color:var(--muted);padding:14px;border:1px dashed var(--border);border-radius:11px;text-align:center;}
 </style>
 </head>
 <body>
@@ -454,8 +464,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   </div>
   <div class="vsec" id="alertsSec">
     <div class="vsec-h">Alerts</div>
-    <div class="vsec-p">When a saved stock changes its verdict or a real signal fires, it shows up here so you never miss it. The next layer is a push to your phone the way a brokerage app pings you.</div>
-    <div class="soon">Building this next.</div>
+    <div class="vsec-p">When a saved stock makes a notable move or the engine shifts on it, it shows up here so you do not miss it. A push to your phone is the next layer.</div>
+    <div id="alertsFeed"><div class="alertEmpty">Loading your alerts...</div></div>
   </div>
   <div class="stitle" id="watchTitle" style="display:none">&#11088; My Watchlist</div>
     <div id="watchPanel" style="display:none"></div>
@@ -1481,6 +1491,26 @@ function loadMovers(){
   });
 }
 
+function loadAlerts(){
+  var feed = document.getElementById("alertsFeed");
+  if(!feed){ return; }
+  fetch(API + "/alerts").then(function(r){ return r.json(); }).then(function(d){
+    var st = d && d.status;
+    if(st === "logged_out"){ feed.innerHTML = "<div class=\"alertEmpty\">Log in and save a few stocks, and alerts on them will show up here.</div>"; return; }
+    if(st === "empty"){ feed.innerHTML = "<div class=\"alertEmpty\">No saved stocks yet. Open any report and tap Save to Watchlist, and it will be watched here.</div>"; return; }
+    var a = (d && d.alerts) ? d.alerts : [];
+    if(!a.length){ feed.innerHTML = "<div class=\"alertEmpty\">All quiet. None of your saved stocks need attention right now.</div>"; return; }
+    feed.innerHTML = a.map(function(it){
+      var k = it.kind === "caution" ? "alertCaution" : "alertPositive";
+      var tag = it.kind === "caution" ? "WORTH A LOOK" : "POSITIVE";
+      return "<div class=\"alertRow " + k + "\" data-sym=\"" + esc(it.symbol) + "\">"
+        + "<div class=\"alertTop\"><span class=\"alertSym\">" + esc(it.symbol) + "</span><span class=\"alertTag\">" + tag + "</span></div>"
+        + "<div class=\"alertReason\">" + esc(it.reason || "") + "</div>"
+        + "</div>";
+    }).join("");
+  }).catch(function(){ feed.innerHTML = "<div class=\"alertEmpty\">Could not load alerts right now.</div>"; });
+}
+
 function showView(name){
   var vs = document.querySelectorAll(".view");
   for(var i=0;i<vs.length;i++){ vs[i].classList.remove("active"); }
@@ -1490,6 +1520,7 @@ function showView(name){
   for(var j=0;j<ts.length;j++){ ts[j].classList.toggle("active", ts[j].getAttribute("data-view") === name); }
   if(name === "scans" && !_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
+  if(name === "watch"){ loadAlerts(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
