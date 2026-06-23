@@ -320,6 +320,9 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .askQ2{font-size:13px;font-weight:800;color:var(--accent);margin-bottom:8px;}
 .askVerdict{display:inline-block;margin-bottom:10px;}
 .askA{font-size:14px;line-height:1.65;}
+.micBtn{width:100%;background:var(--surface);border:2px solid var(--accent);color:var(--accent);border-radius:13px;padding:15px;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:.3px;margin:10px 0 4px;-webkit-tap-highlight-color:transparent;}
+.micBtn.listening{background:var(--accent);color:#fff;animation:micpulse 1.1s ease-in-out infinite;}
+@keyframes micpulse{0%,100%{opacity:1;}50%{opacity:.62;}}
 </style>
 </head>
 <body>
@@ -485,11 +488,12 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 <div class="view" id="view-ask">
   <div class="vhead">
     <div class="vhead-t">Ask</div>
-    <div class="vhead-s">Ask a plain question about any stock and get a plain answer, grounded in the same numbers the engine uses. A real explanation, not a chatbot guessing.</div>
+    <div class="vhead-s">Talk or type. Ask about one stock, or name a few and ask how they compare. The answer comes from the same live numbers the engine uses, in plain language.</div>
   </div>
+  <button class="micBtn" id="micBtn">&#127908; Tap and talk</button>
   <div class="askInputs">
-    <input class="cmpInp" id="askSym" type="text" placeholder="Ticker, like AAPL" autocomplete="off"/>
-    <input class="cmpInp" id="askQ" type="text" placeholder="Your question, like why is this a watch" autocomplete="off"/>
+    <input class="cmpInp" id="askSym" type="text" placeholder="Ticker, optional, like AAPL" autocomplete="off"/>
+    <input class="cmpInp" id="askQ" type="text" placeholder="Your question, or just speak it above" autocomplete="off"/>
     <button class="cmpBtn" id="askBtn">Ask</button>
   </div>
   <div class="askChips" id="askChips">
@@ -1506,6 +1510,32 @@ function loadMovers(){
     if(n){ n.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
   });
 }
+
+function startVoice(){
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var mic = document.getElementById("micBtn");
+  var ans = document.getElementById("askAnswer");
+  if(!SR){
+    if(ans){ ans.innerHTML = "<div class=\"scanEmpty\">Voice typing is not available in this browser. You can type your question in the box instead.</div>"; }
+    return;
+  }
+  var rec = new SR();
+  rec.lang = "en-US";
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  if(mic){ mic.classList.add("listening"); mic.innerHTML = "&#128308; Listening, speak now"; }
+  rec.onresult = function(e){
+    var t = e.results[0][0].transcript;
+    var qbox = document.getElementById("askQ");
+    if(qbox){ qbox.value = t; }
+    runAsk();
+  };
+  rec.onerror = function(){ if(mic){ mic.classList.remove("listening"); mic.innerHTML = "&#127908; Tap and talk"; } };
+  rec.onend = function(){ if(mic){ mic.classList.remove("listening"); mic.innerHTML = "&#127908; Tap and talk"; } };
+  try { rec.start(); } catch(err){ if(mic){ mic.classList.remove("listening"); mic.innerHTML = "&#127908; Tap and talk"; } }
+}
+var _mic = document.getElementById("micBtn");
+if(_mic){ _mic.addEventListener("click", startVoice); }
 
 function runAsk(){
   var sym = document.getElementById("askSym").value.trim();
