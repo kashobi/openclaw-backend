@@ -1272,6 +1272,87 @@ def scan():
     return jsonify({"lens": lens, "items": out})
 
 
+def compare_reason(best, items):
+    v = best.get("verdict", "WATCH")
+    msg = best["symbol"] + " looks strongest in this group. "
+    descr = {
+        "APPROVE": "the engine leans positive on it",
+        "WATCH": "the engine holds it at watch, but it scores above the others here",
+        "PASS": "the engine is cautious on it, yet it still scores the least weak of the group",
+    }
+    msg += descr.get(v, "it scores highest of the group") + ". "
+    extras = []
+    if isinstance(best.get("upside"), (int, float)):
+        extras.append("analysts see about %s%% upside to target" % best["upside"])
+    if isinstance(best.get("change_pct"), (int, float)):
+        extras.append("it is %s%% %s today" % (abs(best["change_pct"]), "up" if best["change_pct"] >= 0 else "down"))
+    try:
+        extras.append("it trades at about %s times earnings" % round(float(best.get("pe_ratio")), 1))
+    except (TypeError, ValueError):
+        pass
+    if extras:
+        msg += "Among the reasons: " + ", ".join(extras) + ". "
+    msg += "This weighs the same signals you see in each full report. Educational only, never advice."
+    return msg
+
+
+@app.route("/compare")
+def compare():
+    raw = request.args.get("symbols", "")
+    syms = [s.strip().upper() for s in raw.split(",") if s.strip()][:3]
+    items = []
+    for s in syms:
+        r = light_score(s)
+        if r:
+            items.append(r)
+    strongest = None
+    reason = ""
+    if items:
+        best = max(items, key=lambda r: (r.get("score", 0), r.get("upside") or 0, r.get("change_pct") or 0))
+        strongest = best["symbol"]
+        reason = compare_reason(best, items)
+    return jsonify({"items": items, "strongest": strongest, "reason": reason})
+
+
+_MOVERS = {"data": None, "ts": 0}
+
+
+@app.route("/movers")
+def movers():
+    # The biggest gainers and decliners across the whole market, pulled live and refreshed every
+    # half hour. Surfaces names well beyond the usual large caps, which fits the Discover idea.
+    now = time.time()
+    if _MOVERS["data"] is not None and now - _MOVERS["ts"] < 1800:
+        return jsonify(_MOVERS["data"])
+
+    def pct(v):
+        try:
+            return round(float(str(v).replace("%", "").replace("(", "-").replace(")", "").strip()), 2)
+        except Exception:
+            return None
+
+    def grab(path):
+        data = fmp_get(path)
+        out = []
+        if isinstance(data, list):
+            for d in data[:10]:
+                sym = d.get("symbol")
+                if not sym or len(sym) > 6:
+                    continue
+                out.append({
+                    "symbol": sym,
+                    "name": d.get("name") or sym,
+                    "change_pct": pct(d.get("changesPercentage")),
+                    "price": d.get("price"),
+                })
+        return out
+
+    out = {"gainers": grab("/api/v3/stock_market/gainers"), "losers": grab("/api/v3/stock_market/losers")}
+    _MOVERS["data"] = out
+    _MOVERS["ts"] = now
+    return jsonify(out)
+
+
 @app.route("/trending")
 def trending():
     # The day's trending stocks, the names most actively traded right now. Pulled live from
