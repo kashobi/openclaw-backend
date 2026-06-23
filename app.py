@@ -1570,15 +1570,44 @@ def extract_entities(text):
     return found
 
 
-def coach_answer(q, entities):
+PRIVATE_COMPANIES = {
+    "spacex": "SpaceX", "starlink": "Starlink", "openai": "OpenAI", "anthropic": "Anthropic",
+    "stripe": "Stripe", "databricks": "Databricks", "bytedance": "ByteDance", "tiktok": "TikTok",
+    "x corp": "X", "discord": "Discord", "epic games": "Epic Games", "valve": "Valve",
+}
+
+
+def extract_private(text):
+    tl = " " + text.lower() + " "
+    out = []
+    seen = set()
+    for k in sorted(PRIVATE_COMPANIES, key=len, reverse=True):
+        if any(k + suff in tl for suff in [" ", ",", ".", "?"]) and (" " + k) in tl:
+            v = PRIVATE_COMPANIES[k]
+            if v not in seen:
+                out.append(v)
+                seen.add(v)
+    return out
+
+
+def coach_answer(q, entities, private):
     scored = []
     for tkr, label, is_sec in entities[:4]:
         r = light_score(tkr)
         if r:
             scored.append((label, is_sec, r))
+    parts = ["First, the honest part. I am an educational tool, not a financial advisor, so I will not tell you where to put your money. That is your call, and a real one. What I can do is show you how each one looks on the signals, in plain language, so you can decide for yourself."]
+    for pname in private:
+        parts.append(pname + " is privately held and not traded on the stock market, so there is no public stock for it to read and you cannot buy it like a normal share. If it ever goes public, that changes.")
     if not scored:
-        return "I could not match that to stocks I can read. Try naming the companies or tickers directly, like Bank of America, JPMorgan, and Exxon."
-    parts = ["First, the honest part. I am an educational tool, not a financial advisor, so I will not tell you where to put your money. That is your call, and a real one. What I can do is show you how each of these looks on the signals right now, in plain language, so you can think it through yourself."]
+        if private:
+            parts.append("That leaves nothing public here to compare. Name a publicly traded company or a ticker and I can break it down.")
+        else:
+            parts.append("I could not match that to stocks I can read. Try naming the companies or tickers directly, like Bank of America, JPMorgan, and Exxon.")
+        parts.append("Educational only, never advice.")
+        return " ".join(parts)
+    if private:
+        parts.append("Here is the one I can actually read." if len(scored) == 1 else "Here are the ones I can actually read.")
     for label, is_sec, r in scored:
         v = r.get("verdict", "WATCH")
         chg = r.get("change_pct")
@@ -1639,24 +1668,33 @@ def ask():
         return jsonify({"answer": "Ask a question, like why is this a watch, or name a few stocks and ask how they compare."})
     ql = q.lower()
     entities = extract_entities(q)
+    private = extract_private(q)
     allocation = any(p in ql for p in [
         "where should i", "where do i", "should i invest", "invest", "put my money",
         "put $", "split", "allocate", "best to buy", "which should i buy",
         "which one should i", "what should i buy", "better buy", "worth buying",
     ])
-    if len(entities) >= 2 or (allocation and len(entities) >= 1):
-        if GEMINI_KEY:
+    comparison = any(p in ql for p in [
+        "difference", "compare", "comparison", "versus", " vs ", "vs.", "between",
+        "stronger", "better than", "which is better",
+    ])
+    trigger = allocation or comparison
+    total_named = len(entities) + len(private)
+    if total_named >= 2 or (trigger and total_named >= 1):
+        if GEMINI_KEY and entities and not private:
             a = coach_gemini(q, entities)
             if a:
                 return jsonify({"answer": a})
-        return jsonify({"answer": coach_answer(q, entities)})
+        return jsonify({"answer": coach_answer(q, entities, private)})
 
     sym = symbol or (entities[0][0] if entities else "")
     if not sym:
+        if private:
+            return jsonify({"answer": coach_answer(q, [], private)})
         return jsonify({"answer": "Tell me which stock you mean. Type a ticker in the box, or name the company in your question."})
     d = light_score(sym)
     if not d:
-        return jsonify({"answer": "I could not read " + sym + " right now. Check the ticker and try again."})
+        return jsonify({"answer": "I could not pull live data for " + sym + " right now. It may be an unusual ticker, or data is briefly unavailable. Try again, or check the symbol."})
     ins = None
     if any(w in ql for w in ["insider", "executive", "exec", "selling", "sold", "buying", "bought"]):
         ins = insider_brief(sym, d.get("price"))
