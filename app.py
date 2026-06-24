@@ -19,7 +19,7 @@ CORS(app)
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 QUIVER_KEY = os.environ.get("QUIVER_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
-DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY", "")
+DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY") or os.environ.get("DeepSeek") or ""
 FMP_KEY = os.environ.get("FMP_KEY", "")
 FMP_BASE = "https://financialmodelingprep.com"
 
