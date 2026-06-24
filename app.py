@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, Response, session
+from flask import Flask, jsonify, request, Response, session, redirect
 from flask_cors import CORS
 import yfinance as yf
 import requests
@@ -51,6 +51,14 @@ def get_cache(key):
 
 def set_cache(key, data):
     CACHE[key] = (data, time.time())
+
+
+# CHUNK: send the bare domain to www, a backup in case the Porkbun forward misses
+@app.before_request
+def force_www():
+    host = (request.host or "").split(":")[0].lower()
+    if host == "apexq.io":
+        return redirect(request.url.replace("://apexq.io", "://www.apexq.io", 1), code=301)
 
 
 # CHUNK: stamp every JSON response with data_timestamp if it does not already carry one.
@@ -597,6 +605,45 @@ def analyze():
     return jsonify(result)
 
 
+# CHUNK: pre-market and post-market move, computed from the live quote against the regular close
+def extended_hours(info, cur):
+    try:
+        state = (info.get("marketState") or "").upper()
+        if state in ("PRE", "PREPRE"):
+            price = info.get("preMarketPrice")
+            label = "pre market"
+        elif state in ("POST", "POSTPOST"):
+            price = info.get("postMarketPrice")
+            label = "after hours"
+        else:
+            return None
+        if price is None or not cur:
+            return None
+        price = round(float(price), 2)
+        chg = round(((price - cur) / cur) * 100, 2)
+        if abs(chg) < 0.1:
+            return None
+        return {"session": label, "state": state, "price": price, "change_pct": chg}
+    except Exception:
+        return None
+
+
+# CHUNK: flag a just released or imminent earnings report so the move has context
+def earnings_flag(info):
+    try:
+        ts = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
+        if not ts:
+            return None
+        hrs = (time.time() - float(ts)) / 3600.0
+        if 0 <= hrs <= 36:
+            return "recent"
+        if -36 <= hrs < 0:
+            return "soon"
+        return None
+    except Exception:
+        return None
+
+
 # CHUNK: shared full-report engine so Ask and the report use the same verdict
 def compute_full_report(symbol):
     cached = get_cache(f"full_{symbol}")
@@ -609,7 +656,7 @@ def compute_full_report(symbol):
         info = ticker.info
 
         if hist.empty:
-            return jsonify({"error": f"No data found for {symbol}."}), 404
+            return None
 
         cur = fmt_price(hist["Close"].iloc[-1])
         prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
@@ -949,6 +996,23 @@ def compute_full_report(symbol):
         suggested = suggested[:3]
         suggested.append("Explain this verdict in plain English")
 
+        # CHUNK: build the pre/post market move and a plain-English note that keeps the verdict honest
+        ext = extended_hours(info, cur)
+        earn = earnings_flag(info)
+        ext_note = ""
+        if ext:
+            direction = "up" if ext["change_pct"] >= 0 else "down"
+            ext_note = "%s is %s %s percent in %s trading, at about $%s." % (
+                symbol, direction, abs(ext["change_pct"]), ext["session"], ext["price"])
+            if earn == "recent":
+                ext_note += " This is right after an earnings report. The verdict below is based on the regular session close, so it does not yet reflect this move or how the stock trades at the next open. Big moves right after earnings often settle down, so treat this as fresh news to read, not a new verdict. See the news below."
+            else:
+                ext_note += " The verdict below is based on the regular session close, not this move."
+        elif earn == "recent":
+            ext_note = "%s reported earnings within about the last day. The verdict below is based on the most recent regular session close, so check the news below for the latest." % symbol
+        elif earn == "soon":
+            ext_note = "%s is expected to report earnings within about a day. Results can move a stock sharply, so keep that in mind alongside the verdict below." % symbol
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -971,6 +1035,9 @@ def compute_full_report(symbol):
             "insider_sell_value": insider_sell_value,
             "holder_sell_value": holder_sell_value,
             "insider_big_block": big_block,
+            "extended": ext,
+            "earnings": earn,
+            "extended_note": ext_note,
             "news": news,
             "congressional": congressional,
             "insider": insider,
@@ -979,11 +1046,11 @@ def compute_full_report(symbol):
         }
 
         set_cache(f"full_{symbol}", result)
-        return jsonify(result)
+        return result
 
     except Exception as e:
         logger.error(f"Analyze error for {symbol}: {e}")
-        return jsonify({"error": str(e)}), 500
+        return None
 
 
 @app.route("/context")
