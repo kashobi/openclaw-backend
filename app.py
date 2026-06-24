@@ -491,9 +491,28 @@ def classify_insider_kind(text):
     return "other"
 
 
-def insider_selling_cap(ticker_obj, cur_price):
+def is_strong_uptrend(info, cur):
+    # A stock up big over the past year. Used to read insider selling in context: trimming after
+    # a big run is profit taking, not a warning. Prefer the trailing one year return; fall back
+    # to price well above the 200 day average when the yearly figure is missing.
+    try:
+        yr = info.get("52WeekChange")
+        if isinstance(yr, (int, float)):
+            return yr >= 0.40
+        dma200 = info.get("twoHundredDayAverage")
+        if isinstance(dma200, (int, float)) and dma200 > 0 and isinstance(cur, (int, float)):
+            return cur >= dma200 * 1.20
+    except Exception:
+        pass
+    return False
+
+
+def insider_selling_cap(ticker_obj, cur_price, strong_uptrend=False):
     # Returns True when a cluster of executives is selling, the same rule the full report uses
-    # to refuse an APPROVE. Used by the sector list so it never contradicts the full report.
+    # to refuse an APPROVE. In a strong uptrend that selling is profit taking, not a warning,
+    # so it never caps. Used by the sector list so it never contradicts the full report.
+    if strong_uptrend:
+        return False
     try:
         it = ticker_obj.insider_transactions
         if it is None or it.empty:
@@ -831,22 +850,9 @@ def compute_full_report(symbol):
 
         ins_buys = len([t for t in insider if t.get("is_clevel") and t.get("action") == "A"])
         ins_sells = len([t for t in insider if t.get("is_clevel") and t.get("action") == "D"])
-        if ins_buys >= 2:
-            score += 3
-        elif ins_buys == 1:
-            score += 2
-        # Insider selling is a softer signal than buying, since executives sell for many
-        # ordinary reasons. But a broad cluster of top officers selling at once is a real
-        # caution, so it pulls the score down, scaled to how many are selling.
-        if ins_sells >= 4:
-            score -= 4
-        elif ins_sells >= 2:
-            score -= 2
-        elif ins_sells == 1:
-            score -= 1
 
-        # Weigh the size of the selling, not just the count. Estimate the dollar value of each
-        # sale using the current price, attach it to every row so it can be shown, and total it.
+        # Estimate the dollar value of each sale using the current price, attach it to every row
+        # so it can be shown, and total it.
         price_for_value = cur if isinstance(cur, (int, float)) and cur > 0 else 0
         for t in insider:
             try:
@@ -863,21 +869,36 @@ def compute_full_report(symbol):
         insider_sell_value = sum(t.get("value", 0) for t in insider if t.get("action") == "D" and not t.get("is_holder"))
         holder_sell_value = sum(t.get("value", 0) for t in insider if t.get("action") == "D" and t.get("is_holder"))
 
-        # Conservative size add-on. Only genuinely large executive selling deepens the penalty,
-        # so routine insider sales never trip it. Tuned to dollar value of executive sells.
-        if exec_sell_value >= 50000000:
-            score -= 2
-        elif exec_sell_value >= 20000000:
-            score -= 1
-
-        # Very large single block detection (any insider, including big holders). A block this
-        # size is market relevant, but big holders sometimes sell for portfolio reasons, so it
-        # adds a mild caution and a clear note rather than dominating the verdict.
         mc_num = info.get("marketCap") if isinstance(info.get("marketCap"), (int, float)) else 0
-        big_block = False
-        if max_single_sell >= 100000000 or (mc_num > 0 and max_single_sell >= 0.01 * mc_num):
-            big_block = True
-            score -= 1
+        big_block = max_single_sell >= 100000000 or (mc_num > 0 and max_single_sell >= 0.01 * mc_num)
+
+        # CHUNK: read insider selling in context. Buying is always a strong positive, so it scores
+        # straight away. Selling is softer, and after a big run it is usually profit taking. So in a
+        # strong uptrend the whole selling penalty is held to at most one point and never overrides
+        # an APPROVE. Flat or falling, selling keeps its full weight and can still cap the verdict.
+        strong_uptrend = is_strong_uptrend(info, cur)
+
+        if ins_buys >= 2:
+            score += 3
+        elif ins_buys == 1:
+            score += 2
+
+        sell_penalty = 0
+        if ins_sells >= 4:
+            sell_penalty += 4
+        elif ins_sells >= 2:
+            sell_penalty += 2
+        elif ins_sells == 1:
+            sell_penalty += 1
+        if exec_sell_value >= 50000000:
+            sell_penalty += 2
+        elif exec_sell_value >= 20000000:
+            sell_penalty += 1
+        if big_block:
+            sell_penalty += 1
+        if strong_uptrend:
+            sell_penalty = min(sell_penalty, 1)
+        score -= sell_penalty
 
         heavy_insider_selling = ins_sells >= 3 or exec_sell_value >= 20000000
 
@@ -898,9 +919,10 @@ def compute_full_report(symbol):
             alert = "sharp_drop"
             verdict = "WATCH"
 
-        # Insider selling cap. When a cluster of executives is selling, the verdict cannot sit
-        # at APPROVE while the people who know the company best are heading for the exit.
-        if heavy_insider_selling and verdict == "APPROVE":
+        # Insider selling cap, read in context. A cluster of executives selling refuses an APPROVE
+        # while the people who know the company best head for the exit, unless the stock is in a
+        # strong uptrend, where that selling is profit taking after a run rather than a warning.
+        if heavy_insider_selling and verdict == "APPROVE" and not strong_uptrend:
             verdict = "WATCH"
             if alert is None:
                 alert = "insider_selling"
@@ -1280,9 +1302,10 @@ def light_score(symbol):
                 pass
         conviction = score_to_conviction(score)
         verdict = "APPROVE" if score >= 4 else ("PASS" if score <= -2 else "WATCH")
-        # Same insider selling cap the full report uses, so the sector list can never show
-        # APPROVE on a stock the full report would hold at WATCH.
-        if verdict == "APPROVE" and insider_selling_cap(t, cur):
+        # Same insider selling cap the full report uses, read in the same context, so the sector
+        # list can never show APPROVE on a stock the full report would hold at WATCH, and never
+        # caps a strong uptrend where insider selling is just profit taking after a run.
+        if verdict == "APPROVE" and insider_selling_cap(t, cur, is_strong_uptrend(info, cur)):
             verdict = "WATCH"
         # Extra fields used by the Scans lenses, read from the same data we already have.
         div_yield = None
