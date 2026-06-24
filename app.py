@@ -1577,7 +1577,7 @@ def ask_fallback(symbol, q, d, ins):
     pe = d.get("pe_ratio")
     up = d.get("upside")
     # CHUNK: answer 'why did it move' questions with available signals
-    if any(p in ql for p in ["why did it drop", "why is it down", "why did it fall", "why is it falling", "why did it rise", "why is it up", "why did it jump", "why is it rising", "why did it move", "what happened", "what caused"]):
+    if any(p in ql for p in ["why did it drop", "why is it down", "why did it fall", "why is it falling", "why did it rise", "why is it up", "why did it jump", "why is it rising", "why did it move", "what happened", "what caused", "what changed", "what's new", "whats new", "what is new", "any news", "news today"]):
         move_bits = []
         if isinstance(chg, (int, float)) and chg <= -0.01:
             move_bits.append("it is down %s%% today" % abs(chg))
@@ -2054,6 +2054,48 @@ body{margin:0;background:#eef1f6;font-family:-apple-system,BlinkMacSystemFont,'S
         "para": e(para),
     }
     return Response(page, mimetype="text/html")
+
+
+# CHUNK: temporary debug endpoint — remove after testing
+@app.route("/debug/ask")
+def debug_ask():
+    symbol = "NVDA"
+    q = "Why did it drop today?"
+    d = light_score(symbol)
+    if not d:
+        return jsonify({"error": "light_score returned None for " + symbol})
+    ins = insider_brief(symbol, d.get("price"))
+    result = {
+        "symbol": symbol,
+        "light_score_ok": True,
+        "price": d.get("price"),
+        "verdict": d.get("verdict"),
+        "change_pct": d.get("change_pct"),
+        "deepseek_key_set": bool(DEEPSEEK_KEY),
+        "deepseek_key_preview": (DEEPSEEK_KEY[:8] + "...") if DEEPSEEK_KEY else "NOT SET",
+        "gemini_key_set": bool(GEMINI_KEY),
+        "gemini_key_preview": (GEMINI_KEY[:8] + "...") if GEMINI_KEY else "NOT SET",
+        "insider_sells": ins.get("clevel_sells") if ins else 0,
+    }
+    if DEEPSEEK_KEY:
+        try:
+            a = ask_deepseek(symbol, q, d, ins)
+            result["deepseek_result"] = (a[:200] if a else "None returned")
+            result["deepseek_error"] = None
+        except Exception as e:
+            result["deepseek_result"] = "None returned"
+            result["deepseek_error"] = str(e)[:200]
+    if GEMINI_KEY:
+        try:
+            a = ask_gemini(symbol, q, d, ins)
+            result["gemini_result"] = (a[:200] if a else "None returned")
+            result["gemini_error"] = None
+        except Exception as e:
+            result["gemini_result"] = "None returned"
+            result["gemini_error"] = str(e)[:200]
+    fb = ask_fallback(symbol, q, d, ins)
+    result["fallback_result"] = (fb[:200] if fb else "")
+    return jsonify(result)
 
 
 if __name__ == "__main__":
