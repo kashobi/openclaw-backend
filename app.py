@@ -52,6 +52,23 @@ def set_cache(key, data):
     CACHE[key] = (data, time.time())
 
 
+# CHUNK: stamp every JSON response with data_timestamp if it does not already carry one.
+# Cached endpoints embed their own fetch time, which is preserved here, so the frontend's
+# "Updated X ago" reflects when the data was actually pulled, not when it was served.
+@app.after_request
+def add_data_timestamp(response):
+    try:
+        ct = response.content_type or ""
+        if ct.startswith("application/json"):
+            payload = response.get_json(silent=True)
+            if isinstance(payload, dict) and "data_timestamp" not in payload:
+                payload["data_timestamp"] = int(time.time())
+                response.set_data(json.dumps(payload))
+    except Exception as e:
+        logger.error("data_timestamp stamp error: %s" % e)
+    return response
+
+
 # ---------- Database and accounts ----------
 import secrets as _secrets
 try:
@@ -885,6 +902,46 @@ def analyze():
                 ratio = s0.get("buySellRatio")
                 fmp["insider_stats"] = {"buys": buys, "sells": sells, "ratio": ratio}
 
+        # CHUNK: proactive Ask questions, chosen from this stock's live signals. Max 3 signal
+        # questions plus the always-on plain English one, so never more than 4.
+        suggested = []
+        try:
+            pe_num = float(pe)
+        except (TypeError, ValueError):
+            pe_num = None
+        up_num = None
+        try:
+            if isinstance(tgt, (int, float)) and cur:
+                up_num = round((tgt - cur) / cur * 100, 1)
+        except Exception:
+            up_num = None
+        if pe_num is not None and pe_num > 60:
+            suggested.append("Is this stock too expensive?")
+        if pe_num is not None and 0 < pe_num < 12:
+            suggested.append("Why is the PE so low?")
+        if up_num is not None and up_num > 20:
+            suggested.append("Why do analysts see so much upside?")
+        if up_num is not None and up_num < -10:
+            suggested.append("Why is it trading above analyst targets?")
+        if verdict == "PASS":
+            suggested.append("What would make this an APPROVE?")
+        elif verdict == "WATCH":
+            suggested.append("What would tip this to APPROVE or PASS?")
+        if insider_sell_value > 10000000 or ins_sells >= 3:
+            suggested.append("Why are executives selling?")
+        if ins_buys >= 1:
+            suggested.append("Why are executives buying their own stock?")
+        if cong_buys >= 1:
+            suggested.append("Why are lawmakers buying this?")
+        if cong_sells >= 2:
+            suggested.append("Why are lawmakers selling this?")
+        if isinstance(chg, (int, float)) and chg < -5:
+            suggested.append("Why did it drop so much today?")
+        if isinstance(chg, (int, float)) and chg > 5:
+            suggested.append("Why is it up so much today?")
+        suggested = suggested[:3]
+        suggested.append("Explain this verdict in plain English")
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -910,6 +967,8 @@ def analyze():
             "news": news,
             "congressional": congressional,
             "insider": insider,
+            "suggested_questions": suggested,
+            "data_timestamp": int(time.time()),
         }
 
         set_cache(f"full_{symbol}", result)
@@ -1185,6 +1244,7 @@ def light_score(symbol):
             "upside": upside,
             "div_yield": div_yield,
             "near_high": near_high,
+            "market_cap": info.get("marketCap", "N/A"),
             "conviction": conviction,
             "score": score,
             "verdict": verdict,
@@ -1347,7 +1407,7 @@ def movers():
                 })
         return out
 
-    out = {"gainers": grab("/api/v3/stock_market/gainers"), "losers": grab("/api/v3/stock_market/losers")}
+    out = {"gainers": grab("/api/v3/stock_market/gainers"), "losers": grab("/api/v3/stock_market/losers"), "data_timestamp": int(time.time())}
     _MOVERS["data"] = out
     _MOVERS["ts"] = now
     return jsonify(out)
@@ -1735,7 +1795,7 @@ def trending():
                 "price": d.get("price"),
             })
 
-    out = {"items": items}
+    out = {"items": items, "data_timestamp": int(time.time())}
     _TREND["data"] = out
     _TREND["ts"] = now
     return jsonify(out)
@@ -1771,9 +1831,95 @@ def discover():
         "why": theme["why"],
         "unknown": theme["unknown"],
         "results": results,
+        "data_timestamp": int(time.time()),
     }
     set_cache("theme_" + key, out)
     return jsonify(out)
+
+
+# CHUNK: shareable read-only snapshot at /s/<symbol>. Standalone HTML, no app shell, no auth.
+@app.route("/s/<symbol>")
+def snapshot(symbol):
+    symbol = (symbol or "").strip().upper()
+    d = light_score(symbol)
+    e = html.escape
+    if not d:
+        return Response("<html><body style='font-family:sans-serif;padding:40px;text-align:center'><h2>Snapshot unavailable</h2><p>We could not read " + e(symbol) + " right now. <a href='/'>Open Apex Q</a></p></body></html>", mimetype="text/html")
+
+    v = d.get("verdict", "WATCH")
+    vcolor = {"APPROVE": "#0a8f3c", "PASS": "#c1121f", "WATCH": "#b8860b"}.get(v, "#b8860b")
+    chg = d.get("change_pct")
+    chg_color = "#0a8f3c" if isinstance(chg, (int, float)) and chg >= 0 else "#c1121f"
+    chg_txt = (("+" if isinstance(chg, (int, float)) and chg >= 0 else "") + str(chg) + "%") if isinstance(chg, (int, float)) else "n/a"
+    name = d.get("name", symbol)
+    price = d.get("price", 0)
+    pe = d.get("pe_ratio", "N/A")
+    tgt = d.get("analyst_target", "N/A")
+    mc = fmt_money_py(d.get("market_cap")) if isinstance(d.get("market_cap"), (int, float)) else "n/a"
+    up = d.get("upside")
+
+    # Plain English read, written here with simple logic, no AI call.
+    if v == "APPROVE":
+        para = "The signals on " + str(name) + " lean positive right now. The engine sees more pointing up than down."
+    elif v == "PASS":
+        para = "The engine is cautious on " + str(name) + " right now. More of the signals point down than up."
+    else:
+        para = "The signals on " + str(name) + " are mixed right now, so the patient read is to watch and wait for a clearer setup."
+    if isinstance(up, (int, float)):
+        para += " Analysts see about " + str(abs(up)) + " percent " + ("above" if up >= 0 else "below") + " today's price on average."
+
+    page = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>%(sym)s snapshot, Apex Q</title>
+<style>
+body{margin:0;background:#eef1f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f1419;padding:24px;}
+.card{max-width:520px;margin:0 auto;background:#fff;border:1px solid #dde2ea;border-radius:18px;padding:26px;box-shadow:0 8px 30px rgba(0,0,0,.06);}
+.brand{font-size:13px;font-weight:800;letter-spacing:1px;color:#003eaa;text-transform:uppercase;}
+.sym{font-size:34px;font-weight:800;margin:10px 0 2px;letter-spacing:-1px;}
+.name{font-size:15px;color:#5b6573;margin-bottom:16px;}
+.price{font-size:26px;font-weight:800;}
+.chg{font-size:15px;font-weight:700;margin-left:8px;}
+.verdict{display:inline-block;margin:16px 0;padding:8px 16px;border-radius:10px;color:#fff;font-weight:800;letter-spacing:1px;font-size:15px;}
+.conv{font-size:13px;color:#5b6573;margin-bottom:6px;}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0;}
+.cell{background:#f6f8fb;border:1px solid #e6ebf2;border-radius:11px;padding:12px;}
+.lbl{font-size:11px;color:#5b6573;text-transform:uppercase;letter-spacing:.4px;}
+.val{font-size:17px;font-weight:700;margin-top:3px;}
+.para{font-size:15px;line-height:1.6;background:#f6f8fb;border-radius:12px;padding:16px;margin:6px 0 4px;}
+.foot{font-size:12px;color:#5b6573;line-height:1.6;margin-top:20px;border-top:1px solid #e6ebf2;padding-top:16px;}
+.foot a{color:#003eaa;font-weight:700;text-decoration:none;}
+</style></head><body>
+<div class="card">
+  <div class="brand">Apex Q</div>
+  <div class="sym">%(sym)s</div>
+  <div class="name">%(name)s</div>
+  <div><span class="price">$%(price)s</span><span class="chg" style="color:%(chgc)s">%(chg)s</span></div>
+  <div class="verdict" style="background:%(vc)s">%(verdict)s</div>
+  <div class="conv">How strong the signal is: %(conv)s</div>
+  <div class="grid">
+    <div class="cell"><div class="lbl">Price vs Earnings</div><div class="val">%(pe)s</div></div>
+    <div class="cell"><div class="lbl">What analysts think it is worth</div><div class="val">%(tgt)s</div></div>
+    <div class="cell"><div class="lbl">Total company value</div><div class="val">%(mc)s</div></div>
+    <div class="cell"><div class="lbl">Move today</div><div class="val" style="color:%(chgc)s">%(chg)s</div></div>
+  </div>
+  <div class="para">%(para)s</div>
+  <div class="foot">Powered by Apex Q, an educational stock intelligence terminal. This is not financial advice. <a href="/">Open the full terminal</a></div>
+</div>
+</body></html>""" % {
+        "sym": e(symbol),
+        "name": e(str(name)),
+        "price": e(str(price)),
+        "chg": e(chg_txt),
+        "chgc": chg_color,
+        "vc": vcolor,
+        "verdict": e(v),
+        "conv": e(str(d.get("conviction", ""))),
+        "pe": e(str(pe)) if pe not in (None, "N/A") else "n/a",
+        "tgt": ("$" + e(str(tgt))) if isinstance(tgt, (int, float)) else "n/a",
+        "mc": e(mc),
+        "para": e(para),
+    }
+    return Response(page, mimetype="text/html")
 
 
 if __name__ == "__main__":
