@@ -1604,12 +1604,17 @@ def insider_brief(symbol, price):
         return {"selling": False, "clevel_sells": 0, "sell_value": 0}
 
 
-def ask_gemini(symbol, q, d, ins):
+def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None):
     try:
         facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
                  % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
-        if ins is not None:
-            facts += " Insider picture: about %s recent C level sales." % ins.get("clevel_sells")
+        ins_src = extra_insider if extra_insider is not None else ins
+        if ins_src is not None:
+            facts += " Insider picture: about %s recent C level sales." % ins_src.get("clevel_sells")
+        if extra_news:
+            heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
+            if heads:
+                facts += " Recent headlines: " + heads + "."
         prompt = (
             "You are the explanation layer for an educational stock app for everyday people and beginners. "
             "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
@@ -1636,12 +1641,17 @@ def ask_gemini(symbol, q, d, ins):
 
 
 # CHUNK: DeepSeek AI provider, same grounding rules as Gemini
-def ask_deepseek(symbol, q, d, ins):
+def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None):
     try:
         facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
                  % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
-        if ins is not None:
-            facts += " Insider picture: about %s recent C level sales." % ins.get("clevel_sells")
+        ins_src = extra_insider if extra_insider is not None else ins
+        if ins_src is not None:
+            facts += " Insider picture: about %s recent C level sales." % ins_src.get("clevel_sells")
+        if extra_news:
+            heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
+            if heads:
+                facts += " Recent headlines: " + heads + "."
         prompt = (
             "You are the explanation layer for an educational stock app for everyday people and beginners. "
             "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
@@ -1666,12 +1676,17 @@ def ask_deepseek(symbol, q, d, ins):
     return None
 
 
-def ask_fallback(symbol, q, d, ins):
+def ask_fallback(symbol, q, d, ins, extra_news=None, extra_insider=None):
     ql = q.lower()
     v = d.get("verdict", "WATCH")
     chg = d.get("change_pct")
     pe = d.get("pe_ratio")
     up = d.get("upside")
+    # CHUNK: ground news questions in the report's actual headlines when we have them
+    if extra_news and any(w in ql for w in ["news", "headline", "article", "report", "press", "announce", "update"]):
+        heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
+        if heads:
+            return "Here are the most recent headlines for " + symbol + ". " + heads + ". Read the full articles in the News Feed section of the report. Educational only, never advice."
     # CHUNK: answer 'why did it move' questions with available signals
     if any(p in ql for p in ["why did it drop", "why is it down", "why did it fall", "why is it falling", "why did it rise", "why is it up", "why did it jump", "why is it rising", "why did it move", "what happened", "what caused", "what changed", "what's new", "whats new", "what is new", "any news", "news today"]):
         move_bits = []
@@ -1701,10 +1716,11 @@ def ask_fallback(symbol, q, d, ins):
             parts.append("%s is at PASS, which means the negatives outweigh the positives right now." % symbol)
     if any(w in ql for w in ["change", "would", "flip", "improve", "turn", "move it"]):
         parts.append("To move toward APPROVE the engine wants the positives to outweigh the negatives. The fastest ways are an analyst upgrade to Buy, a C level executive buying shares, or a clear price move up on heavy volume. It slips toward PASS if the price breaks down alongside a negative analyst call or heavy executive selling.")
-    if ins is not None:
-        if ins.get("selling"):
-            n = ins.get("clevel_sells")
-            parts.append("On insiders: company people have been selling, about %s C level sale%s recently, roughly %s in value. Executives sell for many reasons, so selling alone is a softer signal than buying, but a cluster is a caution." % (n, "" if n == 1 else "s", fmt_money_py(ins.get("sell_value"))))
+    ins_src = extra_insider if extra_insider is not None else ins
+    if ins_src is not None:
+        if ins_src.get("selling"):
+            n = ins_src.get("clevel_sells")
+            parts.append("On insiders: company people have been selling, about %s C level sale%s recently, roughly %s in value. Executives sell for many reasons, so selling alone is a softer signal than buying, but a cluster is a caution." % (n, "" if n == 1 else "s", fmt_money_py(ins_src.get("sell_value"))))
         else:
             parts.append("On insiders: no notable cluster of executive selling is showing up right now, which is neutral.")
     if any(w in ql for w in ["valuation", "expensive", "cheap", "pe", "p/e", "earnings", "overvalued", "undervalued", "value"]):
@@ -1987,19 +2003,25 @@ def ask():
         d["verdict"] = full.get("verdict")
         if full.get("conviction"):
             d["conviction"] = full.get("conviction")
+    # CHUNK: pull the specific data the question is about, so the answer is grounded in real facts.
+    # The full report and its news are already in hand from the verdict step above, so reuse it.
+    extra_news = None
+    if any(w in ql for w in ["news", "headline", "article", "report", "press", "announce", "update"]):
+        if isinstance(full, dict) and full.get("news"):
+            extra_news = full["news"][:3]
     ins = None
     if any(w in ql for w in ["insider", "executive", "exec", "selling", "sold", "buying", "bought"]):
         ins = insider_brief(sym, d.get("price"))
     # CHUNK: DeepSeek primary, Gemini fallback, rules-based final safety net
     if DEEPSEEK_KEY:
-        a = ask_deepseek(sym, q, d, ins)
+        a = ask_deepseek(sym, q, d, ins, extra_news=extra_news, extra_insider=ins)
         if a:
             return jsonify({"answer": a, "verdict": d.get("verdict")})
     if GEMINI_KEY:
-        a = ask_gemini(sym, q, d, ins)
+        a = ask_gemini(sym, q, d, ins, extra_news=extra_news, extra_insider=ins)
         if a:
             return jsonify({"answer": a, "verdict": d.get("verdict")})
-    return jsonify({"answer": ask_fallback(sym, q, d, ins), "verdict": d.get("verdict")})
+    return jsonify({"answer": ask_fallback(sym, q, d, ins, extra_news=extra_news, extra_insider=ins), "verdict": d.get("verdict")})
 
 
 @app.route("/trending")
