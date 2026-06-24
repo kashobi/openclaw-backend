@@ -1527,8 +1527,14 @@ def ask_gemini(symbol, q, d, ins):
         if r.status_code == 200:
             data = r.json()
             return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        logger.error("ask_gemini %s non-200 status %s: %s" % (symbol, r.status_code, str(r.text)[:200]))
     except Exception as e:
         logger.error("ask_gemini %s: %s" % (symbol, e))
+        # CHUNK: log the raw response for debugging
+        try:
+            logger.error("ask_gemini raw response: %s" % str(r.text)[:200])
+        except Exception:
+            pass
     return None
 
 
@@ -1538,6 +1544,25 @@ def ask_fallback(symbol, q, d, ins):
     chg = d.get("change_pct")
     pe = d.get("pe_ratio")
     up = d.get("upside")
+    # CHUNK: answer 'why did it move' questions with available signals
+    if any(p in ql for p in ["why did it drop", "why is it down", "why did it fall", "why is it falling", "why did it rise", "why is it up", "why did it jump", "why is it rising", "why did it move", "what happened", "what caused"]):
+        move_bits = []
+        if isinstance(chg, (int, float)) and chg <= -0.01:
+            move_bits.append("it is down %s%% today" % abs(chg))
+        elif isinstance(chg, (int, float)) and chg >= 0.01:
+            move_bits.append("it is up %s%% today" % chg)
+        if v in ("PASS", "WATCH", "APPROVE"):
+            move_bits.append("the engine currently reads it at %s" % v)
+        move_ins = ins if ins is not None else insider_brief(symbol, d.get("price"))
+        if move_ins and move_ins.get("selling"):
+            move_bits.append("company executives have been selling recently, which can weigh on a stock")
+        if isinstance(up, (int, float)) and up < 0:
+            move_bits.append("it was already trading above the average analyst target, which can pull a price back")
+        if move_bits:
+            reasons = ", and ".join(move_bits)
+            reasons = reasons[0].upper() + reasons[1:]
+            return "Here is what the engine can see. " + reasons + ". That said, the real reason for a daily move is usually news, an earnings report, an analyst call, or a broader market swing, which the numbers alone do not capture. Check the News Feed section in the full report for the real story. Educational only, never advice."
+        return "Here is what the engine can see. The numbers on this one do not explain today's move, which usually means it is being driven by news, earnings, or a broader market swing rather than the signals. Check the News Feed section in the full report for the real story. Educational only, never advice."
     parts = []
     if any(w in ql for w in ["why", "watch", "verdict", "call", "rating", "approve", "pass", "buy", "hold"]):
         if v == "WATCH":
