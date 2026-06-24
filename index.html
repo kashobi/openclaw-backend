@@ -1080,7 +1080,16 @@ function run(){
     } else if(d.alert === "insider_selling"){
       alertHtml = "<div class=\"vdrop\">&#9888;&#65039; Several company executives recently sold large amounts of their own stock. Insiders sell for many reasons, so this is not proof of trouble, but a cluster of top officers selling at once is a real caution. That is why the call is held at WATCH. Read the Insider Activity section below.</div>";
     }
-    document.getElementById("vconf").innerHTML = alertHtml + (conf[v] || "");
+    // CHUNK: pre/post market and earnings banner, shown above the verdict so a stale verdict never misleads
+    var extHtml = "";
+    if(d.extended_note){
+      var extUp = (d.extended && typeof d.extended.change_pct === "number") ? d.extended.change_pct >= 0 : true;
+      var extBg = extUp ? "#e8f0ff" : "#fdecec";
+      var extBd = extUp ? "#003eaa" : "#c0392b";
+      var extIcon = extUp ? "&#128200;" : "&#128201;";
+      extHtml = "<div style=\"background:" + extBg + ";border-left:4px solid " + extBd + ";padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:14px;line-height:1.5;color:#1a1a1a\">" + extIcon + " " + esc(d.extended_note) + "</div>";
+    }
+    document.getElementById("vconf").innerHTML = extHtml + alertHtml + (conf[v] || "");
 
     var confLevel = d.confidence || "Medium";
     var cmap = {
