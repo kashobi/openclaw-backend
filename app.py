@@ -19,6 +19,7 @@ CORS(app)
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 QUIVER_KEY = os.environ.get("QUIVER_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
+DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY", "")
 FMP_KEY = os.environ.get("FMP_KEY", "")
 FMP_BASE = "https://financialmodelingprep.com"
 
@@ -1538,6 +1539,37 @@ def ask_gemini(symbol, q, d, ins):
     return None
 
 
+# CHUNK: DeepSeek AI provider, same grounding rules as Gemini
+def ask_deepseek(symbol, q, d, ins):
+    try:
+        facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
+                 % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
+        if ins is not None:
+            facts += " Insider picture: about %s recent C level sales." % ins.get("clevel_sells")
+        prompt = (
+            "You are the explanation layer for an educational stock app for everyday people and beginners. "
+            "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
+            "Here are the engine's current facts for this stock: " + facts + " "
+            "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
+            "Do not use any dashes or hyphens, use plain words. "
+            "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
+        )
+        headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
+        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 400}
+        r = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            return data["choices"][0]["message"]["content"].strip()
+        logger.error("ask_deepseek %s non-200 status %s: %s" % (symbol, r.status_code, str(r.text)[:200]))
+    except Exception as e:
+        logger.error("ask_deepseek %s: %s" % (symbol, e))
+        try:
+            logger.error("ask_deepseek raw response: %s" % str(r.text)[:200])
+        except Exception:
+            pass
+    return None
+
+
 def ask_fallback(symbol, q, d, ins):
     ql = q.lower()
     v = d.get("verdict", "WATCH")
@@ -1767,6 +1799,41 @@ def coach_gemini(q, entities):
     return None
 
 
+# CHUNK: DeepSeek coach for multi-stock comparison questions
+def ask_deepseek_coach(q, entities):
+    facts = []
+    for tkr, label, is_sec in entities[:4]:
+        r = light_score(tkr)
+        if r:
+            facts.append("%s (%s): verdict %s, %s percent today, analyst upside %s percent, PE %s" % (label, tkr, r.get("verdict"), r.get("change_pct"), r.get("upside"), r.get("pe_ratio")))
+    if not facts:
+        return None
+    prompt = (
+        "You are the educational explanation layer of a stock app for everyday people and beginners. "
+        "The user asked, possibly by voice: \"" + q + "\". "
+        "Here are the engine's current live facts: " + "; ".join(facts) + ". "
+        "STRICT RULES: You are not a financial advisor. Do not tell the user where to invest, do not recommend a specific stock to buy, and do not suggest how to split any amount of money. "
+        "Instead, explain in simple plain language how each option looks based on the facts, what the differences mean, and how a beginner should think the decision through themselves, including risk, time horizon, and not concentrating money in one name. "
+        "Make clear the dollar amount does not change what the signals say. "
+        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. End by clearly stating this is educational only, not advice, and that they should do their own research and consider a licensed professional. Return plain text only, no markdown."
+    )
+    try:
+        headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
+        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 500}
+        r = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            return data["choices"][0]["message"]["content"].strip()
+        logger.error("ask_deepseek_coach non-200 status %s: %s" % (r.status_code, str(r.text)[:200]))
+    except Exception as e:
+        logger.error("ask_deepseek_coach: %s" % e)
+        try:
+            logger.error("ask_deepseek_coach raw response: %s" % str(r.text)[:200])
+        except Exception:
+            pass
+    return None
+
+
 @app.route("/ask")
 def ask():
     symbol = (request.args.get("symbol") or "").strip().upper()
@@ -1788,10 +1855,16 @@ def ask():
     trigger = allocation or comparison
     total_named = len(entities) + len(private)
     if total_named >= 2 or (trigger and total_named >= 1):
-        if GEMINI_KEY and entities and not private:
-            a = coach_gemini(q, entities)
-            if a:
-                return jsonify({"answer": a})
+        # CHUNK: DeepSeek primary, Gemini fallback, rules-based final safety net
+        if entities and not private:
+            if DEEPSEEK_KEY:
+                a = ask_deepseek_coach(q, entities)
+                if a:
+                    return jsonify({"answer": a})
+            if GEMINI_KEY:
+                a = coach_gemini(q, entities)
+                if a:
+                    return jsonify({"answer": a})
         return jsonify({"answer": coach_answer(q, entities, private)})
 
     sym = symbol or (entities[0][0] if entities else "")
@@ -1814,6 +1887,11 @@ def ask():
     ins = None
     if any(w in ql for w in ["insider", "executive", "exec", "selling", "sold", "buying", "bought"]):
         ins = insider_brief(sym, d.get("price"))
+    # CHUNK: DeepSeek primary, Gemini fallback, rules-based final safety net
+    if DEEPSEEK_KEY:
+        a = ask_deepseek(sym, q, d, ins)
+        if a:
+            return jsonify({"answer": a, "verdict": d.get("verdict")})
     if GEMINI_KEY:
         a = ask_gemini(sym, q, d, ins)
         if a:
