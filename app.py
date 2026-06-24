@@ -1891,7 +1891,7 @@ def ask():
     if not d:
         return jsonify({"answer": "I could not pull live data for " + sym + " right now. It may be an unusual ticker, or data is briefly unavailable. Try again, or check the symbol."})
     # CHUNK: defer to the authoritative full report verdict so Ask never contradicts the report
-    full = get_cache("full_" + sym)
+    full = compute_full_report(sym)
     if full and full.get("verdict"):
         d = dict(d)
         d["verdict"] = full.get("verdict")
