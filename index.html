@@ -321,6 +321,12 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .askVerdict{display:inline-block;margin-bottom:10px;}
 .askA{font-size:14px;line-height:1.65;}
 @keyframes micpulse{0%,100%{opacity:1;}50%{opacity:.62;}}
+.saveRow{display:flex;gap:9px;}
+.saveRow .saveBtn{width:auto;flex:1;}
+.shareBtn{background:var(--s2);color:var(--accent);border:2px solid var(--accent);border-radius:11px;padding:12px 16px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.shareBtn:hover{background:#fff;}
+.toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(20px);background:#0f1419;color:#fff;padding:12px 18px;border-radius:11px;font-size:13px;font-weight:600;z-index:600;opacity:0;pointer-events:none;transition:opacity .25s ease, transform .25s ease;max-width:90%;text-align:center;}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
 </style>
 </head>
 <body>
@@ -364,7 +370,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div><div class="sn" id="sym">APEX Q</div><div class="sf" id="sfull">Search a stock above to begin</div><div class="ss" id="ssect"></div></div>
         <div class="pb"><div class="sp" id="spx">--</div><div class="sc up" id="schg">--</div></div>
       </div>
-      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button></div>
+      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button></div>
       <div class="vb watch" id="vbox">
         <div class="vtop">
           <div class="vbdg watch" id="vbdg">&#9889; READY</div>
@@ -526,6 +532,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   </div>
 </div>
 <button id="installBtn" class="installBtn">&#9889; Install Apex Q</button>
+<div id="toast" class="toast"></div>
 <nav class="tabbar" id="tabbar">
   <button class="tab active" data-view="home"><span class="tabi">&#128269;</span><span class="tabt">Home</span></button>
   <button class="tab" data-view="discover"><span class="tabi">&#129517;</span><span class="tabt">Discover</span></button>
@@ -1036,6 +1043,7 @@ function run(){
     currentSymbol = d.symbol || val;
     currentName = d.name || "";
     updateSaveBtn();
+    updateAskChips(d.suggested_questions);
     document.getElementById("sym").textContent = d.symbol || val;
     document.getElementById("sfull").textContent = d.name || val;
     document.getElementById("ssect").textContent = d.sector || "";
@@ -1507,6 +1515,52 @@ function loadMovers(){
     if(n){ n.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
   });
 }
+
+function updateAskChips(qs){
+  var row = document.getElementById("askChips");
+  if(!row || !qs || !qs.length){ return; }
+  row.innerHTML = qs.map(function(q){ return "<button class=\"askChip\" data-q=\"" + esc(q) + "\">" + esc(q) + "</button>"; }).join("");
+  var chips = row.querySelectorAll(".askChip");
+  for(var i=0;i<chips.length;i++){
+    chips[i].addEventListener("click", function(){
+      if(currentSymbol){ var sb = document.getElementById("askSym"); if(sb){ sb.value = currentSymbol; } }
+      document.getElementById("askQ").value = this.getAttribute("data-q");
+      showView("ask");
+      runAsk();
+    });
+  }
+}
+
+function showToast(msg){
+  var t = document.getElementById("toast");
+  if(!t){ return; }
+  t.textContent = msg;
+  t.classList.add("on");
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(function(){ t.classList.remove("on"); }, 2000);
+}
+
+function fallbackCopy(text){
+  try {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand("copy"); document.body.removeChild(ta);
+  } catch(e){}
+}
+
+function shareSnapshot(){
+  if(!currentSymbol){ return; }
+  var url = window.location.origin + "/s/" + currentSymbol;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(function(){ showToast("Link copied. Anyone can see this snapshot."); }).catch(function(){ fallbackCopy(url); showToast("Link copied. Anyone can see this snapshot."); });
+  } else {
+    fallbackCopy(url);
+    showToast("Link copied. Anyone can see this snapshot.");
+  }
+}
+var _shareBtn = document.getElementById("shareBtn");
+if(_shareBtn){ _shareBtn.addEventListener("click", shareSnapshot); }
 
 function runAsk(){
   var sym = document.getElementById("askSym").value.trim();
