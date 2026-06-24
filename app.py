@@ -1577,6 +1577,28 @@ def ask_fallback(symbol, q, d, ins):
     return " ".join(parts)
 
 
+# CHUNK: fuzzy ticker correction for common misspellings
+FUZZY_TICKERS = {
+    "NDVA": "NVDA", "NVDIA": "NVDA", "NVIDA": "NVDA",
+    "APPL": "AAPL", "APLE": "AAPL",
+    "TESLA": "TSLA",
+    "GOOG": "GOOGL", "GOGL": "GOOGL",
+    "MICROSOFT": "MSFT",
+    "AMAZON": "AMZN",
+    "FACEBOOK": "META",
+    "NETFLIX": "NFLX",
+    "JPMORGAN": "JPM",
+    "BITCOIN": "BTC-USD",
+}
+
+
+def fuzzy_ticker(typo):
+    # Returns a corrected ticker for a common misspelling, or None. Case-insensitive.
+    if not typo:
+        return None
+    return FUZZY_TICKERS.get(str(typo).strip().upper())
+
+
 NAME_TO_TICKER = {
     "bank of america": "BAC", "bofa": "BAC",
     "jpmorgan chase": "JPM", "jp morgan chase": "JPM", "jpmorgan": "JPM", "jp morgan": "JPM", "chase": "JPM",
@@ -1753,6 +1775,15 @@ def ask():
             return jsonify({"answer": coach_answer(q, [], private)})
         return jsonify({"answer": "Tell me which stock you mean. Type a ticker in the box, or name the company in your question."})
     d = light_score(sym)
+    # CHUNK: try fuzzy fix before giving up
+    if not d:
+        fixed = fuzzy_ticker(sym)
+        if fixed and fixed != sym:
+            d_fixed = light_score(fixed)
+            if d_fixed:
+                logger.info("fuzzy ticker correction: %s -> %s" % (sym, fixed))
+                sym = fixed
+                d = d_fixed
     if not d:
         return jsonify({"answer": "I could not pull live data for " + sym + " right now. It may be an unusual ticker, or data is briefly unavailable. Try again, or check the symbol."})
     ins = None
