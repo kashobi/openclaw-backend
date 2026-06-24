@@ -1618,6 +1618,10 @@ function showView(name){
   if(name === "scans" && !_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
   if(name === "watch"){ loadAlerts(); }
+  if(name === "ask"){
+    var asb = document.getElementById("askSym");
+    if(asb && !asb.value.trim() && currentSymbol){ asb.value = currentSymbol; }
+  }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
