@@ -71,6 +71,24 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .acx{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:2px solid var(--border);border-radius:11px;z-index:300;display:none;box-shadow:0 8px 28px rgba(0,0,0,.12);max-height:260px;overflow-y:auto;}
 .sectorCard{border-left:4px solid var(--accent);}
 .valDesc{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.35;}
+.portAdd{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+.portAdd .portSym{flex:2 1 110px;}
+.portAdd .portNum{flex:1 1 80px;}
+.portAdd .cmpBtn{flex:1 1 70px;}
+.portMsg{background:var(--ybg);color:var(--yellow);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px;line-height:1.4;}
+.portNote{font-size:11px;color:var(--muted);margin-top:12px;line-height:1.45;}
+.ptblWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:12px;}
+.ptbl{width:100%;border-collapse:collapse;font-size:13px;min-width:520px;}
+.ptbl th{text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);padding:9px 8px;border-bottom:2px solid var(--border);font-weight:800;white-space:nowrap;}
+.ptbl th.lft,.ptbl td.lft{text-align:left;}
+.ptbl td{text-align:right;padding:10px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
+.ptbl tbody tr:last-child td{border-bottom:none;}
+.ptbl .psym{font-weight:800;color:var(--accent);cursor:pointer;}
+.ptbl .prm{color:var(--muted);cursor:pointer;font-weight:800;border:none;background:none;font-size:17px;line-height:1;padding:0 2px;}
+.ptbl tfoot td{border-top:2px solid var(--border);border-bottom:none;font-weight:800;padding-top:11px;}
+.ptbl tr.dim td{opacity:.5;}
+.portEmpty{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 18px;text-align:center;color:var(--muted);font-size:14px;line-height:1.5;}
+.portEmpty a{color:var(--accent);font-weight:700;cursor:pointer;text-decoration:none;}
 .qrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .qp{background:var(--bg);border:2px solid var(--border);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace;font-weight:700;}
 .qp:hover{border-color:var(--accent);color:var(--accent);}
@@ -516,6 +534,22 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div class="sgempty" id="panelEmpty">Analyze any stock and it appears here with its real verdict and price. Every signal shown is live, never a placeholder.</div>
     </div>
 </div>
+<div class="view" id="view-portfolio">
+  <div class="vhead">
+    <div class="vhead-t">Portfolio</div>
+    <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math. Educational only, never advice.</div>
+  </div>
+  <div class="portAdd">
+    <input class="cmpInp portSym" id="portSym" type="text" placeholder="Ticker, like AAPL" autocomplete="off"/>
+    <input class="cmpInp portNum" id="portShares" type="number" step="any" min="0" placeholder="Shares" autocomplete="off"/>
+    <input class="cmpInp portNum" id="portCost" type="number" step="any" min="0" placeholder="Avg cost" autocomplete="off"/>
+    <button class="cmpBtn" id="portAddBtn">Add</button>
+  </div>
+  <div class="portMsg" id="portMsg" style="display:none"></div>
+  <div class="loading" id="portLoad" style="display:none">Loading portfolio...</div>
+  <div id="portTable"></div>
+  <div class="portNote">Prices refresh on the same 15 minute cycle as the rest of Apex Q, so they can be slightly delayed. Gain and loss is based on the average cost you enter. Educational only, never advice.</div>
+</div>
 <div class="view" id="view-ask">
   <div class="vhead">
     <div class="vhead-t">Ask</div>
@@ -566,6 +600,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   <button class="tab" data-view="scans"><span class="tabi">&#128225;</span><span class="tabt">Scans</span></button>
   <button class="tab" data-view="compare"><span class="tabi">&#9878;&#65039;</span><span class="tabt">Compare</span></button>
   <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Saved</span></button>
+  <button class="tab" data-view="portfolio"><span class="tabi">&#128200;</span><span class="tabt">Portfolio</span></button>
   <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
 </nav>
 <script>
@@ -1310,6 +1345,9 @@ document.addEventListener("click", function(e){
   if(hdr){ toggleCard(hdr.getAttribute("data-bid")); return; }
   var rem = e.target.closest("[data-remove]");
   if(rem){ e.stopPropagation(); removeFromWatch(rem.getAttribute("data-remove")); return; }
+  var remp = e.target.closest("[data-remove-port]");
+  if(remp){ e.stopPropagation(); removeHolding(remp.getAttribute("data-remove-port")); return; }
+  if(e.target.id === "portLogin"){ openAuth("login"); return; }
   var themeEl = e.target.closest("[data-theme]");
   if(themeEl){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
   var symEl = e.target.closest("[data-sym]");
@@ -1566,6 +1604,136 @@ function removeFromWatch(sym){
   }).catch(function(){});
 }
 
+// CHUNK: Portfolio Tracker
+var _portTimer = null;
+function stopPortfolioRefresh(){ if(_portTimer){ clearInterval(_portTimer); _portTimer = null; } }
+
+function portMoney(v){
+  if(v === null || v === undefined || v === "N/A") return "N/A";
+  var n = Number(v);
+  if(isNaN(n)) return "N/A";
+  return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function portPct(v){
+  if(v === null || v === undefined || v === "N/A") return "N/A";
+  var n = Number(v);
+  if(isNaN(n)) return "N/A";
+  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+}
+function portShareStr(v){
+  var n = Number(v);
+  if(isNaN(n)) return "0";
+  return (n % 1 === 0) ? String(n) : n.toFixed(4);
+}
+
+function loadPortfolio(){
+  var wrap = document.getElementById("portTable");
+  var load = document.getElementById("portLoad");
+  if(!wrap) return;
+  if(!currentUser){
+    if(load) load.style.display = "none";
+    wrap.innerHTML = "<div class=\"portEmpty\">Log in to track your portfolio. <a id=\"portLogin\">Log in</a></div>";
+    return;
+  }
+  if(load) load.style.display = "block";
+  fetch(API + "/portfolio", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(load) load.style.display = "none";
+    if(d && d.error === "not_logged_in"){
+      wrap.innerHTML = "<div class=\"portEmpty\">Log in to track your portfolio. <a id=\"portLogin\">Log in</a></div>";
+      return;
+    }
+    var hs = (d && d.holdings) ? d.holdings : [];
+    if(!hs.length){
+      wrap.innerHTML = "<div class=\"portEmpty\">No holdings yet. Add your first stock above.</div>";
+      return;
+    }
+    var t = (d && d.totals) ? d.totals : {};
+    var rows = hs.map(function(h){
+      var dim = (h.price === null || h.price === undefined) ? " class=\"dim\"" : "";
+      var dayCls = (typeof h.day_change === "number" && h.day_change < 0) ? "neg" : "pos";
+      var glCls = (typeof h.gain_loss === "number" && h.gain_loss < 0) ? "neg" : "pos";
+      var priceStr = (h.price === null || h.price === undefined) ? "N/A" : portMoney(h.price);
+      var dayStr = (h.day_change === "N/A") ? "N/A" : portMoney(h.day_change);
+      var glStr = (h.gain_loss === "N/A") ? "N/A" : portMoney(h.gain_loss);
+      var glpStr = (h.gain_loss_pct === "N/A") ? "" : (" (" + portPct(h.gain_loss_pct) + ")");
+      var mvStr = (h.market_value === "N/A") ? "N/A" : portMoney(h.market_value);
+      return "<tr" + dim + ">"
+        + "<td class=\"lft\"><span class=\"psym\" data-sym=\"" + esc(h.symbol) + "\">" + esc(h.symbol) + "</span></td>"
+        + "<td>" + portShareStr(h.shares) + "</td>"
+        + "<td>" + portMoney(h.avg_cost) + "</td>"
+        + "<td>" + priceStr + "</td>"
+        + "<td class=\"" + dayCls + "\">" + dayStr + "</td>"
+        + "<td>" + mvStr + "</td>"
+        + "<td class=\"" + glCls + "\">" + glStr + glpStr + "</td>"
+        + "<td><button class=\"prm\" data-remove-port=\"" + esc(h.symbol) + "\" title=\"Remove\">&times;</button></td>"
+        + "</tr>";
+    }).join("");
+    var totDayCls = (typeof t.day_change === "number" && t.day_change < 0) ? "neg" : "pos";
+    var totGlCls = (typeof t.gain_loss === "number" && t.gain_loss < 0) ? "neg" : "pos";
+    var foot = "<tr>"
+      + "<td class=\"lft\">Total</td><td></td><td></td><td></td>"
+      + "<td class=\"" + totDayCls + "\">" + portMoney(t.day_change) + "</td>"
+      + "<td>" + portMoney(t.market_value) + "</td>"
+      + "<td class=\"" + totGlCls + "\">" + portMoney(t.gain_loss) + " (" + portPct(t.gain_loss_pct) + ")</td>"
+      + "<td></td></tr>";
+    wrap.innerHTML = "<div class=\"ptblWrap\"><table class=\"ptbl\">"
+      + "<thead><tr><th class=\"lft\">Symbol</th><th>Shares</th><th>Avg Cost</th><th>Price</th><th>Day</th><th>Value</th><th>Gain/Loss</th><th></th></tr></thead>"
+      + "<tbody>" + rows + "</tbody>"
+      + "<tfoot>" + foot + "</tfoot></table></div>";
+  }).catch(function(){
+    if(load) load.style.display = "none";
+    wrap.innerHTML = "<div class=\"portEmpty\">Could not load your portfolio. Try again.</div>";
+  });
+}
+
+function addHolding(){
+  if(!currentUser){ openAuth("login"); return; }
+  var symEl = document.getElementById("portSym");
+  var shEl = document.getElementById("portShares");
+  var coEl = document.getElementById("portCost");
+  var msg = document.getElementById("portMsg");
+  function showMsg(txt){ if(msg){ msg.textContent = txt; msg.style.display = "block"; } }
+  var sym = (symEl.value || "").trim();
+  var shares = parseFloat(shEl.value);
+  var cost = parseFloat(coEl.value);
+  if(!sym){ showMsg("Enter a ticker symbol."); return; }
+  if(!(shares > 0)){ showMsg("Enter how many shares you own."); return; }
+  if(!(cost >= 0)){ showMsg("Enter your average cost per share."); return; }
+  if(msg) msg.style.display = "none";
+  fetch(API + "/portfolio/add", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({symbol: sym, shares: shares, avg_cost: cost})
+  }).then(function(r){ return r.json(); }).then(function(res){
+    if(res && res.ok){
+      symEl.value = ""; shEl.value = ""; coEl.value = "";
+      loadPortfolio();
+    } else if(res && res.error === "free_limit"){
+      showMsg(res.message || "Free accounts can track up to 5 holdings.");
+    } else if(res && res.error === "not_logged_in"){
+      openAuth("login");
+    } else {
+      showMsg((res && res.error) ? res.error : "Could not add that holding.");
+    }
+  }).catch(function(){ showMsg("Connection issue. Try again."); });
+}
+
+function removeHolding(sym){
+  if(!confirm("Remove " + sym + " from your portfolio?")) return;
+  fetch(API + "/portfolio/remove", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({symbol: sym})
+  }).then(function(r){ return r.json(); }).then(function(res){
+    if(res && res.ok){ loadPortfolio(); }
+  }).catch(function(){});
+}
+
+var _portAddBtn = document.getElementById("portAddBtn");
+if(_portAddBtn){ _portAddBtn.addEventListener("click", addHolding); }
+
 document.getElementById("acctBtn").addEventListener("click", function(){
   if(currentUser){
     if(confirm("Log out of Apex Q?")){ doLogout(); }
@@ -1821,9 +1989,11 @@ function showView(name){
   if(el){ el.classList.add("active"); }
   var ts = document.querySelectorAll(".tab");
   for(var j=0;j<ts.length;j++){ ts[j].classList.toggle("active", ts[j].getAttribute("data-view") === name); }
+  stopPortfolioRefresh();
   if(name === "scans" && !_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
   if(name === "watch"){ loadAlerts(); }
+  if(name === "portfolio"){ loadPortfolio(); _portTimer = setInterval(loadPortfolio, 60000); }
   if(name === "ask"){
     var asb = document.getElementById("askSym");
     if(asb && !asb.value.trim() && currentSymbol){ asb.value = currentSymbol; }
