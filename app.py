@@ -1469,13 +1469,20 @@ def context():
     if cached is not None:
         return jsonify({"live": cached})
 
+    # CHUNK: ground the live context in real numbers so Gemini answers from the engine's facts,
+    # not stale training data. No live data means no call.
+    live_data = light_score(symbol)
+    if live_data is None:
+        return jsonify({"live": None})
+    facts = f"Current facts for {symbol}: Price ${live_data.get('price')}, Change {live_data.get('change_pct')}%, PE ratio {live_data.get('pe_ratio')}, Analyst upside {live_data.get('upside')}%, Verdict {live_data.get('verdict')}."
+
     try:
         prompt = (
             "You are the live intelligence layer for an educational stock app built for everyday people, "
             "including beginners who have never invested before. The user is looking at " + symbol + ". "
-            "Using current market knowledge, return ONLY valid JSON, no markdown, no extra words, with these keys: "
-            "current_context (2 to 3 plain sentences on what is happening with this company right now, including any recent earnings, "
-            "government or regulatory news, and Wall Street developments), "
+            "Here are the engine's current live facts for this stock: " + facts + " "
+            "Using ONLY these facts, return ONLY valid JSON, no markdown, no extra words, with these keys: "
+            "current_context (2 to 3 plain sentences on what is happening with this company right now), "
             "why_it_matters (2 sentences on why a regular person with no finance background should care right now), "
             "watch_for (one specific thing to watch in the next 30 days that could move the price), "
             "simple_lesson (one sentence teaching a basic investing idea that applies to this exact situation, written for a smart teenager). "
@@ -2689,46 +2696,7 @@ body{margin:0;background:#eef1f6;font-family:-apple-system,BlinkMacSystemFont,'S
     return Response(page, mimetype="text/html")
 
 
-# CHUNK: temporary debug endpoint — remove after testing
-@app.route("/debug/ask")
-def debug_ask():
-    symbol = "NVDA"
-    q = "Why did it drop today?"
-    d = light_score(symbol)
-    if not d:
-        return jsonify({"error": "light_score returned None for " + symbol})
-    ins = insider_brief(symbol, d.get("price"))
-    result = {
-        "symbol": symbol,
-        "light_score_ok": True,
-        "price": d.get("price"),
-        "verdict": d.get("verdict"),
-        "change_pct": d.get("change_pct"),
-        "deepseek_key_set": bool(DEEPSEEK_KEY),
-        "deepseek_key_preview": (DEEPSEEK_KEY[:8] + "...") if DEEPSEEK_KEY else "NOT SET",
-        "gemini_key_set": bool(GEMINI_KEY),
-        "gemini_key_preview": (GEMINI_KEY[:8] + "...") if GEMINI_KEY else "NOT SET",
-        "insider_sells": ins.get("clevel_sells") if ins else 0,
-    }
-    if DEEPSEEK_KEY:
-        try:
-            a = ask_deepseek(symbol, q, d, ins)
-            result["deepseek_result"] = (a[:200] if a else "None returned")
-            result["deepseek_error"] = None
-        except Exception as e:
-            result["deepseek_result"] = "None returned"
-            result["deepseek_error"] = str(e)[:200]
-    if GEMINI_KEY:
-        try:
-            a = ask_gemini(symbol, q, d, ins)
-            result["gemini_result"] = (a[:200] if a else "None returned")
-            result["gemini_error"] = None
-        except Exception as e:
-            result["gemini_result"] = "None returned"
-            result["gemini_error"] = str(e)[:200]
-    fb = ask_fallback(symbol, q, d, ins)
-    result["fallback_result"] = (fb[:200] if fb else "")
-    return jsonify(result)
+# CHUNK: removed for security. The /debug/ask endpoint exposed partial API keys and is gone.
 
 
 if __name__ == "__main__":
