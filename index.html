@@ -189,6 +189,10 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .ns{font-size:11px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:800;margin-bottom:5px;}
 .nh{font-size:15px;color:var(--text);line-height:1.55;font-weight:600;}
 .nsum{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.5;}
+.nhlink{color:var(--text);text-decoration:none;}
+.nhlink:active{color:var(--accent);}
+.nmore{display:inline-block;margin-top:7px;font-size:11px;font-weight:800;color:var(--accent);text-decoration:none;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.4px;}
+.ntime{text-transform:none;color:var(--muted);font-weight:700;margin-left:7px;letter-spacing:0;}
 .loading{display:none;padding:40px 20px;text-align:center;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;}
 .loading.on{display:block;animation:pulse 1.2s infinite;}
 .sg{background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s;}
@@ -455,8 +459,6 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128188; Insider Activity</div>
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
-      <div class="stitle">&#128240; Live News</div>
-      <div id="news"><div class="ic"><div class="ih"><div class="it">News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128218; Apex Q Classroom</div>
       <div id="classroom"></div>
     </div>
@@ -968,6 +970,20 @@ function renderIns(data, sellValue, bigBlock){
   s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Trades</div><div class=\"ibdg "+bc+"\">"+lbl+"</div></div><div class=\"itxt\">"+sellNote+rows+"<div class=\"iwhy\">Why it matters: executives buy their own stock for only one reason, they expect it to rise. They sell for many reasons. That is why insider buying is a stronger signal than insider selling, but a large cluster of executives selling, or a very large dollar amount, is a real caution. Sales by outside funds are shown separately because they are a weaker signal about the company itself.</div></div></div>";
 }
 
+function timeAgo(ts){
+  if(!ts){ return ""; }
+  var diff = (Date.now() / 1000) - Number(ts);
+  if(diff < 0){ diff = 0; }
+  if(diff < 60){ return "just now"; }
+  var mins = Math.floor(diff / 60);
+  if(mins < 60){ return mins + (mins === 1 ? " minute ago" : " minutes ago"); }
+  var hrs = Math.floor(mins / 60);
+  if(hrs < 24){ return hrs + (hrs === 1 ? " hour ago" : " hours ago"); }
+  var days = Math.floor(hrs / 24);
+  if(days < 7){ return days + (days === 1 ? " day ago" : " days ago"); }
+  var dt = new Date(Number(ts) * 1000);
+  return dt.toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"});
+}
 function renderNews(data){
   var s = document.getElementById("news");
   if(!data || !data.length){
@@ -978,7 +994,15 @@ function renderNews(data){
   var pre = isGen ? "<div class=\"ic\" style=\"margin-bottom:8px\"><div class=\"ih\"><div class=\"it\">General Market News</div><div class=\"ibdg by\">NO COMPANY NEWS</div></div><div class=\"itxt\" style=\"font-size:12px\">No company specific news in the last sixty days. Showing general market news instead.</div></div>" : "";
   var items = data.map(function(n){
     var sum = n.summary ? ("<div class=\"nsum\">"+esc(n.summary)+"</div>") : "";
-    return "<div class=\"ni\"><div class=\"ns\">"+esc(n.source)+"</div><div class=\"nh\">"+esc(n.headline)+"</div>"+sum+"</div>";
+    var when = n.ts ? ("<span class=\"ntime\">"+esc(timeAgo(n.ts))+"</span>") : "";
+    var safeUrl = (n.url && /^https?:\/\//i.test(n.url)) ? n.url : "";
+    var head = esc(n.headline);
+    var more = "";
+    if(safeUrl){
+      head = "<a class=\"nhlink\" href=\""+esc(safeUrl)+"\" target=\"_blank\" rel=\"noopener noreferrer\">"+esc(n.headline)+"</a>";
+      more = "<a class=\"nmore\" href=\""+esc(safeUrl)+"\" target=\"_blank\" rel=\"noopener noreferrer\">Read full story at "+esc(n.source)+" &#8594;</a>";
+    }
+    return "<div class=\"ni\"><div class=\"ns\">"+esc(n.source)+when+"</div><div class=\"nh\">"+head+"</div>"+sum+more+"</div>";
   }).join("");
   s.innerHTML = pre + items;
 }
@@ -1333,7 +1357,6 @@ function run(){
 
     renderCong(d.congressional || []);
     renderIns(d.insider || [], d.insider_sell_value || 0, d.insider_big_block || false);
-    renderNews(d.news || []);
     renderGrades(d.fmp || {});
 
     var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
