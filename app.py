@@ -1950,7 +1950,7 @@ def insider_brief(symbol, price):
         return {"selling": False, "clevel_sells": 0, "sell_value": 0}
 
 
-def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None):
+def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None, history=None):
     try:
         facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
                  % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
@@ -1961,14 +1961,35 @@ def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None):
             heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
             if heads:
                 facts += " Recent headlines: " + heads + "."
-        prompt = (
-            "You are the explanation layer for an educational stock app for everyday people and beginners. "
-            "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
-            "Here are the engine's current facts for this stock: " + facts + " "
-            "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
-            "Do not use any dashes or hyphens, use plain words. "
-            "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
-        )
+        # CHUNK: multi-turn chat. Gemini stays on a single text prompt, so the facts lead every turn,
+        # then the conversation so far, then the new question. Repeating the facts keeps it grounded.
+        if history:
+            rules = (
+                "You are the explanation layer for an educational stock app for everyday people and beginners. "
+                "The user is asking about " + symbol + " (" + str(d.get("name", symbol)) + "). "
+                "Here are the engine's current facts for this stock: " + facts + " "
+                "Answer using only these facts plus basic, general investing ideas. Do not use outside knowledge about this "
+                "specific company. Do not invent or assume any facts that are not above, such as news, earnings details, or analyst actions. "
+                "If a question asks for a specific fact you do not have, say you do not have enough information to answer that. "
+                "Answer in 2 to 4 short, plain sentences with no jargon. Do not use any dashes or hyphens, use plain words. "
+                "Do not give financial advice. End every message with: This is educational, not advice. Return plain text only, no markdown."
+            )
+            convo = ""
+            for m in history:
+                if not m.get("content"):
+                    continue
+                who = "User" if m.get("role") == "user" else "Assistant"
+                convo += who + ": " + str(m.get("content")) + "\n"
+            prompt = rules + " Here is the conversation so far:\n" + convo + "User: " + q + "\nAssistant:"
+        else:
+            prompt = (
+                "You are the explanation layer for an educational stock app for everyday people and beginners. "
+                "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
+                "Here are the engine's current facts for this stock: " + facts + " "
+                "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
+                "Do not use any dashes or hyphens, use plain words. "
+                "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
+            )
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
         payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400}}
         r = requests.post(url, json=payload, timeout=12)
@@ -1987,7 +2008,7 @@ def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None):
 
 
 # CHUNK: DeepSeek AI provider, same grounding rules as Gemini
-def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None):
+def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None, history=None):
     try:
         facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
                  % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
@@ -1998,16 +2019,38 @@ def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None):
             heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
             if heads:
                 facts += " Recent headlines: " + heads + "."
-        prompt = (
-            "You are the explanation layer for an educational stock app for everyday people and beginners. "
-            "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
-            "Here are the engine's current facts for this stock: " + facts + " "
-            "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
-            "Do not use any dashes or hyphens, use plain words. "
-            "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
-        )
+        # CHUNK: multi-turn chat. With history we send a real system message carrying the live facts,
+        # then the prior turns, then the new question. The facts are rebuilt and sent every turn so
+        # the model stays grounded and cannot drift into invented facts, even on adversarial questions.
+        if history:
+            system_content = (
+                "You are the explanation layer for an educational stock app for everyday people and beginners. "
+                "The user is asking about " + symbol + " (" + str(d.get("name", symbol)) + "). "
+                "Here are the engine's current facts for this stock: " + facts + " "
+                "Answer using only these facts plus basic, general investing ideas. Do not use outside knowledge about this "
+                "specific company. Do not invent or assume any facts that are not above, such as news, earnings details, or analyst actions. "
+                "If a question asks for a specific fact you do not have, say you do not have enough information to answer that. "
+                "Answer in 2 to 4 short, plain sentences with no jargon. Do not use any dashes or hyphens, use plain words. "
+                "Do not give financial advice. End every message with: This is educational, not advice. Return plain text only, no markdown."
+            )
+            messages = [{"role": "system", "content": system_content}]
+            for m in history:
+                role = m.get("role")
+                if role in ("user", "assistant") and m.get("content"):
+                    messages.append({"role": role, "content": str(m.get("content"))})
+            messages.append({"role": "user", "content": q})
+        else:
+            prompt = (
+                "You are the explanation layer for an educational stock app for everyday people and beginners. "
+                "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
+                "Here are the engine's current facts for this stock: " + facts + " "
+                "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
+                "Do not use any dashes or hyphens, use plain words. "
+                "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
+            )
+            messages = [{"role": "user", "content": prompt}]
         headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
-        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 400}
+        payload = {"model": "deepseek-chat", "messages": messages, "temperature": 0.3, "max_tokens": 400}
         r = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=15)
         if r.status_code == 200:
             data = r.json()
@@ -2298,6 +2341,15 @@ def ask():
     q = (request.args.get("q") or "").strip()
     if not q:
         return jsonify({"answer": "Ask a question, like why is this a watch, or name a few stocks and ask how they compare."})
+    # CHUNK: multi-turn chat. Optional prior turns, sent as a JSON list of {role, content}. The
+    # current question is the q param, so history holds only the turns before it.
+    history = []
+    try:
+        parsed = json.loads(request.args.get("history", "[]"))
+        if isinstance(parsed, list):
+            history = [m for m in parsed if isinstance(m, dict) and m.get("role") in ("user", "assistant") and m.get("content")]
+    except Exception:
+        history = []
     ql = q.lower()
     entities = extract_entities(q)
     private = extract_private(q)
@@ -2370,16 +2422,17 @@ def ask():
     ins = None
     if any(w in ql for w in ["insider", "executive", "exec", "selling", "sold", "buying", "bought"]):
         ins = insider_brief(sym, d.get("price"))
-    # CHUNK: DeepSeek primary, Gemini fallback, rules-based final safety net
+    # CHUNK: DeepSeek primary, Gemini fallback, rules-based final safety net. History threads into
+    # the two AI providers for multi-turn chat. The fallback stays single-turn, current question only.
     if DEEPSEEK_KEY:
-        a = ask_deepseek(sym, q, d, ins, extra_news=extra_news, extra_insider=ins)
+        a = ask_deepseek(sym, q, d, ins, extra_news=extra_news, extra_insider=ins, history=history)
         if a:
-            return jsonify({"answer": a, "verdict": d.get("verdict")})
+            return jsonify({"answer": a, "verdict": d.get("verdict"), "symbol": sym})
     if GEMINI_KEY:
-        a = ask_gemini(sym, q, d, ins, extra_news=extra_news, extra_insider=ins)
+        a = ask_gemini(sym, q, d, ins, extra_news=extra_news, extra_insider=ins, history=history)
         if a:
-            return jsonify({"answer": a, "verdict": d.get("verdict")})
-    return jsonify({"answer": ask_fallback(sym, q, d, ins, extra_news=extra_news, extra_insider=ins), "verdict": d.get("verdict")})
+            return jsonify({"answer": a, "verdict": d.get("verdict"), "symbol": sym})
+    return jsonify({"answer": ask_fallback(sym, q, d, ins, extra_news=extra_news, extra_insider=ins), "verdict": d.get("verdict"), "symbol": sym})
 
 
 @app.route("/trending")
