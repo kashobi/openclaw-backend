@@ -351,6 +351,22 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .askChips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;margin-bottom:6px;-webkit-overflow-scrolling:touch;}
 .askChips::-webkit-scrollbar{display:none;}
 .askChip{flex:0 0 auto;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:8px 13px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.askBar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.askLock{font-size:11px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.5px;background:rgba(0,62,170,.1);border:1px solid rgba(0,62,170,.2);border-radius:999px;padding:6px 12px;}
+.askNew{flex:0 0 auto;}
+.askChat{display:flex;flex-direction:column;gap:10px;max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 2px 8px;margin-bottom:10px;}
+.askEmpty{color:var(--muted);font-size:13px;text-align:center;padding:26px 14px;line-height:1.5;}
+.msgRow{display:flex;width:100%;}
+.msgRow.u{justify-content:flex-end;}
+.msgRow.b{justify-content:flex-start;}
+.msgUser{max-width:82%;background:var(--accent);color:#fff;border-radius:14px 14px 4px 14px;padding:10px 13px;font-size:14px;line-height:1.5;word-wrap:break-word;}
+.msgBot{max-width:88%;background:var(--s2);color:var(--text);border-radius:14px 14px 14px 4px;padding:11px 13px;font-size:14px;line-height:1.55;word-wrap:break-word;}
+.msgBot.err{background:var(--rbg);color:var(--red);}
+.msgBot .askVerdict{margin-bottom:7px;}
+.msgTyping{display:inline-flex;gap:5px;align-items:center;}
+.msgTyping span{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;animation:pulse 1s infinite;}
+.msgTyping span:nth-child(2){animation-delay:.2s;}
+.msgTyping span:nth-child(3){animation-delay:.4s;}
 .askCard{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px;margin-top:6px;}
 .askQ2{font-size:13px;font-weight:800;color:var(--accent);margin-bottom:8px;}
 .askVerdict{display:inline-block;margin-bottom:10px;}
@@ -553,10 +569,15 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 <div class="view" id="view-ask">
   <div class="vhead">
     <div class="vhead-t">Ask</div>
-    <div class="vhead-s">Type a question. Ask about one stock, or name a few and ask how they compare. The answer comes from the same live numbers the engine uses, in plain language.</div>
+    <div class="vhead-s">Ask about one stock and keep the conversation going. Your follow up questions remember the ticker, and every answer is grounded in the same live numbers the engine uses, in plain language.</div>
   </div>
+  <div class="askBar" id="askBar" style="display:none">
+    <div class="askLock">Chatting about <span id="askLockSym"></span></div>
+    <button class="askChip askNew" id="askNewBtn">New chat</button>
+  </div>
+  <div class="askChat" id="askChat"><div class="askEmpty">Ask a question about a stock to start a conversation.</div></div>
   <div class="askInputs">
-    <div class="acWrap"><input class="cmpInp" id="askSym" type="text" placeholder="Ticker or company name, optional" autocomplete="off"/><div class="acx" id="acAsk"></div></div>
+    <div class="acWrap"><input class="cmpInp" id="askSym" type="text" placeholder="Ticker or company name" autocomplete="off"/><div class="acx" id="acAsk"></div></div>
     <input class="cmpInp" id="askQ" type="text" placeholder="Your question, like why is this a watch" autocomplete="off"/>
     <button class="cmpBtn" id="askBtn">Ask</button>
   </div>
@@ -566,8 +587,6 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <button class="askChip" data-q="Explain the insider selling">Insider activity</button>
     <button class="askChip" data-q="Is it expensive?">Valuation</button>
   </div>
-  <div class="loading" id="askLoad">Thinking it through...</div>
-  <div id="askAnswer"></div>
 </div>
 </div>
 <div class="foot">
@@ -1900,7 +1919,7 @@ function updateAskChips(qs){
       if(currentSymbol){ var sb = document.getElementById("askSym"); if(sb){ sb.value = currentSymbol; } }
       document.getElementById("askQ").value = this.getAttribute("data-q");
       showView("ask");
-      runAsk();
+      sendAsk();
     });
   }
 }
@@ -1936,30 +1955,90 @@ function shareSnapshot(){
 var _shareBtn = document.getElementById("shareBtn");
 if(_shareBtn){ _shareBtn.addEventListener("click", shareSnapshot); }
 
-function runAsk(){
-  var sym = document.getElementById("askSym").value.trim();
-  var q = document.getElementById("askQ").value.trim();
-  var ans = document.getElementById("askAnswer");
-  if(!ans){ return; }
-  if(!sym){ ans.innerHTML = "<div class=\"scanEmpty\">Type a ticker first, like AAPL.</div>"; return; }
-  if(!q){ ans.innerHTML = "<div class=\"scanEmpty\">Type a question, or tap one of the suggestions.</div>"; return; }
-  var load = document.getElementById("askLoad");
-  if(load){ load.classList.add("on"); }
-  ans.innerHTML = "";
-  fetch(API + "/ask?symbol=" + encodeURIComponent(sym) + "&q=" + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
-    if(load){ load.classList.remove("on"); }
+// CHUNK: multi-turn Ask chat. Locks one ticker, remembers the thread, sends full history each turn.
+var askHistory = [];
+var currentAskSymbol = "";
+
+function askScrollBottom(){ var c = document.getElementById("askChat"); if(c){ c.scrollTop = c.scrollHeight; } }
+function askClearPlaceholder(){ var c = document.getElementById("askChat"); if(c){ var ph = c.querySelector(".askEmpty"); if(ph){ ph.remove(); } } }
+function setAskLock(sym){
+  var bar = document.getElementById("askBar");
+  var s = document.getElementById("askLockSym");
+  if(sym){ if(s){ s.textContent = sym; } if(bar){ bar.style.display = "flex"; } }
+  else if(bar){ bar.style.display = "none"; }
+}
+function addUserMsg(text){
+  var c = document.getElementById("askChat"); if(!c){ return; }
+  askClearPlaceholder();
+  var row = document.createElement("div");
+  row.className = "msgRow u";
+  row.innerHTML = "<div class=\"msgUser\">" + esc(text) + "</div>";
+  c.appendChild(row); askScrollBottom();
+}
+function addBotMsg(text, verdict, isErr){
+  var c = document.getElementById("askChat"); if(!c){ return; }
+  askClearPlaceholder();
+  var badge = "";
+  if(verdict){ var vc = verdict === "APPROVE" ? "va" : (verdict === "PASS" ? "vp" : "vw"); badge = "<div class=\"askVerdict scanV " + vc + "\">" + esc(verdict) + "</div>"; }
+  var row = document.createElement("div");
+  row.className = "msgRow b";
+  row.innerHTML = "<div class=\"msgBot" + (isErr ? " err" : "") + "\">" + badge + esc(text) + "</div>";
+  c.appendChild(row); askScrollBottom();
+}
+function addTyping(){
+  var c = document.getElementById("askChat"); if(!c){ return; }
+  var row = document.createElement("div");
+  row.className = "msgRow b"; row.id = "askTyping";
+  row.innerHTML = "<div class=\"msgBot msgTyping\"><span></span><span></span><span></span></div>";
+  c.appendChild(row); askScrollBottom();
+}
+function removeTyping(){ var t = document.getElementById("askTyping"); if(t){ t.remove(); } }
+function newChat(){
+  askHistory = [];
+  currentAskSymbol = "";
+  var sy = document.getElementById("askSym"); if(sy){ sy.value = ""; }
+  var qq = document.getElementById("askQ"); if(qq){ qq.value = ""; }
+  setAskLock("");
+  var c = document.getElementById("askChat");
+  if(c){ c.innerHTML = "<div class=\"askEmpty\">Ask a question about a stock to start a conversation.</div>"; }
+}
+function sendAsk(){
+  var symEl = document.getElementById("askSym");
+  var qEl = document.getElementById("askQ");
+  var typed = symEl ? symEl.value.trim() : "";
+  var q = qEl ? qEl.value.trim() : "";
+  if(!q){ return; }
+  // Typing a different ticker mid chat starts a fresh conversation about the new one.
+  if(askHistory.length && typed && typed.toUpperCase() !== currentAskSymbol){ newChat(); }
+  var sym = typed || currentAskSymbol;
+  if(!sym){ addBotMsg("Type a ticker to start.", null, true); return; }
+  if(!askHistory.length){ currentAskSymbol = sym.toUpperCase(); setAskLock(currentAskSymbol); }
+  askHistory.push({role: "user", content: q});
+  addUserMsg(q);
+  if(qEl){ qEl.value = ""; }
+  if(symEl){ symEl.value = ""; }
+  addTyping();
+  var hist = JSON.stringify(askHistory.slice(0, -1));
+  fetch(API + "/ask?symbol=" + encodeURIComponent(currentAskSymbol) + "&q=" + encodeURIComponent(q) + "&history=" + encodeURIComponent(hist)).then(function(r){ return r.json(); }).then(function(d){
+    removeTyping();
     var a = (d && d.answer) ? d.answer : "No answer came back. Try rephrasing the question.";
-    var v = d && d.verdict;
-    var badge = "";
-    if(v){ var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw"); badge = "<div class=\"askVerdict scanV " + vc + "\">" + v + "</div>"; }
-    ans.innerHTML = "<div class=\"askCard\"><div class=\"askQ2\">" + esc(q) + "</div>" + badge + "<div class=\"askA\">" + esc(a) + "</div></div>";
-  }).catch(function(){ if(load){ load.classList.remove("on"); } ans.innerHTML = "<div class=\"scanEmpty\">Could not get an answer right now. Try again.</div>"; });
+    if(d && d.symbol){ currentAskSymbol = String(d.symbol).toUpperCase(); setAskLock(currentAskSymbol); }
+    askHistory.push({role: "assistant", content: a});
+    addBotMsg(a, d && d.verdict);
+  }).catch(function(){
+    removeTyping();
+    addBotMsg("Could not get an answer right now. Try again.", null, true);
+  });
 }
 var _askBtn = document.getElementById("askBtn");
-if(_askBtn){ _askBtn.addEventListener("click", runAsk); }
-var _askChips = document.querySelectorAll(".askChip");
+if(_askBtn){ _askBtn.addEventListener("click", sendAsk); }
+var _askNewBtn = document.getElementById("askNewBtn");
+if(_askNewBtn){ _askNewBtn.addEventListener("click", newChat); }
+var _askQinp = document.getElementById("askQ");
+if(_askQinp){ _askQinp.addEventListener("keypress", function(e){ if(e.key === "Enter"){ sendAsk(); } }); }
+var _askChips = document.querySelectorAll("#askChips .askChip");
 for(var _ac=0; _ac<_askChips.length; _ac++){
-  _askChips[_ac].addEventListener("click", function(){ document.getElementById("askQ").value = this.getAttribute("data-q"); runAsk(); });
+  _askChips[_ac].addEventListener("click", function(){ document.getElementById("askQ").value = this.getAttribute("data-q"); sendAsk(); });
 }
 
 function loadAlerts(){
@@ -1996,7 +2075,7 @@ function showView(name){
   if(name === "portfolio"){ loadPortfolio(); _portTimer = setInterval(loadPortfolio, 60000); }
   if(name === "ask"){
     var asb = document.getElementById("askSym");
-    if(asb && !asb.value.trim() && currentSymbol){ asb.value = currentSymbol; }
+    if(asb && !asb.value.trim() && !askHistory.length && currentSymbol){ asb.value = currentSymbol; }
   }
   window.scrollTo(0, 0);
 }
