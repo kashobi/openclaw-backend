@@ -193,6 +193,19 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .nhlink:active{color:var(--accent);}
 .nmore{display:inline-block;margin-top:7px;font-size:11px;font-weight:800;color:var(--accent);text-decoration:none;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.4px;}
 .ntime{text-transform:none;color:var(--muted);font-weight:700;margin-left:7px;letter-spacing:0;}
+.newsItem{cursor:pointer;transition:background .12s;border-radius:8px;margin:0 -8px;padding-left:8px;padding-right:8px;}
+.newsItem:hover{background:var(--s2);}
+.ntap{margin-top:7px;font-size:11px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.4px;}
+.newsModalOverlay{position:fixed;inset:0;z-index:1000;background:rgba(4,14,28,.7);display:none;align-items:center;justify-content:center;padding:20px;}
+.newsModalOverlay.on{display:flex;}
+.newsModal{background:var(--surface);border:2px solid var(--border);border-radius:18px;padding:26px;max-width:580px;width:100%;max-height:80vh;overflow-y:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.4);}
+.newsModalClose{position:absolute;top:14px;right:16px;background:none;border:none;font-size:28px;line-height:1;color:var(--muted);cursor:pointer;font-weight:400;}
+.newsModalClose:hover{color:var(--text);}
+.newsModalHeadline{font-size:18px;font-weight:800;color:var(--text);margin-bottom:10px;line-height:1.4;padding-right:24px;}
+.newsModalSource{font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;font-weight:700;}
+.newsModalBody{font-size:15px;line-height:1.7;color:var(--text);margin-bottom:18px;white-space:pre-wrap;}
+.newsModalLink{display:inline-block;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:800;cursor:pointer;text-decoration:none;}
+.newsModalLink:hover{background:#002d88;}
 .loading{display:none;padding:40px 20px;text-align:center;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;}
 .loading.on{display:block;animation:pulse 1.2s infinite;}
 .sg{background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s;}
@@ -459,6 +472,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128188; Insider Activity</div>
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      <div class="stitle">&#128240; Live News</div>
+      <div id="news"><div class="ic"><div class="ih"><div class="it">News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128218; Apex Q Classroom</div>
       <div id="classroom"></div>
     </div>
@@ -624,6 +639,15 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   <button class="tab" data-view="portfolio"><span class="tabi">&#128200;</span><span class="tabt">Portfolio</span></button>
   <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
 </nav>
+<div class="newsModalOverlay" id="newsModalOverlay">
+  <div class="newsModal">
+    <button class="newsModalClose" id="newsModalClose">&times;</button>
+    <div class="newsModalHeadline" id="newsModalHeadline"></div>
+    <div class="newsModalSource" id="newsModalSource"></div>
+    <div class="newsModalBody" id="newsModalBody"></div>
+    <a class="newsModalLink" id="newsModalLink" href="#" target="_blank" rel="noopener noreferrer">Read full article</a>
+  </div>
+</div>
 <script>
 var API = window.location.origin;
 var TKS = ["AAPL","MSFT","NVDA","AMD","TSLA","AMZN","GOOGL","META","SOFI","SPCX","SCHD","JPM","BAC","NFLX","BTC-USD"];
@@ -995,16 +1019,36 @@ function renderNews(data){
   var items = data.map(function(n){
     var sum = n.summary ? ("<div class=\"nsum\">"+esc(n.summary)+"</div>") : "";
     var when = n.ts ? ("<span class=\"ntime\">"+esc(timeAgo(n.ts))+"</span>") : "";
+    var longTxt = n.summary_long || n.summary || "";
     var safeUrl = (n.url && /^https?:\/\//i.test(n.url)) ? n.url : "";
-    var head = esc(n.headline);
-    var more = "";
-    if(safeUrl){
-      head = "<a class=\"nhlink\" href=\""+esc(safeUrl)+"\" target=\"_blank\" rel=\"noopener noreferrer\">"+esc(n.headline)+"</a>";
-      more = "<a class=\"nmore\" href=\""+esc(safeUrl)+"\" target=\"_blank\" rel=\"noopener noreferrer\">Read full story at "+esc(n.source)+" &#8594;</a>";
-    }
-    return "<div class=\"ni\"><div class=\"ns\">"+esc(n.source)+when+"</div><div class=\"nh\">"+head+"</div>"+sum+more+"</div>";
+    return "<div class=\"ni newsItem\" data-headline=\""+esc(n.headline)+"\" data-source=\""+esc(n.source)+"\" data-long=\""+esc(longTxt)+"\" data-url=\""+esc(safeUrl)+"\">"
+      + "<div class=\"ns\">"+esc(n.source)+when+"</div>"
+      + "<div class=\"nh\">"+esc(n.headline)+"</div>"
+      + sum
+      + "<div class=\"ntap\">Tap to read more &#8594;</div>"
+      + "</div>";
   }).join("");
   s.innerHTML = pre + items;
+  var nodes = s.querySelectorAll(".newsItem");
+  nodes.forEach(function(item){
+    item.addEventListener("click", function(){
+      openNewsModal(item.getAttribute("data-headline"), item.getAttribute("data-source"), item.getAttribute("data-long"), item.getAttribute("data-url"));
+    });
+  });
+}
+
+function openNewsModal(headline, source, longSummary, url){
+  document.getElementById("newsModalHeadline").textContent = headline || "";
+  document.getElementById("newsModalSource").textContent = source || "";
+  document.getElementById("newsModalBody").textContent = (longSummary && longSummary.trim()) ? longSummary : "No additional details available for this article. Tap below to read the full story at the source.";
+  var link = document.getElementById("newsModalLink");
+  if(url){ link.href = url; link.style.display = "inline-block"; }
+  else { link.style.display = "none"; }
+  document.getElementById("newsModalOverlay").classList.add("on");
+}
+
+function closeNewsModal(){
+  document.getElementById("newsModalOverlay").classList.remove("on");
 }
 
 function loadTicker(sym){
@@ -1357,6 +1401,7 @@ function run(){
 
     renderCong(d.congressional || []);
     renderIns(d.insider || [], d.insider_sell_value || 0, d.insider_big_block || false);
+    renderNews(d.news || []);
     renderGrades(d.fmp || {});
 
     var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
@@ -1789,6 +1834,8 @@ document.getElementById("tabSignup").addEventListener("click", function(){ setAu
 document.getElementById("authSubmit").addEventListener("click", submitAuth);
 document.getElementById("saveBtn").addEventListener("click", toggleSave);
 document.getElementById("authOverlay").addEventListener("click", function(e){ if(e.target.id === "authOverlay"){ closeAuth(); } });
+document.getElementById("newsModalClose").addEventListener("click", closeNewsModal);
+document.getElementById("newsModalOverlay").addEventListener("click", function(e){ if(e.target === this){ closeNewsModal(); } });
 document.getElementById("authPass").addEventListener("keypress", function(e){ if(e.key === "Enter"){ submitAuth(); } });
 function loadTrending(){
   fetch(API + "/trending").then(function(r){ return r.json(); }).then(function(d){
