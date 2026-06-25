@@ -144,6 +144,18 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .by{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
 .itxt{font-size:14.5px;color:var(--text);line-height:1.7;font-weight:500;}
 .iwhy{font-size:13px;color:var(--muted);line-height:1.65;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-weight:500;}
+.moatWrap{margin-top:14px;}
+.moatBadge{display:inline-block;font-size:13px;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:1px;padding:6px 14px;border-radius:8px;}
+.moatWide{background:var(--gbg);color:var(--green);border:2px solid var(--green);}
+.moatNarrow{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
+.moatNone{background:var(--s2);color:var(--muted);border:2px solid var(--border);}
+.moatReason{font-size:13px;color:var(--muted);line-height:1.6;margin-top:8px;font-style:italic;font-weight:500;}
+.gaugeWrap{background:var(--s2);border:2px solid var(--border);border-radius:10px;padding:13px;margin-bottom:18px;}
+.target-gauge{height:14px;background:var(--bg);border:1px solid var(--border);border-radius:999px;overflow:hidden;margin:7px 0 9px;}
+.target-gauge .fill{height:100%;border-radius:999px;}
+.gaugeTxt{font-size:13px;color:var(--text);font-weight:700;font-family:'JetBrains Mono',monospace;}
+.peerLabel{font-size:11px;color:var(--muted);font-weight:700;align-self:center;white-space:nowrap;font-family:'JetBrains Mono',monospace;}
+.classCard{border-left:4px solid #6b3fa0;}
 .tr{padding:10px 0;border-bottom:1px solid var(--border);font-size:13.5px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
 .tr:last-child{border-bottom:none;}
 .buy{color:var(--green);font-weight:800;font-family:'JetBrains Mono',monospace;}
@@ -376,6 +388,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
           <div class="vbdg watch" id="vbdg">&#9889; READY</div>
           <div class="vsco" id="vsco">Market Intelligence Rating: --</div>
         </div>
+        <div class="moatWrap" id="moatWrap" style="display:none"></div>
         <div class="vconfidence" id="vconfidence" style="display:none"></div>
         <div class="vconf" id="vconf">Search any stock or company name above. Apex Q reads the price, the valuation, the analyst calls, the trades made by members of Congress, and the moves made by company executives. Then it explains the why behind every signal in plain English. Tap any card to learn why it matters.</div>
         <div class="vflags" id="vflags" style="display:none"></div>
@@ -391,6 +404,9 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div class="met"><div class="ml2">Analyst Target</div><div class="mv2 pos" id="mt">--</div></div>
         <div class="met"><div class="ml2">Market Cap</div><div class="mv2 neu" id="mm">--</div></div>
       </div>
+      <div id="mtGauge" class="gaugeWrap"></div>
+      <div class="stitle">&#128269; Deep Fundamentals</div>
+      <div class="mets" id="deepFund"></div>
       <div class="stitle" id="gradeTitle" style="display:none">&#128202; Analyst Rating Changes</div>
       <div id="grades" style="display:none"></div>
       <div class="stitle">&#127963; Congressional Trading</div>
@@ -399,6 +415,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128240; Live News</div>
       <div id="news"><div class="ic"><div class="ih"><div class="it">News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      <div class="stitle">&#128218; Apex Q Classroom</div>
+      <div id="classroom"></div>
     </div>
   </div>
 </div>
@@ -468,6 +486,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <input class="cmpInp" id="cmp2" type="text" placeholder="Third ticker, optional" autocomplete="off"/>
     <button class="cmpBtn" id="cmpBtn">Compare</button>
   </div>
+  <div class="askChips" id="peerChips" style="display:none"></div>
   <div class="loading" id="cmpLoad">Reading each stock...</div>
   <div id="cmpVerdict"></div>
   <div id="cmpResults"></div>
@@ -1061,6 +1080,80 @@ function run(){
     document.getElementById("mt").textContent = (d.analyst_target && d.analyst_target !== "N/A") ? ("$" + d.analyst_target) : "N/A";
     document.getElementById("mm").textContent = fmt(d.market_cap);
 
+    // CHUNK: Feature 1: Moat badge and plain English reason
+    var moatWrap = document.getElementById("moatWrap");
+    var moat = d.apex_moat;
+    if(moatWrap){
+      if(moat && moat.rating){
+        var mcls = moat.rating === "Wide" ? "moatWide" : (moat.rating === "Narrow" ? "moatNarrow" : "moatNone");
+        var mlabel = moat.rating === "Wide" ? "Wide Moat &#127984;" : (moat.rating === "Narrow" ? "Narrow Moat" : "No Moat");
+        moatWrap.innerHTML = "<span class=\"moatBadge " + mcls + "\">" + mlabel + "</span><div class=\"moatReason\">" + esc(moat.reason || "") + "</div>";
+        moatWrap.style.display = "block";
+      } else {
+        moatWrap.innerHTML = ""; moatWrap.style.display = "none";
+      }
+    }
+
+    // CHUNK: Feature 2: price vs analyst target gauge
+    var gauge = document.getElementById("mtGauge");
+    if(gauge){
+      var gtgt = d.analyst_target, gpx = d.price || 0;
+      if(gtgt && gtgt !== "N/A" && gpx){
+        var tnum = parseFloat(gtgt);
+        var ups = tnum ? Math.round(((tnum - gpx) / gpx) * 1000) / 10 : 0;
+        var fillPct, fillColor;
+        if(gpx <= tnum){ fillPct = tnum > 0 ? Math.max(5, Math.min(100, (gpx / tnum) * 100)) : 0; fillColor = "var(--green)"; }
+        else { fillPct = 100; fillColor = "var(--red)"; }
+        var gword = ups >= 0 ? (ups + "% upside") : (Math.abs(ups) + "% downside");
+        gauge.innerHTML = "<div class=\"ml2\">Price vs Analyst Target</div><div class=\"target-gauge\"><div class=\"fill\" style=\"width:" + fillPct + "%;background:" + fillColor + "\"></div></div><div class=\"gaugeTxt\">$" + gpx.toLocaleString() + " current, $" + tnum.toLocaleString() + " target, " + gword + "</div>";
+      } else {
+        gauge.innerHTML = "<div class=\"ml2\">Price vs Analyst Target</div><div class=\"gaugeTxt\">No analyst target is available for this one right now.</div>";
+      }
+    }
+
+    // CHUNK: Feature 4: Deep Fundamentals three card stack
+    var deep = document.getElementById("deepFund");
+    if(deep){
+      var fundCard = function(label, value, cls){ return "<div class=\"met\"><div class=\"ml2\">" + label + "</div><div class=\"mv2 " + cls + "\">" + value + "</div></div>"; };
+      var fcards = [];
+      var rg = d.revenue_growth;
+      if(typeof rg === "number"){
+        var rgp = Math.round(rg * 1000) / 10;
+        if(rgp >= 0){ fcards.push(fundCard("How fast it is growing", rgp + "% annual revenue growth", rgp > 10 ? "pos" : (rgp > 3 ? "neu" : "neg"))); }
+        else { fcards.push(fundCard("How fast it is growing", "Revenue is declining", "neg")); }
+      } else { fcards.push(fundCard("How fast it is growing", "Not reported", "neu")); }
+      var pm = d.profit_margin;
+      if(typeof pm === "number"){
+        var pmp = Math.round(pm * 1000) / 10;
+        if(pmp >= 0){ fcards.push(fundCard("How much profit it keeps", pmp + " cents of every dollar is profit", pmp > 15 ? "pos" : (pmp > 5 ? "neu" : "neg"))); }
+        else { fcards.push(fundCard("How much profit it keeps", "Currently unprofitable", "neg")); }
+      } else { fcards.push(fundCard("How much profit it keeps", "Not reported", "neu")); }
+      var de = d.debt_to_equity;
+      if(typeof de === "number"){
+        if(de < 0){ fcards.push(fundCard("How much debt it carries", "Negative equity, a real caution", "neg")); }
+        else { var deWord = de < 1 ? "less debt than equity" : (de < 2 ? "a moderate debt load" : "more debt than equity"); fcards.push(fundCard("How much debt it carries", de + ", " + deWord, de < 1 ? "pos" : (de < 2 ? "neu" : "neg"))); }
+      } else { fcards.push(fundCard("How much debt it carries", "Not reported", "neu")); }
+      deep.innerHTML = fcards.join("");
+    }
+
+    // CHUNK: Feature 5: Apex Q Classroom, one lesson chosen from the live signals
+    var classroom = document.getElementById("classroom");
+    if(classroom){
+      var peNum = (d.pe_ratio && d.pe_ratio !== "N/A") ? parseFloat(d.pe_ratio) : null;
+      var insL = d.insider || [];
+      var hasInsiderBuy = insL.filter(function(t){ return t.is_clevel && t.action === "A" && t.kind !== "grant"; }).length >= 1;
+      var congL = d.congressional || [];
+      var hasCongBuy = congL.filter(function(t){ return String(t.action || "").toLowerCase().indexOf("purchase") >= 0; }).length >= 1;
+      var lesson;
+      if(peNum !== null && peNum > 60){ lesson = {t: "What a High PE Ratio Really Means", b: "A high price to earnings number means investors are paying a lot today for each dollar the company earns, betting that profits will grow fast. That can be fair for a real grower, but it also means the stock has further to fall if growth slows. A high PE is not automatically bad, it just raises the bar the company has to clear. Always ask what growth is already priced in."}; }
+      else if(peNum !== null && peNum < 12){ lesson = {t: "Value Stocks and the PE Ratio", b: "A low price to earnings number can mean a stock is cheap next to what it earns, which is what value investors hunt for. But cheap can also be a warning that the market expects trouble ahead. The skill is telling a real bargain apart from a value trap. Look at whether the business is steady or shrinking before you call it a deal."}; }
+      else if(d.verdict === "PASS"){ lesson = {t: "Why Patience Pays, the Art of Sitting Out", b: "A PASS does not mean a stock is bad forever, it means today the risk outweighs the reward. Some of the best decisions in investing are the trades you skip. Cash is a position, and waiting for a clearer setup is a real strategy. The market will still be here when the picture improves."}; }
+      else if(hasInsiderBuy){ lesson = {t: "Insider Buying, Why Executives Buy Their Own Stock", b: "When a company officer buys shares with their own money it is worth noting, because there is really only one reason to buy, they expect the price to rise. That is why insider buying is a stronger signal than insider selling, which happens for many ordinary reasons. It is not a guarantee, but a cluster of insiders buying is a quiet vote of confidence from the people who know the company best."}; }
+      else if(hasCongBuy){ lesson = {t: "Congressional Trades, What They Signal and What They Do Not", b: "Members of Congress must report their trades by law, and some investors watch these filings closely. The thinking is that lawmakers sometimes see policy shifts before the public does. Treat it as one small clue, not a reason on its own, since the reports can lag the actual trade by weeks. It is context, never a command."}; }
+      else { lesson = {t: "How to Read a Stock Report Without Panic", b: "A stock report is a set of signals, not a crystal ball, and no single number tells the whole story. Read each piece in context, the price move, the valuation, the analyst view, the insider and lawmaker activity, and see whether they agree or disagree. When they disagree, that is your cue to slow down, not speed up. The goal is understanding, not a rushed yes or no."}; }
+      classroom.innerHTML = "<div class=\"ic classCard\"><div class=\"ih\"><div class=\"it\">" + esc(lesson.t) + "</div></div><div class=\"itxt\">" + lesson.b + "</div></div>";
+    }
+
     var v = d.verdict || "WATCH";
     document.getElementById("vbox").className = "vb " + v.toLowerCase();
     document.getElementById("vbdg").className = "vbdg " + v.toLowerCase();
@@ -1501,7 +1594,36 @@ function runCompare(){
   }).catch(function(){ if(load){ load.classList.remove("on"); } verd.innerHTML = "<div class=\"scanEmpty\">Could not run the compare. Try again.</div>"; });
 }
 var _cmpBtn = document.getElementById("cmpBtn");
-if(_cmpBtn){ _cmpBtn.addEventListener("click", runCompare); }
+if(_cmpBtn){ _cmpBtn.addEventListener("click", function(){ loadPeers(); runCompare(); }); }
+
+// CHUNK: Feature 3: suggest sector peers in the Compare tab
+function loadPeers(){
+  var box = document.getElementById("peerChips");
+  if(!box){ return; }
+  var sym = (document.getElementById("cmp0").value || "").trim().toUpperCase();
+  if(!sym){ box.style.display = "none"; box.innerHTML = ""; return; }
+  fetch(API + "/peers?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
+    var peers = (d && d.peers) ? d.peers : [];
+    if(!peers.length){ box.style.display = "none"; box.innerHTML = ""; return; }
+    box.innerHTML = "<span class=\"peerLabel\">Suggested peers</span>" + peers.map(function(p){ return "<button class=\"askChip peerChip\" data-peer=\"" + esc(p) + "\">" + esc(p) + "</button>"; }).join("");
+    box.style.display = "flex";
+    var chips = box.querySelectorAll(".peerChip");
+    for(var i = 0; i < chips.length; i++){
+      chips[i].addEventListener("click", function(){ fillPeer(this.getAttribute("data-peer")); });
+    }
+  }).catch(function(){ box.style.display = "none"; box.innerHTML = ""; });
+}
+function fillPeer(sym){
+  var ids = ["cmp0", "cmp1", "cmp2"];
+  for(var i = 0; i < ids.length; i++){
+    var el = document.getElementById(ids[i]);
+    if(el && !el.value.trim()){ el.value = sym; return; }
+  }
+  var last = document.getElementById("cmp2");
+  if(last){ last.value = sym; }
+}
+var _cmp0 = document.getElementById("cmp0");
+if(_cmp0){ _cmp0.addEventListener("blur", loadPeers); }
 
 var _moversLoaded = false;
 function loadMovers(){
