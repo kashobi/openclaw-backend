@@ -558,8 +558,8 @@ def run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, co
     if target_ok and price_ok:
         try:
             ratio = float(tgt) / cur
-            if ratio > 3 or ratio < 0.34:
-                warn("The analyst price target is very far from the current price, which usually means it is stale or has not been updated after recent news. Treat the upside it implies with caution.")
+            if ratio >= 1.40 or ratio < 0.34:
+                warn("The analyst price target sits unusually far from the current price, which can mean it is stale or an outlier. Treat the upside it implies with caution rather than at face value.")
         except Exception:
             pass
 
@@ -685,6 +685,8 @@ def compute_full_report(symbol):
         tgt_raw = info.get("targetMeanPrice")
         tgt = round(float(tgt_raw), 2) if tgt_raw else "N/A"
         rec = info.get("recommendationKey", "hold").upper()
+        # CHUNK: know early if earnings just landed, so a likely stale target gets reduced weight below.
+        earn = earnings_flag(info)
 
         score = 0
         sharp_drop = chg <= -8
@@ -713,8 +715,11 @@ def compute_full_report(symbol):
         if tgt and cur and not sharp_drop:
             try:
                 up = ((float(tgt) - cur) / cur) * 100
+                # CHUNK: a target right after earnings or far out of line is likely stale, so a big
+                # upside carries reduced weight, not the full bonus. It still counts, just less.
+                target_stale = (earn == "recent") or (up >= 40)
                 if up > 10:
-                    score += 2
+                    score += 1 if target_stale else 2
                 elif up > 0:
                     score += 1
                 elif up < -5:
@@ -1020,7 +1025,13 @@ def compute_full_report(symbol):
 
         # CHUNK: build the pre/post market move and a plain-English note that keeps the verdict honest
         ext = extended_hours(info, cur)
-        earn = earnings_flag(info)
+        # CHUNK: targets set before a just released earnings report are stale, so flag the upside as provisional.
+        if earn == "recent" and tgt and tgt != "N/A" and cur:
+            try:
+                if ((float(tgt) - cur) / cur) * 100 > 0:
+                    flags.append({"level": "warn", "text": "These analyst targets were likely set before the recent earnings report, so the upside shown may be stale until analysts revise it. Treat it as provisional."})
+            except Exception:
+                pass
         ext_note = ""
         if ext:
             direction = "up" if ext["change_pct"] >= 0 else "down"
@@ -1339,8 +1350,10 @@ def light_score(symbol):
         if tgt and cur and str(tgt) != "N/A":
             try:
                 upside = round(((float(tgt) - cur) / cur) * 100, 1)
+                # CHUNK: an unusually large upside often means a stale or outlier target, so it
+                # carries reduced weight here too, matching the full report.
                 if upside > 10:
-                    score += 2
+                    score += 1 if upside >= 40 else 2
                 elif upside > 0:
                     score += 1
                 elif upside < -5:
