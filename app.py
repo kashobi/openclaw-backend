@@ -1035,6 +1035,58 @@ def compute_full_report(symbol):
         elif earn == "soon":
             ext_note = "%s is expected to report earnings within about a day. Results can move a stock sharply, so keep that in mind alongside the verdict below." % symbol
 
+        # CHUNK: Feature 1 + Feature 4 — Apex Q Moat and Deep Fundamentals, read from the same
+        # fundamentals so the engine fetches them once. Rule based, educational, never invented.
+        prof_margin = info.get("profitMargins")
+        roe = info.get("returnOnEquity")
+        earn_growth = info.get("earningsGrowth")
+        rev_growth = info.get("revenueGrowth")
+        debt_eq = info.get("debtToEquity")
+
+        moat_buys = len([t for t in insider if t.get("is_clevel") and t.get("action") == "A" and t.get("kind") != "grant"])
+        have_moat_data = sum(1 for x in (prof_margin, roe, earn_growth, rev_growth) if isinstance(x, (int, float))) >= 2
+        if have_moat_data:
+            mscore = 0
+            if isinstance(prof_margin, (int, float)):
+                mscore += 2 if prof_margin > 0.15 else (1 if prof_margin > 0.10 else 0)
+            if isinstance(roe, (int, float)):
+                mscore += 2 if roe > 0.20 else (1 if roe > 0.15 else 0)
+            if isinstance(earn_growth, (int, float)):
+                mscore += 2 if earn_growth > 0.10 else (1 if earn_growth > 0.05 else 0)
+            if isinstance(rev_growth, (int, float)):
+                mscore += 2 if rev_growth > 0.10 else (1 if rev_growth > 0.05 else 0)
+            if moat_buys >= 2:
+                mscore += 1
+            if cong_buys >= 2:
+                mscore += 1
+            m_rating = "Wide" if mscore >= 7 else ("Narrow" if mscore >= 4 else "None")
+            pos_bits = []
+            if isinstance(prof_margin, (int, float)) and prof_margin > 0.15:
+                pos_bits.append("strong profitability")
+            if isinstance(roe, (int, float)) and roe > 0.20:
+                pos_bits.append("high return on equity")
+            if isinstance(earn_growth, (int, float)) and earn_growth > 0.10:
+                pos_bits.append("solid earnings growth")
+            if isinstance(rev_growth, (int, float)) and rev_growth > 0.10:
+                pos_bits.append("healthy revenue growth")
+            if moat_buys >= 2:
+                pos_bits.append("insider buying")
+            if cong_buys >= 2:
+                pos_bits.append("lawmaker buying")
+            if m_rating == "Wide":
+                m_reason = "Several durable strengths line up here" + ((", including " + ", ".join(pos_bits[:3])) if pos_bits else "") + ", which points to a real competitive advantage."
+            elif m_rating == "Narrow":
+                m_reason = "Some real strengths show up" + ((", such as " + ", ".join(pos_bits[:3])) if pos_bits else "") + ", but not deep enough to call the advantage wide."
+            else:
+                m_reason = "The fundamentals are mixed, with no clear durable edge standing out, so there is no real moat to point to yet."
+            apex_moat = {"rating": m_rating, "score": mscore, "reason": m_reason}
+        else:
+            apex_moat = {"rating": None, "score": 0, "reason": "Not enough data to estimate a moat for this one."}
+
+        revenue_growth = rev_growth if isinstance(rev_growth, (int, float)) else "N/A"
+        profit_margin = prof_margin if isinstance(prof_margin, (int, float)) else "N/A"
+        debt_to_equity = round(debt_eq / 100.0, 2) if isinstance(debt_eq, (int, float)) else "N/A"
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -1057,6 +1109,10 @@ def compute_full_report(symbol):
             "insider_sell_value": insider_sell_value,
             "holder_sell_value": holder_sell_value,
             "insider_big_block": big_block,
+            "apex_moat": apex_moat,
+            "revenue_growth": revenue_growth,
+            "profit_margin": profit_margin,
+            "debt_to_equity": debt_to_equity,
             "extended": ext,
             "earnings": earn,
             "extended_note": ext_note,
@@ -1469,6 +1525,43 @@ def compare():
         strongest = best["symbol"]
         reason = compare_reason(best, items)
     return jsonify({"items": items, "strongest": strongest, "reason": reason})
+
+
+# CHUNK: Feature 3 — suggest peers in the same sector for the Compare tab. Sector does not change,
+# so the answer is cached. Falls back to a default large-cap group when the sector is unknown.
+PEERS_FALLBACK = ["AAPL", "MSFT", "NVDA", "AMZN"]
+
+
+@app.route("/peers")
+def peers():
+    symbol = request.args.get("symbol", "").strip().upper()
+    if not symbol:
+        return jsonify({"peers": []})
+    cached = get_cache("peers_" + symbol)
+    if cached is not None:
+        return jsonify({"peers": cached})
+    sector = None
+    try:
+        sector = (yf.Ticker(symbol).info or {}).get("sector") or (yf.Ticker(symbol).info or {}).get("industry")
+    except Exception as e:
+        logger.error("peers sector lookup %s: %s" % (symbol, e))
+    out = []
+    if sector:
+        for s in SCAN_UNIVERSE:
+            if s == symbol:
+                continue
+            try:
+                si = (yf.Ticker(s).info or {}).get("sector")
+            except Exception:
+                si = None
+            if si and si == sector:
+                out.append(s)
+            if len(out) >= 4:
+                break
+    if not out:
+        out = [s for s in PEERS_FALLBACK if s != symbol][:4]
+    set_cache("peers_" + symbol, out)
+    return jsonify({"peers": out})
 
 
 _MOVERS = {"data": None, "ts": 0}
