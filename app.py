@@ -40,7 +40,7 @@ def fmp_get(path):
     return None
 
 CACHE = {}
-CACHE_TTL = 60 * 60 * 4
+CACHE_TTL = 60 * 15   # 15 minutes
 
 def get_cache(key):
     if key in CACHE:
