@@ -124,6 +124,16 @@ def ensure_db():
             "added_at TIMESTAMP DEFAULT NOW(),"
             "UNIQUE (user_id, symbol))"
         )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS holdings ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "symbol TEXT NOT NULL,"
+            "shares NUMERIC NOT NULL,"
+            "avg_cost NUMERIC NOT NULL,"
+            "added_at TIMESTAMP DEFAULT NOW(),"
+            "UNIQUE (user_id, symbol))"
+        )
         conn.commit()
         cur.close()
         logger.info("ensure_db: tables ready")
@@ -410,6 +420,165 @@ def watchlist_remove():
     except Exception as e:
         logger.error("watchlist remove error: %s" % e)
         return jsonify({"error": "Could not remove from your watchlist."}), 500
+    finally:
+        conn.close()
+
+
+# CHUNK: Portfolio Tracker — manual holdings with live value and gain or loss. Educational only.
+@app.route("/portfolio", methods=["GET"])
+def portfolio_get():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    uid = u["id"]
+    # 60 second cache so rapid refreshes do not re-run the whole aggregation. The underlying
+    # prices come from light_score, which carries its own cache, so this never hammers Yahoo.
+    ckey = "portfolio_" + str(uid)
+    entry = CACHE.get(ckey)
+    if entry and (time.time() - entry[1]) < 60:
+        return jsonify(entry[0])
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, shares, avg_cost FROM holdings WHERE user_id = %s ORDER BY added_at ASC", (uid,))
+        rows = cur.fetchall()
+        cur.close()
+    except Exception as e:
+        logger.error("portfolio get error: %s" % e)
+        return jsonify({"error": "Could not load your portfolio."}), 500
+    finally:
+        conn.close()
+
+    holdings = []
+    tot_mv = 0.0
+    tot_cb = 0.0
+    tot_day = 0.0
+    for symbol, shares, avg_cost in rows:
+        try:
+            shares_f = float(shares)
+            avg_f = float(avg_cost)
+        except (TypeError, ValueError):
+            continue
+        r = light_score(symbol)
+        cost_basis = round(shares_f * avg_f, 2)
+        if not r or not isinstance(r.get("price"), (int, float)):
+            holdings.append({
+                "symbol": symbol, "shares": shares_f, "avg_cost": round(avg_f, 2),
+                "price": None, "change_pct": None,
+                "market_value": "N/A", "cost_basis": cost_basis,
+                "gain_loss": "N/A", "gain_loss_pct": "N/A", "day_change": "N/A",
+            })
+            continue
+        price = float(r["price"])
+        change_pct = r.get("change_pct")
+        market_value = round(shares_f * price, 2)
+        gain_loss = round(market_value - cost_basis, 2)
+        gain_loss_pct = round((price / avg_f - 1) * 100, 2) if avg_f > 0 else 0
+        day_change = round(shares_f * price * (change_pct / 100.0), 2) if isinstance(change_pct, (int, float)) else 0
+        holdings.append({
+            "symbol": symbol, "shares": shares_f, "avg_cost": round(avg_f, 2),
+            "price": round(price, 2), "change_pct": change_pct,
+            "market_value": market_value, "cost_basis": cost_basis,
+            "gain_loss": gain_loss, "gain_loss_pct": gain_loss_pct, "day_change": day_change,
+        })
+        tot_mv += market_value
+        tot_cb += cost_basis
+        tot_day += day_change
+
+    tot_gl = round(tot_mv - tot_cb, 2)
+    tot_gl_pct = round((tot_mv / tot_cb - 1) * 100, 2) if tot_cb > 0 else 0
+    payload = {
+        "holdings": holdings,
+        "totals": {
+            "market_value": round(tot_mv, 2),
+            "cost_basis": round(tot_cb, 2),
+            "gain_loss": tot_gl,
+            "gain_loss_pct": tot_gl_pct,
+            "day_change": round(tot_day, 2),
+        },
+        "data_timestamp": int(time.time()),
+    }
+    set_cache(ckey, payload)
+    return jsonify(payload)
+
+
+@app.route("/portfolio/add", methods=["POST"])
+def portfolio_add():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    uid = u["id"]
+    data = request.get_json(silent=True) or {}
+    raw_sym = (data.get("symbol") or "").strip()
+    # Let the box accept a company name too, resolving it to a ticker before saving.
+    if raw_sym and not looks_like_ticker(raw_sym.upper()):
+        raw_sym = resolve_ticker(raw_sym)
+    symbol = raw_sym.strip().upper()
+    if not symbol or len(symbol) > 10:
+        return jsonify({"error": "Enter a valid ticker symbol."}), 400
+    try:
+        shares = float(data.get("shares"))
+        avg_cost = float(data.get("avg_cost"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Shares and average cost must be numbers."}), 400
+    if shares <= 0:
+        return jsonify({"error": "Shares must be greater than zero."}), 400
+    if avg_cost < 0:
+        return jsonify({"error": "Average cost cannot be negative."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        # Free tier limit. A new symbol counts against the cap, an existing one is just an update.
+        cur.execute("SELECT COUNT(*) FROM holdings WHERE user_id = %s", (uid,))
+        count = cur.fetchone()[0]
+        cur.execute("SELECT 1 FROM holdings WHERE user_id = %s AND symbol = %s", (uid, symbol))
+        exists = cur.fetchone() is not None
+        if count >= 5 and not exists:
+            cur.close()
+            return jsonify({"error": "free_limit", "message": "Free accounts can track up to 5 holdings. Upgrade to premium for unlimited."}), 402
+        cur.execute(
+            "INSERT INTO holdings (user_id, symbol, shares, avg_cost) VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (user_id, symbol) DO UPDATE SET shares = EXCLUDED.shares, avg_cost = EXCLUDED.avg_cost",
+            (uid, symbol, shares, avg_cost),
+        )
+        conn.commit()
+        cur.close()
+        CACHE.pop("portfolio_" + str(uid), None)
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("portfolio add error: %s" % e)
+        return jsonify({"error": "Could not save that holding."}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/portfolio/remove", methods=["POST"])
+def portfolio_remove():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    uid = u["id"]
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get("symbol") or "").strip().upper()
+    if not symbol:
+        return jsonify({"error": "Invalid symbol."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM holdings WHERE user_id = %s AND symbol = %s", (uid, symbol))
+        conn.commit()
+        cur.close()
+        CACHE.pop("portfolio_" + str(uid), None)
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("portfolio remove error: %s" % e)
+        return jsonify({"error": "Could not remove that holding."}), 500
     finally:
         conn.close()
 
