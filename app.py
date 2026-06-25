@@ -878,6 +878,19 @@ def _clean_summary(summary, link=""):
     return trim_words(s, 240)
 
 
+def _full_summary(summary, link=""):
+    # The full cleaned article text for the read-more modal. Same junk guards as the card preview
+    # (drop a bare URL or a summary that is only the link), but no word trim. Capped at 1000 chars.
+    s = clean_text(summary or "")
+    if not s:
+        return ""
+    if re.match(r"^https?://", s, re.I):
+        return ""
+    if link and s.strip() == str(link).strip():
+        return ""
+    return s[:1000]
+
+
 # CHUNK: company news from yfinance, the reliable backbone source. Parsed defensively for both the
 # old flat format and the newer nested 'content' format, so a widely covered name like Apple always
 # has company specific news instead of falling through to a general feed. Newest first, time stamped.
@@ -910,6 +923,7 @@ def yf_company_news(ticker_obj):
                     "headline": clean_text(title),
                     "source": clean_text(prov),
                     "summary": _clean_summary(summary, link),
+                    "summary_long": _full_summary(summary, link),
                     "url": link or "",
                     "ts": ts,
                 })
@@ -1204,7 +1218,7 @@ def compute_full_report(symbol):
                     arts = [n for n in r.json() if n.get("headline")]
                     arts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
                     for n in arts[:6]:
-                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
+                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "summary_long": _full_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
             except Exception as e:
                 logger.error("finnhub company-news error %s: %s" % (symbol, e))
 
@@ -1225,7 +1239,7 @@ def compute_full_report(symbol):
                     garts = [n for n in r2.json() if n.get("headline")]
                     garts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
                     for n in garts[:4]:
-                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
+                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "summary_long": _full_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
             except Exception as e:
                 logger.error("finnhub general-news error: %s" % e)
 
