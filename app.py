@@ -1938,8 +1938,12 @@ def movers():
         except Exception:
             return None
 
-    def grab(path):
-        data = fmp_get(path)
+    def grab(stable, legacy):
+        # FMP moved these to the /stable path and marked the old /api/v3 ones legacy, so try the
+        # current endpoint first and fall back to the legacy one if a key still maps to it.
+        data = fmp_get(stable)
+        if not isinstance(data, list) or not data:
+            data = fmp_get(legacy)
         out = []
         if isinstance(data, list):
             for d in data[:10]:
@@ -1949,14 +1953,18 @@ def movers():
                 out.append({
                     "symbol": sym,
                     "name": d.get("name") or sym,
-                    "change_pct": pct(d.get("changesPercentage")),
+                    "change_pct": pct(d.get("changesPercentage") or d.get("changePercentage")),
                     "price": d.get("price"),
                 })
         return out
 
-    out = {"gainers": grab("/api/v3/stock_market/gainers"), "losers": grab("/api/v3/stock_market/losers"), "data_timestamp": int(time.time())}
-    _MOVERS["data"] = out
-    _MOVERS["ts"] = now
+    gainers = grab("/stable/biggest-gainers", "/api/v3/stock_market/gainers")
+    losers = grab("/stable/biggest-losers", "/api/v3/stock_market/losers")
+    out = {"gainers": gainers, "losers": losers, "data_timestamp": int(time.time())}
+    # Only cache a real result, so a transient FMP miss does not stick for half an hour.
+    if gainers or losers:
+        _MOVERS["data"] = out
+        _MOVERS["ts"] = now
     return jsonify(out)
 
 
@@ -2554,9 +2562,11 @@ def trending():
             return None
 
     items = []
-    data = fmp_get("/api/v3/stock_market/actives")
+    data = fmp_get("/stable/most-actives")
     if not isinstance(data, list) or not data:
-        data = fmp_get("/api/v3/stock_market/gainers")
+        data = fmp_get("/api/v3/stock_market/actives")
+    if not isinstance(data, list) or not data:
+        data = fmp_get("/stable/biggest-gainers")
     if isinstance(data, list):
         for d in data[:12]:
             sym = d.get("symbol")
@@ -2565,13 +2575,14 @@ def trending():
             items.append({
                 "symbol": sym,
                 "name": d.get("name") or sym,
-                "change_pct": parse_pct(d.get("changesPercentage")),
+                "change_pct": parse_pct(d.get("changesPercentage") or d.get("changePercentage")),
                 "price": d.get("price"),
             })
 
     out = {"items": items, "data_timestamp": int(time.time())}
-    _TREND["data"] = out
-    _TREND["ts"] = now
+    if items:
+        _TREND["data"] = out
+        _TREND["ts"] = now
     return jsonify(out)
 
 
@@ -2607,7 +2618,10 @@ def discover():
         "results": results,
         "data_timestamp": int(time.time()),
     }
-    set_cache("theme_" + key, out)
+    # Only cache when the basket actually scored, so a transient data miss does not stick for the
+    # full cache window. An empty result will be retried on the next tap instead of being frozen.
+    if results:
+        set_cache("theme_" + key, out)
     return jsonify(out)
 
 
