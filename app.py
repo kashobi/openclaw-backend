@@ -841,6 +841,53 @@ def earnings_flag(info):
         return None
 
 
+# CHUNK: company news from yfinance, the reliable backbone source. Parsed defensively for both the
+# old flat format and the newer nested 'content' format, so a widely covered name like Apple always
+# has company specific news instead of falling through to a general feed. Newest first.
+def yf_company_news(ticker_obj):
+    out = []
+    try:
+        raw = ticker_obj.news or []
+    except Exception:
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            c = item.get("content")
+            if isinstance(c, dict):
+                title = c.get("title")
+                prov = (c.get("provider") or {}).get("displayName") or "News"
+                link = ((c.get("canonicalUrl") or {}).get("url")
+                        or (c.get("clickThroughUrl") or {}).get("url") or "")
+                summary = c.get("summary") or c.get("description") or ""
+                ts = 0
+                pd = c.get("pubDate") or c.get("displayTime")
+                if pd:
+                    try:
+                        ts = int(datetime.fromisoformat(str(pd).replace("Z", "+00:00")).timestamp())
+                    except Exception:
+                        ts = 0
+            else:
+                title = item.get("title")
+                prov = item.get("publisher") or "News"
+                link = item.get("link") or ""
+                summary = item.get("summary") or ""
+                ts = item.get("providerPublishTime") or 0
+            if title:
+                out.append({
+                    "headline": clean_text(title),
+                    "source": clean_text(prov),
+                    "summary": trim_words(clean_text(summary), 240),
+                    "url": link or "",
+                    "ts": ts or 0,
+                })
+        except Exception:
+            continue
+    out.sort(key=lambda a: a.get("ts", 0), reverse=True)
+    return out
+
+
 # CHUNK: shared full-report engine so Ask and the report use the same verdict
 def compute_full_report(symbol):
     cached = get_cache(f"full_{symbol}")
@@ -1110,27 +1157,46 @@ def compute_full_report(symbol):
             if alert is None:
                 alert = "insider_selling"
 
-        # News from Finnhub
+        # News. Finnhub company news first when a key is present, then yfinance company news as a
+        # reliable backbone source so a covered name never shows "no company news", and only then a
+        # general market feed as a last resort. All sorted newest first and time stamped.
         news = []
         if FINNHUB_KEY:
             try:
                 today = datetime.now().strftime("%Y-%m-%d")
                 from_date = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-                url = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={from_date}&to={today}&token={FINNHUB_KEY}"
-                r = requests.get(url, timeout=8)
+                fcu = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={from_date}&to={today}&token={FINNHUB_KEY}"
+                r = requests.get(fcu, timeout=8)
+                cnt = len(r.json()) if r.status_code == 200 else 0
+                logger.info("finnhub company-news %s status %s count %s" % (symbol, r.status_code, cnt))
                 if r.status_code == 200:
-                    for n in r.json()[:6]:
-                        if n.get("headline"):
-                            news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": trim_words(clean_text(n.get("summary", "")))})
-                if not news:
-                    url2 = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
-                    r2 = requests.get(url2, timeout=8)
-                    if r2.status_code == 200:
-                        for n in r2.json()[:4]:
-                            if n.get("headline"):
-                                news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": trim_words(clean_text(n.get("summary", "")))})
+                    arts = [n for n in r.json() if n.get("headline")]
+                    arts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
+                    for n in arts[:6]:
+                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": trim_words(clean_text(n.get("summary", "")), 240), "url": n.get("url", ""), "ts": n.get("datetime", 0)})
             except Exception as e:
-                logger.error(f"News error: {e}")
+                logger.error("finnhub company-news error %s: %s" % (symbol, e))
+
+        if not news:
+            try:
+                yn = yf_company_news(ticker)
+                logger.info("yfinance news %s count %s" % (symbol, len(yn)))
+                if yn:
+                    news = yn[:6]
+            except Exception as e:
+                logger.error("yfinance news error %s: %s" % (symbol, e))
+
+        if not news and FINNHUB_KEY:
+            try:
+                gu = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
+                r2 = requests.get(gu, timeout=8)
+                if r2.status_code == 200:
+                    garts = [n for n in r2.json() if n.get("headline")]
+                    garts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
+                    for n in garts[:4]:
+                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": trim_words(clean_text(n.get("summary", "")), 240), "url": n.get("url", ""), "ts": n.get("datetime", 0)})
+            except Exception as e:
+                logger.error("finnhub general-news error: %s" % e)
 
         market_cap = info.get("marketCap", "N/A")
         volume = int(hist["Volume"].iloc[-1]) if not hist.empty else 0
