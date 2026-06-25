@@ -66,6 +66,11 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .aci:hover{background:var(--bg);}
 .acs{font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:800;min-width:64px;}
 .acn{color:var(--muted);font-size:12px;}
+.acWrap{position:relative;}
+.acWrap .cmpInp{width:100%;box-sizing:border-box;}
+.acx{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:2px solid var(--border);border-radius:11px;z-index:300;display:none;box-shadow:0 8px 28px rgba(0,0,0,.12);max-height:260px;overflow-y:auto;}
+.sectorCard{border-left:4px solid var(--accent);}
+.valDesc{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.35;}
 .qrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .qp{background:var(--bg);border:2px solid var(--border);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace;font-weight:700;}
 .qp:hover{border-color:var(--accent);color:var(--accent);}
@@ -407,6 +412,9 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div id="mtGauge" class="gaugeWrap"></div>
       <div class="stitle">&#128269; Deep Fundamentals</div>
       <div class="mets" id="deepFund"></div>
+      <div class="ic sectorCard" id="sectorCard" style="display:none"></div>
+      <div class="stitle">&#128181; Valuation Deep Dive</div>
+      <div class="mets" id="valGrid"></div>
       <div class="stitle" id="gradeTitle" style="display:none">&#128202; Analyst Rating Changes</div>
       <div id="grades" style="display:none"></div>
       <div class="stitle">&#127963; Congressional Trading</div>
@@ -481,7 +489,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div class="vhead-s">Put up to three stocks side by side. The engine reads each one and tells you which looks strongest right now, and why, in plain English.</div>
   </div>
   <div class="cmpInputs">
-    <input class="cmpInp" id="cmp0" type="text" placeholder="First ticker, like AAPL" autocomplete="off"/>
+    <div class="acWrap"><input class="cmpInp" id="cmp0" type="text" placeholder="First ticker or company name" autocomplete="off"/><div class="acx" id="acCmp"></div></div>
     <input class="cmpInp" id="cmp1" type="text" placeholder="Second ticker, like MSFT" autocomplete="off"/>
     <input class="cmpInp" id="cmp2" type="text" placeholder="Third ticker, optional" autocomplete="off"/>
     <button class="cmpBtn" id="cmpBtn">Compare</button>
@@ -514,7 +522,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div class="vhead-s">Type a question. Ask about one stock, or name a few and ask how they compare. The answer comes from the same live numbers the engine uses, in plain language.</div>
   </div>
   <div class="askInputs">
-    <input class="cmpInp" id="askSym" type="text" placeholder="Ticker, optional, like AAPL" autocomplete="off"/>
+    <div class="acWrap"><input class="cmpInp" id="askSym" type="text" placeholder="Ticker or company name, optional" autocomplete="off"/><div class="acx" id="acAsk"></div></div>
     <input class="cmpInp" id="askQ" type="text" placeholder="Your question, like why is this a watch" autocomplete="off"/>
     <button class="cmpBtn" id="askBtn">Ask</button>
   </div>
@@ -1136,6 +1144,41 @@ function run(){
       deep.innerHTML = fcards.join("");
     }
 
+    // CHUNK: Valuation Deep Dive cards
+    var valGrid = document.getElementById("valGrid");
+    if(valGrid){
+      var vdCard = function(label, value, desc, cls){ return "<div class=\"met\"><div class=\"ml2\">" + label + "</div><div class=\"mv2 " + cls + "\">" + value + "</div><div class=\"valDesc\">" + desc + "</div></div>"; };
+      var vdCards = [];
+      var vdPeg = d.peg_ratio;
+      if(typeof vdPeg === "number"){ vdCards.push(vdCard("Growth-adjusted P/E", String(vdPeg), "How much you pay for growth", vdPeg < 1 ? "pos" : (vdPeg < 2 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("Growth-adjusted P/E", "N/A", "How much you pay for growth", "neu")); }
+      var vdPb = d.price_to_book;
+      if(typeof vdPb === "number"){ vdCards.push(vdCard("P/B – Assets vs Price", String(vdPb), "What the company's assets are worth", vdPb < 1.5 ? "pos" : (vdPb < 3 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("P/B – Assets vs Price", "N/A", "What the company's assets are worth", "neu")); }
+      var vdPs = d.price_to_sales;
+      if(typeof vdPs === "number"){ vdCards.push(vdCard("P/S – Price vs Revenue", String(vdPs), "Price vs. Revenue", vdPs < 2 ? "pos" : (vdPs < 5 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("P/S – Price vs Revenue", "N/A", "Price vs. Revenue", "neu")); }
+      var vdEv = d.ev_to_ebitda;
+      if(typeof vdEv === "number"){ vdCards.push(vdCard("EV/EBITDA – Enterprise Value", String(vdEv), "Enterprise Value to operating profit", vdEv < 15 ? "pos" : (vdEv < 25 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("EV/EBITDA – Enterprise Value", "N/A", "Enterprise Value to operating profit", "neu")); }
+      var vdRoe = d.roe;
+      if(typeof vdRoe === "number"){ var vdRoePct = Math.round(vdRoe * 1000) / 10; vdCards.push(vdCard("ROE – Return on Equity", vdRoePct + "%", "How well management uses shareholder money", vdRoePct > 15 ? "pos" : (vdRoePct > 8 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("ROE – Return on Equity", "N/A", "How well management uses shareholder money", "neu")); }
+      var vdFcf = d.fcf_yield;
+      if(typeof vdFcf === "number"){ vdCards.push(vdCard("FCF Yield – Free Cash Flow", vdFcf + "%", "Cash the company generates for you", vdFcf > 5 ? "pos" : (vdFcf > 2 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("FCF Yield – Free Cash Flow", "N/A", "Cash the company generates for you", "neu")); }
+      valGrid.innerHTML = vdCards.join("");
+    }
+
+    // CHUNK: Sector Guide card
+    var sectorCard = document.getElementById("sectorCard");
+    if(sectorCard){
+      if(d.sector_guide){
+        sectorCard.innerHTML = "<div class=\"ih\"><div class=\"it\">What matters for this sector</div></div><div class=\"itxt\">" + esc(d.sector_guide) + "</div>";
+        sectorCard.style.display = "block";
+      } else { sectorCard.style.display = "none"; }
+    }
+
     // CHUNK: Feature 5: Apex Q Classroom, one lesson chosen from the live signals
     var classroom = document.getElementById("classroom");
     if(classroom){
@@ -1150,6 +1193,7 @@ function run(){
       else if(d.verdict === "PASS"){ lesson = {t: "Why Patience Pays, the Art of Sitting Out", b: "A PASS does not mean a stock is bad forever, it means today the risk outweighs the reward. Some of the best decisions in investing are the trades you skip. Cash is a position, and waiting for a clearer setup is a real strategy. The market will still be here when the picture improves."}; }
       else if(hasInsiderBuy){ lesson = {t: "Insider Buying, Why Executives Buy Their Own Stock", b: "When a company officer buys shares with their own money it is worth noting, because there is really only one reason to buy, they expect the price to rise. That is why insider buying is a stronger signal than insider selling, which happens for many ordinary reasons. It is not a guarantee, but a cluster of insiders buying is a quiet vote of confidence from the people who know the company best."}; }
       else if(hasCongBuy){ lesson = {t: "Congressional Trades, What They Signal and What They Do Not", b: "Members of Congress must report their trades by law, and some investors watch these filings closely. The thinking is that lawmakers sometimes see policy shifts before the public does. Treat it as one small clue, not a reason on its own, since the reports can lag the actual trade by weeks. It is context, never a command."}; }
+      else if(d.verdict === "WATCH"){ lesson = {t: "The Buy/Sell/Hold Framework", b: "Professional investors think in three simple buckets. Buy when a stock is undervalued (low multiples, strong fundamentals, good moat). Sell when the business is deteriorating, overvalued, or you find a better place for your money. Hold when the stock is fairly priced and the business is steady. Apex Q's APPROVE/PASS/WATCH verdicts are a simplified version of this thinking: APPROVE suggests the numbers lean positive, PASS says step aside, and WATCH means wait for a clearer picture."}; }
       else { lesson = {t: "How to Read a Stock Report Without Panic", b: "A stock report is a set of signals, not a crystal ball, and no single number tells the whole story. Read each piece in context, the price move, the valuation, the analyst view, the insider and lawmaker activity, and see whether they agree or disagree. When they disagree, that is your cue to slow down, not speed up. The goal is understanding, not a rushed yes or no."}; }
       classroom.innerHTML = "<div class=\"ic classCard\"><div class=\"ih\"><div class=\"it\">" + esc(lesson.t) + "</div></div><div class=\"itxt\">" + lesson.b + "</div></div>";
     }
@@ -1285,6 +1329,37 @@ document.getElementById("si").addEventListener("input", function(){
 document.getElementById("si").addEventListener("keypress", function(e){
   if(e.key === "Enter"){ run(); }
 });
+
+// CHUNK: Ask/Compare name resolution — autocomplete that fills the input, like Home search
+function attachAc(inputId, dropId){
+  var inp = document.getElementById(inputId);
+  var drop = document.getElementById(dropId);
+  if(!inp || !drop){ return; }
+  var t;
+  inp.addEventListener("input", function(){
+    clearTimeout(t);
+    var v = this.value.trim();
+    if(v.length < 2){ drop.style.display = "none"; return; }
+    t = setTimeout(function(){
+      fetch(API + "/search?q=" + encodeURIComponent(v)).then(function(r){ return r.json(); }).then(function(dd){
+        if(dd.results && dd.results.length){
+          drop.innerHTML = dd.results.map(function(x){
+            return "<div class=\"aci\" data-fill=\"" + esc(x.symbol) + "\"><span class=\"acs\">" + esc(x.symbol) + "</span><span class=\"acn\">" + esc(x.name || "") + "</span></div>";
+          }).join("");
+          drop.style.display = "block";
+        } else { drop.style.display = "none"; }
+      }).catch(function(){});
+    }, 300);
+  });
+  drop.addEventListener("click", function(e){
+    var item = e.target.closest("[data-fill]");
+    if(!item){ return; }
+    inp.value = item.getAttribute("data-fill");
+    drop.style.display = "none";
+  });
+}
+attachAc("askSym", "acAsk");
+attachAc("cmp0", "acCmp");
 
 buildTicker();
 loadMarket();
