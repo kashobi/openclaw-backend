@@ -1561,7 +1561,7 @@ THEMES = {
     "explainer": "The broad technology sector covers software, hardware, and the digital tools that businesses and people run on every day. It is the largest and most watched part of the market.",
     "why": "Technology drives modern growth, and the shift to AI, cloud, and automation keeps pulling money into the sector. It is where many of the biggest long term winners are found.",
     "unknown": "Everyone watches a handful of giant tech names, but the sector is full of smaller software and tooling companies doing critical work that rarely makes the news.",
-    "tickers": ["MNDY","PATH","GTLB","ESTC","CFLT","PEGA","FROG","DOCN","BILL"]
+    "tickers": ["NOW","SNOW","DDOG","NET","MDB","TEAM","HUBS","WDAY","ESTC"]
   },
   "health": {
     "name": "Health Care",
@@ -1960,6 +1960,19 @@ def movers():
 
     gainers = grab("/stable/biggest-gainers", "/api/v3/stock_market/gainers")
     losers = grab("/stable/biggest-losers", "/api/v3/stock_market/losers")
+
+    # If FMP gives us nothing (legacy plan, daily cap, or a changed response shape), derive movers
+    # from the universe we already score. Not the whole market, but always real and tappable.
+    if not gainers and not losers:
+        rows = [r for r in scan_universe() if isinstance(r.get("change_pct"), (int, float))]
+        if rows:
+            def mv(r):
+                return {"symbol": r["symbol"], "name": r.get("name") or r["symbol"], "change_pct": r["change_pct"], "price": r.get("price")}
+            up = sorted(rows, key=lambda r: r["change_pct"], reverse=True)
+            down = sorted(rows, key=lambda r: r["change_pct"])
+            gainers = [mv(r) for r in up if r["change_pct"] > 0][:8]
+            losers = [mv(r) for r in down if r["change_pct"] < 0][:8]
+
     out = {"gainers": gainers, "losers": losers, "data_timestamp": int(time.time())}
     # Only cache a real result, so a transient FMP miss does not stick for half an hour.
     if gainers or losers:
@@ -2608,6 +2621,8 @@ def discover():
         r = light_score(sym)
         if r:
             results.append(r)
+        else:
+            logger.warning("discover theme %s: no data for %s" % (key, sym))
     results.sort(key=lambda x: x["score"], reverse=True)
     out = {
         "key": key,
