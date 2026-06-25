@@ -1,2348 +1,1867 @@
-from flask import Flask, jsonify, request, Response, session, redirect
-from flask_cors import CORS
-import yfinance as yf
-import requests
-import os
-import time
-import json
-import re
-import html
-import logging
-from datetime import datetime, timedelta
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apex Q Intelligence Terminal</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#003eaa">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Apex Q">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#e4ecf5;--surface:#fff;--s2:#d6e2ef;--border:#aac0d8;
+  --accent:#003eaa;--green:#004d22;--gbg:#b8f0cc;
+  --red:#8b0000;--rbg:#ffc0c0;--yellow:#5c2d00;--ybg:#ffd888;
+  --text:#040e1c;--muted:#2a4060;--navy:#040e1c;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{max-width:100%;overflow-x:hidden;}
+body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-serif;width:100%;}
+.tkbar{background:var(--navy);height:42px;overflow:hidden;display:flex;align-items:center;}
+.tkwrap{width:100%;overflow:hidden;}
+.tktrack{display:inline-flex;animation:tkscroll 60s linear infinite;white-space:nowrap;will-change:transform;}
+.tktrack:hover{animation-play-state:paused;}
+.tki{display:inline-flex;align-items:center;gap:9px;padding:0 22px;height:42px;font-family:'JetBrains Mono',monospace;font-size:12px;border-right:1px solid #1a2d50;cursor:pointer;flex-shrink:0;}
+.tki:hover{background:#1a2d50;}
+.tsym{color:#fff;font-weight:800;}
+.tpx{color:#7aabcc;font-size:11px;}
+.tup{color:#00ff99;font-weight:800;}
+.tdn{color:#ff5555;font-weight:800;}
+@keyframes tkscroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@media(max-width:768px){.tktrack{animation-duration:35s;}}
+.hdr{background:var(--surface);border-bottom:2px solid var(--border);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;}
+.logo{display:flex;align-items:center;gap:12px;}
+.lmark{width:42px;height:42px;background:linear-gradient(135deg,#003eaa,#001e77);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;}
+.lname{font-size:25px;font-weight:800;color:var(--text);}
+.lname span{color:var(--accent);}
+.badge{display:flex;align-items:center;gap:7px;background:var(--gbg);border:2px solid var(--green);border-radius:20px;padding:6px 14px;font-size:11px;color:var(--green);font-family:'JetBrains Mono',monospace;font-weight:800;}
+.dot{width:8px;height:8px;background:var(--green);border-radius:50%;animation:pulse 1.4s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+.mbar{background:var(--surface);border-bottom:2px solid var(--border);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.mbar::-webkit-scrollbar{display:none;}
+.mbari{display:flex;min-width:max-content;}
+.mi{padding:11px 22px;border-right:1px solid var(--border);cursor:pointer;transition:background .2s;min-width:150px;}
+.mi:hover{background:var(--s2);}
+.ml{font-size:9px;color:var(--muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;font-weight:800;}
+.mv{font-size:14px;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.mv.up{color:var(--green);}
+.mv.dn{color:var(--red);}
+.mv.ld{color:var(--muted);font-size:12px;}
+.swrap{background:var(--surface);border-bottom:2px solid var(--border);padding:16px 24px 14px;}
+.slbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-bottom:10px;font-family:'JetBrains Mono',monospace;font-weight:800;}
+.srow{display:flex;gap:10px;max-width:720px;position:relative;}
+.sinp{flex:1;background:var(--bg);border:2px solid var(--border);border-radius:11px;padding:13px 18px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;outline:none;transition:all .2s;}
+.sinp:focus{border-color:var(--accent);background:#fff;}
+.sinp::placeholder{color:var(--muted);}
+.sbtn{background:var(--accent);color:#fff;border:none;border-radius:11px;padding:13px 30px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;}
+.sbtn:hover{background:#002d88;}
+.ac{position:absolute;top:calc(100% + 5px);left:0;right:100px;background:#fff;border:2px solid var(--border);border-radius:11px;z-index:300;display:none;box-shadow:0 8px 28px rgba(0,0,0,.12);}
+.aci{padding:11px 16px;cursor:pointer;font-size:13px;display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--border);}
+.aci:last-child{border-bottom:none;}
+.aci:hover{background:var(--bg);}
+.acs{font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:800;min-width:64px;}
+.acn{color:var(--muted);font-size:12px;}
+.acWrap{position:relative;}
+.acWrap .cmpInp{width:100%;box-sizing:border-box;}
+.acx{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:2px solid var(--border);border-radius:11px;z-index:300;display:none;box-shadow:0 8px 28px rgba(0,0,0,.12);max-height:260px;overflow-y:auto;}
+.sectorCard{border-left:4px solid var(--accent);}
+.valDesc{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.35;}
+.qrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+.qp{background:var(--bg);border:2px solid var(--border);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace;font-weight:700;}
+.qp:hover{border-color:var(--accent);color:var(--accent);}
+.main{padding:20px 24px 60px;display:grid;grid-template-columns:1fr 350px;gap:20px;max-width:100%;}
+.main > div{min-width:0;}
+@media(max-width:960px){.main{grid-template-columns:1fr;padding:14px 14px 50px;}}
+.stitle{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:13px;display:flex;align-items:center;gap:8px;font-weight:800;}
+.stitle::after{content:'';flex:1;height:1px;background:var(--border);}
+.rc{background:var(--surface);border:2px solid var(--border);border-radius:14px;padding:22px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,.05);max-width:100%;overflow-wrap:break-word;}
+.shdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;gap:14px;}
+.sn{font-size:32px;font-weight:800;color:var(--text);}
+.sf{font-size:15px;color:var(--muted);margin-top:4px;font-weight:500;}
+.ss{font-size:10px;color:var(--accent);margin-top:5px;font-family:'JetBrains Mono',monospace;font-weight:800;text-transform:uppercase;}
+.pb{text-align:right;flex-shrink:0;}
+.sp{font-size:32px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.sc{font-size:14px;font-family:'JetBrains Mono',monospace;margin-top:3px;font-weight:800;}
+.sc.up{color:var(--green);}
+.sc.dn{color:var(--red);}
+.vb{border-radius:14px;padding:22px;margin-bottom:20px;}
+.vb.approve{background:linear-gradient(135deg,#b8f0cc,#88e0aa);border:2px solid var(--green);}
+.vb.pass{background:linear-gradient(135deg,#ffc0c0,#ff9090);border:2px solid var(--red);}
+.vb.watch{background:linear-gradient(135deg,#ffd888,#ffbb44);border:2px solid var(--yellow);}
+.vtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
+.vbdg{font-size:20px;font-weight:900;font-family:'JetBrains Mono',monospace;letter-spacing:4px;padding:12px 28px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.2);}
+.vbdg.approve{background:var(--green);color:#fff;}
+.vbdg.pass{background:var(--red);color:#fff;}
+.vbdg.watch{background:var(--yellow);color:#fff;}
+.vsco{font-size:13px;font-family:'JetBrains Mono',monospace;color:var(--text);font-weight:800;background:rgba(255,255,255,.85);padding:8px 16px;border-radius:20px;}
+.vconf{font-size:15.5px;color:var(--text);margin-bottom:14px;line-height:1.8;font-weight:500;background:rgba(255,255,255,.7);padding:16px 18px;border-radius:10px;}
+.vmean{background:rgba(255,255,255,.85);border-radius:10px;padding:14px 16px;margin-bottom:14px;border-left:4px solid var(--accent);}
+.vmeant{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:7px;}
+.vmeantxt{font-size:15px;color:var(--text);line-height:1.75;font-weight:500;}
+.wguide{margin-bottom:14px;}
+.wg{background:rgba(255,255,255,.75);border-radius:10px;padding:13px 16px;margin-bottom:8px;}
+.wg.yellow{border-left:4px solid var(--yellow);}
+.wg.blue{border-left:4px solid var(--accent);}
+.wg.red{border-left:4px solid var(--red);}
+.wgt{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;font-family:'JetBrains Mono',monospace;margin-bottom:6px;}
+.wg.yellow .wgt{color:var(--yellow);}
+.wg.blue .wgt{color:var(--accent);}
+.wg.red .wgt{color:var(--red);}
+.wgtxt{font-size:14.5px;color:var(--text);line-height:1.75;font-weight:500;}
+.vrlist{display:flex;flex-direction:column;gap:8px;}
+.vr{background:rgba(255,255,255,.9);border-radius:11px;overflow:hidden;border:1px solid rgba(0,0,0,.06);}
+.vr.live{border:2px solid var(--accent);background:rgba(0,62,170,.06);}
+.vr-hdr{display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;user-select:none;}
+.vr-hdr:hover{background:rgba(0,62,170,.04);}
+.vi{font-size:22px;flex-shrink:0;}
+.vrm{flex:1;}
+.vlbl{font-weight:800;display:block;color:var(--text);font-size:15px;}
+.vshort{color:var(--muted);font-size:13.5px;margin-top:3px;display:block;font-weight:500;}
+.vbtn{font-size:12px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-weight:800;background:rgba(0,62,170,.1);padding:7px 13px;border-radius:20px;flex-shrink:0;border:1px solid rgba(0,62,170,.2);white-space:nowrap;}
+.vr-body{display:none;padding:0 16px 16px 50px;border-top:1px solid rgba(0,0,0,.07);}
+.vr-body.open{display:block;}
+.vrs{margin-top:12px;}
+.vrst{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:7px;}
+.vrstxt{font-size:15.5px;color:var(--text);line-height:1.8;font-weight:500;}
+.vlesson{background:var(--s2);border-radius:9px;padding:11px 14px;margin-top:10px;border-left:3px solid var(--accent);}
+.vlessont{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:5px;}
+.vlessontxt{font-size:14.5px;color:var(--text);line-height:1.75;font-style:italic;font-weight:500;}
+.mets{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;}
+@media(max-width:600px){.mets{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:600px){.rc{padding:16px;}.swrap,.discband,.hdr{padding-left:16px;padding-right:16px;}.foot{padding-left:16px;padding-right:16px;}}
+.met{background:var(--s2);border-radius:10px;padding:13px;border:2px solid var(--border);}
+.ml2{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-family:'JetBrains Mono',monospace;font-weight:800;}
+.mv2{font-size:19px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.mv2.pos{color:var(--green);}
+.mv2.neg{color:var(--red);}
+.mv2.neu{color:var(--accent);}
+.ic{background:var(--s2);border:2px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;}
+.ih{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.it{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;}
+.ibdg{font-size:10px;font-weight:800;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
+.bg{background:var(--gbg);color:var(--green);border:2px solid var(--green);}
+.br{background:var(--rbg);color:var(--red);border:2px solid var(--red);}
+.by{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
+.itxt{font-size:14.5px;color:var(--text);line-height:1.7;font-weight:500;}
+.iwhy{font-size:13px;color:var(--muted);line-height:1.65;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-weight:500;}
+.moatWrap{margin-top:14px;}
+.moatBadge{display:inline-block;font-size:13px;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:1px;padding:6px 14px;border-radius:8px;}
+.moatWide{background:var(--gbg);color:var(--green);border:2px solid var(--green);}
+.moatNarrow{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
+.moatNone{background:var(--s2);color:var(--muted);border:2px solid var(--border);}
+.moatReason{font-size:13px;color:var(--muted);line-height:1.6;margin-top:8px;font-style:italic;font-weight:500;}
+.gaugeWrap{background:var(--s2);border:2px solid var(--border);border-radius:10px;padding:13px;margin-bottom:18px;}
+.target-gauge{height:14px;background:var(--bg);border:1px solid var(--border);border-radius:999px;overflow:hidden;margin:7px 0 9px;}
+.target-gauge .fill{height:100%;border-radius:999px;}
+.gaugeTxt{font-size:13px;color:var(--text);font-weight:700;font-family:'JetBrains Mono',monospace;}
+.peerLabel{font-size:11px;color:var(--muted);font-weight:700;align-self:center;white-space:nowrap;font-family:'JetBrains Mono',monospace;}
+.classCard{border-left:4px solid #6b3fa0;}
+.tr{padding:10px 0;border-bottom:1px solid var(--border);font-size:13.5px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.tr:last-child{border-bottom:none;}
+.buy{color:var(--green);font-weight:800;font-family:'JetBrains Mono',monospace;}
+.sell{color:var(--red);font-weight:800;font-family:'JetBrains Mono',monospace;}
+.gray{color:var(--muted);font-size:12.5px;font-weight:500;}
+.ni{padding:11px 0;border-bottom:1px solid var(--border);}
+.ni:last-child{border-bottom:none;}
+.ns{font-size:11px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:800;margin-bottom:5px;}
+.nh{font-size:15px;color:var(--text);line-height:1.55;font-weight:600;}
+.nsum{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.5;}
+.loading{display:none;padding:40px 20px;text-align:center;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;}
+.loading.on{display:block;animation:pulse 1.2s infinite;}
+.sg{background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s;}
+.sg:hover{border-color:var(--accent);}
+.sgtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.sgsym{font-size:17px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.sgv{font-size:11px;font-weight:800;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;}
+.va{background:var(--gbg);color:var(--green);border:2px solid var(--green);}
+.vp{background:var(--rbg);color:var(--red);border:2px solid var(--red);}
+.vw{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
+.sgi{font-size:12.5px;font-family:'JetBrains Mono',monospace;color:var(--muted);font-weight:600;}
+.foot{background:var(--navy);padding:22px 24px;text-align:center;font-size:11px;color:#5a80aa;font-family:'JetBrains Mono',monospace;line-height:2;}
+.discband{background:var(--surface);border-bottom:2px solid var(--border);padding:18px 24px;}
+.disctitle{font-size:18px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:8px;}
+.discsub{font-size:13.5px;color:var(--muted);font-weight:500;margin-top:6px;line-height:1.55;max-width:760px;}
+.discchips{display:flex;gap:9px;margin-top:14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+.discchips::-webkit-scrollbar{display:none;}
+.discchip{flex-shrink:0;background:var(--bg);border:2px solid var(--border);border-radius:22px;padding:9px 16px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;font-family:'Space Grotesk',sans-serif;white-space:nowrap;transition:all .2s;}
+.discchip:hover{border-color:var(--accent);color:var(--accent);}
+.discchip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.discResults{margin-top:16px;}
+.discLoading{padding:24px;text-align:center;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;line-height:1.6;}
+.discExp{background:var(--s2);border:2px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+.discExpName{font-size:18px;font-weight:800;color:var(--text);margin-bottom:10px;}
+.discExpRow{font-size:14.5px;color:var(--text);line-height:1.7;font-weight:500;margin-top:9px;}
+.discExpT{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-bottom:3px;}
+.discList{display:flex;flex-direction:column;gap:9px;}
+.discRow{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:13px 16px;cursor:pointer;transition:all .2s;}
+.discRow:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(0,62,170,.1);}
+.discRowL{min-width:0;}
+.discSym{font-size:16px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);}
+.discName{font-size:12.5px;color:var(--muted);font-weight:500;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px;}
+.discRowR{text-align:right;flex-shrink:0;}
+.discBadge{font-size:10.5px;font-weight:800;padding:3px 11px;border-radius:20px;font-family:'JetBrains Mono',monospace;display:inline-block;}
+.discMeta{font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--muted);margin-top:4px;font-weight:600;}
+.discMeta .gp{color:var(--green);}
+.discMeta .gn{color:var(--red);}
+.discUp{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:700;margin-top:3px;}
+.discFoot{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:12px;line-height:1.5;font-weight:500;text-align:center;}
+.vdrop{background:rgba(139,0,0,.12);border:2px solid var(--red);border-radius:10px;padding:13px 16px;margin-bottom:12px;font-size:14.5px;color:var(--red);font-weight:600;line-height:1.65;}
+.discgroup{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:16px;margin-bottom:2px;}
+.installBtn{position:fixed;bottom:calc(82px + env(safe-area-inset-bottom));right:16px;z-index:500;background:var(--accent);color:#fff;border:none;border-radius:24px;padding:11px 18px;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,62,170,.4);display:none;}
+.hdr-right{display:flex;align-items:center;gap:12px;}
+.acctBtn{background:var(--accent);color:#fff;border:none;border-radius:20px;padding:8px 18px;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap;}
+.acctBtn:hover{background:#002d88;}
+.acctBtn.loggedin{background:var(--s2);color:var(--accent);border:2px solid var(--accent);}
+.authOverlay{position:fixed;inset:0;z-index:1000;background:rgba(4,14,28,.7);display:none;align-items:center;justify-content:center;padding:20px;}
+.authOverlay.on{display:flex;}
+.authBox{background:var(--surface);border:2px solid var(--border);border-radius:18px;padding:26px 24px;width:100%;max-width:380px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.4);}
+.authClose{position:absolute;top:14px;right:16px;background:none;border:none;font-size:28px;line-height:1;color:var(--muted);cursor:pointer;font-weight:400;}
+.authClose:hover{color:var(--text);}
+.authLogo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px;}
+.authLogo .lmark{width:38px;height:38px;}
+.authLogo .lname{font-size:22px;}
+.authWelcome{text-align:center;font-size:13.5px;color:var(--muted);font-weight:500;line-height:1.5;margin-bottom:18px;}
+.authTabs{display:flex;gap:8px;margin-bottom:16px;}
+.authTab{flex:1;background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:11px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;color:var(--muted);cursor:pointer;}
+.authTab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.authErr{background:rgba(139,0,0,.1);border:2px solid var(--red);border-radius:9px;padding:10px 13px;font-size:13px;color:var(--red);font-weight:600;margin-bottom:12px;line-height:1.45;}
+.authInp{width:100%;background:var(--bg);border:2px solid var(--border);border-radius:11px;padding:13px 16px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;outline:none;margin-bottom:11px;}
+.authInp:focus{border-color:var(--accent);background:#fff;}
+.authHint{font-size:11.5px;color:var(--muted);font-weight:500;margin-bottom:14px;min-height:14px;line-height:1.4;}
+.authSubmit{width:100%;background:var(--accent);color:#fff;border:none;border-radius:11px;padding:14px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:800;cursor:pointer;}
+.authSubmit:hover{background:#002d88;}
+.authSubmit:disabled{opacity:.6;cursor:default;}
+.vconfidence{padding:11px 14px;border-radius:9px;margin-bottom:12px;}
+.vconfidence .cf-row{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:1px;}
+.vconfidence .cf-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.vconfidence .cf-exp{font-size:13px;font-weight:500;line-height:1.55;margin-top:6px;color:var(--text);}
+.cf-high{background:rgba(0,77,34,.1);color:var(--green);}
+.cf-high .cf-dot{background:var(--green);}
+.cf-med{background:rgba(92,45,0,.12);color:var(--yellow);}
+.cf-med .cf-dot{background:var(--yellow);}
+.cf-low{background:rgba(139,0,0,.1);color:var(--red);}
+.cf-low .cf-dot{background:var(--red);}
+.vflags{display:flex;flex-direction:column;gap:7px;margin-bottom:14px;}
+.vflag{font-size:13px;font-weight:500;line-height:1.55;padding:11px 14px;border-radius:9px;color:var(--text);}
+.vflag.warn{background:rgba(139,0,0,.08);border-left:3px solid var(--red);}
+.vflag.info{background:var(--s2);border-left:3px solid var(--accent);}
+.saveRow{margin-bottom:16px;}
+.saveBtn{width:100%;background:var(--s2);color:var(--accent);border:2px solid var(--accent);border-radius:11px;padding:12px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;}
+.saveBtn:hover{background:#fff;}
+.saveBtn.saved{background:var(--gbg);color:var(--green);border-color:var(--green);}
+.watchCard{position:relative;padding-right:34px;}
+.sgv.loading{background:var(--s2);color:var(--muted);border:2px solid var(--border);}
+.sgi .wPrice{font-weight:800;color:var(--text);}
+.sgi .wUp{color:var(--green);font-weight:700;}
+.sgi .wDn{color:var(--red);font-weight:700;}
+.watchRemove{position:absolute;top:8px;right:10px;background:none;border:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;font-weight:700;padding:0 4px;}
+.watchRemove:hover{color:var(--red);}
+.isum{background:rgba(139,0,0,.07);border-left:3px solid var(--red);padding:10px 13px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.55;color:var(--text);}
+.isum b{color:var(--red);font-weight:800;}
+.idesc{font-style:italic;opacity:.85;}
+.qlabel{font-size:12px;font-weight:800;color:var(--muted);font-family:'JetBrains Mono',monospace;letter-spacing:1px;text-transform:uppercase;margin:14px 0 8px;}
+.qp .qup{color:var(--green);font-weight:700;font-size:11px;}
+.qp .qdn{color:var(--red);font-weight:700;font-size:11px;}
+.sgempty{font-size:13px;line-height:1.55;color:var(--muted);padding:14px;border:1px dashed var(--border);border-radius:11px;}
+.views{padding-bottom:80px;}
+.view{display:none;}
+.view.active{display:block;}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:300;display:flex;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -3px 18px rgba(0,0,0,.07);padding:6px 2px calc(6px + env(safe-area-inset-bottom));}
+.tab{flex:1;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 1px;cursor:pointer;color:var(--muted);font-family:inherit;-webkit-tap-highlight-color:transparent;}
+.tab .tabi{font-size:19px;line-height:1;}
+.tab .tabt{font-size:10px;font-weight:700;letter-spacing:.2px;}
+.tab.active{color:var(--accent);}
+.tab.active .tabt{color:var(--accent);}
+.vhead{padding:18px 4px 4px;}
+.vhead-t{font-size:24px;font-weight:800;letter-spacing:-.5px;}
+.vhead-s{font-size:13px;line-height:1.6;color:var(--muted);margin-top:6px;}
+.vsec{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin:14px 0;}
+.vsec-h{font-size:17px;font-weight:800;margin-bottom:8px;}
+.vsec-p{font-size:13px;line-height:1.6;color:var(--muted);margin-bottom:14px;}
+.soon{font-size:12px;font-weight:800;color:var(--accent);padding:13px;border:1px dashed var(--border);border-radius:11px;text-align:center;letter-spacing:.3px;}
+.lensrow{display:flex;gap:8px;overflow-x:auto;padding:4px 0 2px;margin:8px 0 4px;-webkit-overflow-scrolling:touch;}
+.lensrow::-webkit-scrollbar{display:none;}
+.lens{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:9px 15px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.lens.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+.scanNote{font-size:12px;line-height:1.55;color:var(--muted);margin:8px 2px 14px;}
+.scanRow{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:14px;margin-bottom:10px;cursor:pointer;}
+.scanTop{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.scanSym{font-size:17px;font-weight:800;}
+.scanV{font-size:11px;font-weight:800;padding:3px 9px;border-radius:7px;letter-spacing:.5px;}
+.scanName{font-size:12px;color:var(--muted);margin-top:2px;}
+.scanReason{font-size:13px;line-height:1.5;margin-top:9px;}
+.scanMeta{font-size:13px;font-weight:700;margin-top:9px;}
+.scanEmpty{font-size:13px;line-height:1.6;color:var(--muted);padding:16px;border:1px dashed var(--border);border-radius:12px;text-align:center;}
+.cmpInputs{display:flex;flex-direction:column;gap:9px;margin:10px 0 6px;}
+.cmpInp{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:13px 14px;font-size:15px;font-family:inherit;color:var(--text);}
+.cmpBtn{background:var(--accent);color:#fff;border:none;border-radius:11px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:.5px;}
+.cmpV{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px;margin:12px 0;}
+.cmpVh{font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin-bottom:7px;}
+.cmpVt{font-size:14px;line-height:1.6;}
+.cmpCard{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:15px;margin-bottom:11px;cursor:pointer;position:relative;}
+.cmpBest{border-color:var(--accent);border-width:2px;}
+.cmpFlag{position:absolute;top:-9px;left:14px;background:var(--accent);color:#fff;font-size:10px;font-weight:800;letter-spacing:.5px;padding:3px 9px;border-radius:7px;}
+.cmpTop{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.cmpSym{font-size:18px;font-weight:800;}
+.cmpName{font-size:12px;color:var(--muted);margin-top:2px;}
+.cmpGrid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:12px;}
+.cmpL{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);}
+.cmpVal{font-size:14px;font-weight:700;margin-top:2px;}
+.moversWrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.moversH{font-size:12px;font-weight:800;letter-spacing:.4px;margin-bottom:8px;}
+.moversH.up{color:var(--green);}
+.moversH.dn{color:var(--red);}
+.moverRow{display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:7px;cursor:pointer;font-size:13px;font-weight:700;gap:8px;}
+.moverSym{font-weight:800;}
+.moversEmpty{font-size:12px;color:var(--muted);padding:10px;}
+.alertRow{border-radius:12px;padding:14px;margin-bottom:9px;cursor:pointer;border:1px solid var(--border);background:var(--surface);border-left-width:4px;}
+.alertCaution{border-left-color:var(--red);}
+.alertPositive{border-left-color:var(--green);}
+.alertTop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.alertSym{font-size:16px;font-weight:800;}
+.alertTag{font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--muted);}
+.alertCaution .alertTag{color:var(--red);}
+.alertPositive .alertTag{color:var(--green);}
+.alertReason{font-size:13px;line-height:1.5;margin-top:7px;}
+.alertEmpty{font-size:13px;line-height:1.6;color:var(--muted);padding:14px;border:1px dashed var(--border);border-radius:11px;text-align:center;}
+.askInputs{display:flex;flex-direction:column;gap:9px;margin:10px 0 8px;}
+.askChips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;margin-bottom:6px;-webkit-overflow-scrolling:touch;}
+.askChips::-webkit-scrollbar{display:none;}
+.askChip{flex:0 0 auto;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:8px 13px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.askCard{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px;margin-top:6px;}
+.askQ2{font-size:13px;font-weight:800;color:var(--accent);margin-bottom:8px;}
+.askVerdict{display:inline-block;margin-bottom:10px;}
+.askA{font-size:14px;line-height:1.65;}
+@keyframes micpulse{0%,100%{opacity:1;}50%{opacity:.62;}}
+.saveRow{display:flex;gap:9px;}
+.saveRow .saveBtn{width:auto;flex:1;}
+.shareBtn{background:var(--s2);color:var(--accent);border:2px solid var(--accent);border-radius:11px;padding:12px 16px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.shareBtn:hover{background:#fff;}
+.toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(20px);background:#0f1419;color:#fff;padding:12px 18px;border-radius:11px;font-size:13px;font-weight:600;z-index:600;opacity:0;pointer-events:none;transition:opacity .25s ease, transform .25s ease;max-width:90%;text-align:center;}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+<div class="tkbar"><div class="tkwrap"><div class="tktrack" id="tktrack"><span class="tki"><span class="tsym">APEX Q</span><span class="tpx">Loading live market data...</span></span></div></div></div>
+<div class="hdr">
+  <div class="logo"><div class="lmark">&#9889;</div><div class="lname">Apex <span>Q</span></div></div>
+  <div class="hdr-right">
+    <div class="badge"><div class="dot"></div>LIVE INTEL ACTIVE</div>
+    <button id="acctBtn" class="acctBtn">Log In</button>
+  </div>
+</div>
+<div class="views">
+<div class="view active" id="view-home">
+<div class="mbar"><div class="mbari">
+  <div class="mi" data-sym="^GSPC"><div class="ml">S&amp;P 500</div><div class="mv ld" id="m0">--</div></div>
+  <div class="mi" data-sym="^IXIC"><div class="ml">NASDAQ</div><div class="mv ld" id="m1">--</div></div>
+  <div class="mi" data-sym="^DJI"><div class="ml">DOW JONES</div><div class="mv ld" id="m2">--</div></div>
+  <div class="mi" data-sym="^RUT"><div class="ml">RUSSELL 2000</div><div class="mv ld" id="m3">--</div></div>
+  <div class="mi" data-sym="^VIX"><div class="ml">VIX FEAR</div><div class="mv ld" id="m4">--</div></div>
+  <div class="mi" data-sym="GC=F"><div class="ml">GOLD FUTURES</div><div class="mv ld" id="m5">--</div></div>
+  <div class="mi" data-sym="CL=F"><div class="ml">OIL WTI</div><div class="mv ld" id="m6">--</div></div>
+  <div class="mi" data-sym="BTC-USD"><div class="ml">BITCOIN</div><div class="mv ld" id="m7">--</div></div>
+</div></div>
+<div class="swrap">
+  <div class="slbl">&#128269; Search any stock or company name</div>
+  <div class="srow">
+    <input class="sinp" id="si" type="text" placeholder="Type a company or ticker... Apple, Tesla, SpaceX, SOFI, AMD" autocomplete="off"/>
+    <div class="ac" id="ac"></div>
+    <button class="sbtn" id="analyzeBtn">ANALYZE</button>
+  </div>
+  <div class="qlabel" id="qlabel" style="display:none">Trending Today</div>
+  <div class="qrow" id="qrow"></div>
+</div>
+<div class="main">
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+  <div>
+    <div class="stitle">Full Intelligence Report</div>
+    <div class="loading" id="lb">Reading the market...</div>
+    <div id="rpt" class="rc">
+      <div class="shdr">
+        <div><div class="sn" id="sym">APEX Q</div><div class="sf" id="sfull">Search a stock above to begin</div><div class="ss" id="ssect"></div></div>
+        <div class="pb"><div class="sp" id="spx">--</div><div class="sc up" id="schg">--</div></div>
+      </div>
+      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button></div>
+      <div class="vb watch" id="vbox">
+        <div class="vtop">
+          <div class="vbdg watch" id="vbdg">&#9889; READY</div>
+          <div class="vsco" id="vsco">Market Intelligence Rating: --</div>
+        </div>
+        <div class="moatWrap" id="moatWrap" style="display:none"></div>
+        <div class="vconfidence" id="vconfidence" style="display:none"></div>
+        <div class="vconf" id="vconf">Search any stock or company name above. Apex Q reads the price, the valuation, the analyst calls, the trades made by members of Congress, and the moves made by company executives. Then it explains the why behind every signal in plain English. Tap any card to learn why it matters.</div>
+        <div class="vflags" id="vflags" style="display:none"></div>
+        <div class="vmean" id="vmean" style="display:none"></div>
+        <div class="wguide" id="wguide"></div>
+        <div class="vrlist" id="vrl"></div>
+      </div>
+      <div class="mets">
+        <div class="met"><div class="ml2">Current Price</div><div class="mv2 neu" id="mp">--</div></div>
+        <div class="met"><div class="ml2">Change Today</div><div class="mv2" id="mc">--</div></div>
+        <div class="met"><div class="ml2">Conviction</div><div class="mv2 neu" id="ms">--</div></div>
+        <div class="met"><div class="ml2">PE Ratio</div><div class="mv2" id="mpe">--</div></div>
+        <div class="met"><div class="ml2">Analyst Target</div><div class="mv2 pos" id="mt">--</div></div>
+        <div class="met"><div class="ml2">Market Cap</div><div class="mv2 neu" id="mm">--</div></div>
+      </div>
+      <div id="mtGauge" class="gaugeWrap"></div>
+      <div class="stitle">&#128269; Deep Fundamentals</div>
+      <div class="mets" id="deepFund"></div>
+      <div class="ic sectorCard" id="sectorCard" style="display:none"></div>
+      <div class="stitle">&#128181; Valuation Deep Dive</div>
+      <div class="mets" id="valGrid"></div>
+      <div class="stitle" id="gradeTitle" style="display:none">&#128202; Analyst Rating Changes</div>
+      <div id="grades" style="display:none"></div>
+      <div class="stitle">&#127963; Congressional Trading</div>
+      <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      <div class="stitle">&#128188; Insider Activity</div>
+      <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      <div class="stitle">&#128240; Live News</div>
+      <div id="news"><div class="ic"><div class="ih"><div class="it">News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      <div class="stitle">&#128218; Apex Q Classroom</div>
+      <div id="classroom"></div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="view" id="view-discover">
+<div class="discband">
+  <div class="disctitle">&#9889; Discover Overlooked Industries</div>
+  <div class="discsub">Most people only know the big names. The real gems hide in the industries nobody talks about. Tap any one to see what the engine likes right now, and learn why the space matters.</div>
+  <div class="discgroup">The 11 Market Sectors</div>
+  <div class="discchips">
+    <div class="discchip" data-theme="tech">&#128187; Technology</div>
+    <div class="discchip" data-theme="health">&#129658; Health Care</div>
+    <div class="discchip" data-theme="financials">&#127974; Financials</div>
+    <div class="discchip" data-theme="discretionary">&#128717;&#65039; Consumer Discretionary</div>
+    <div class="discchip" data-theme="comm">&#128225; Communication Services</div>
+    <div class="discchip" data-theme="industrials">&#127959;&#65039; Industrials</div>
+    <div class="discchip" data-theme="staples">&#128722; Consumer Staples</div>
+    <div class="discchip" data-theme="energy">&#128738; Energy</div>
+    <div class="discchip" data-theme="utilities">&#128161; Utilities</div>
+    <div class="discchip" data-theme="realestate">&#127970; Real Estate</div>
+    <div class="discchip" data-theme="materials">&#9935;&#65039; Materials</div>
+  </div>
+  <div class="discgroup">Sharp Niche Themes</div>
+  <div class="discchips">
+    <div class="discchip" data-theme="semi">&#128295; Semiconductor Gear</div>
+    <div class="discchip" data-theme="power">&#9889; Power &amp; Grid</div>
+    <div class="discchip" data-theme="nuclear">&#9762;&#65039; Nuclear &amp; Uranium</div>
+    <div class="discchip" data-theme="defense">&#128752;&#65039; Defense &amp; Drones</div>
+    <div class="discchip" data-theme="automation">&#129302; Automation &amp; Robotics</div>
+    <div class="discchip" data-theme="cyber">&#128272; Cybersecurity</div>
+  </div>
+  <div class="discResults" id="discResults" style="display:none"></div>
+</div>
+  <div class="vsec" id="discExtra">
+    <div class="vsec-h">Market movers today</div>
+    <div class="vsec-p">The biggest gainers and the biggest decliners across the whole market right now, including names you would never think to search. Tap any one for the full report.</div>
+    <div class="moversWrap">
+      <div class="moversCol"><div class="moversH up">Biggest gainers</div><div id="moversUp"></div></div>
+      <div class="moversCol"><div class="moversH dn">Biggest decliners</div><div id="moversDn"></div></div>
+    </div>
+  </div>
+</div>
+<div class="view" id="view-scans">
+  <div class="vhead">
+    <div class="vhead-t">Scans</div>
+    <div class="vhead-s">Point the engine at the whole market through plain lenses. Each one runs the same scoring you see in a full report. Tap a lens, then tap any name for the full breakdown.</div>
+  </div>
+  <div class="lensrow" id="lensrow">
+    <button class="lens active" data-lens="strong">Strong Today</button>
+    <button class="lens" data-lens="highs">Near Highs</button>
+    <button class="lens" data-lens="growth">Most Upside</button>
+    <button class="lens" data-lens="value">Value Leaning</button>
+    <button class="lens" data-lens="dividend">Dividend</button>
+  </div>
+  <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names, and an insiders buying lens, are coming as we expand the universe. Educational only, never advice.</div>
+  <div class="loading" id="scanLoad">Scanning the market...</div>
+  <div id="scanResults"></div>
+</div>
+<div class="view" id="view-compare">
+  <div class="vhead">
+    <div class="vhead-t">Compare</div>
+    <div class="vhead-s">Put up to three stocks side by side. The engine reads each one and tells you which looks strongest right now, and why, in plain English.</div>
+  </div>
+  <div class="cmpInputs">
+    <div class="acWrap"><input class="cmpInp" id="cmp0" type="text" placeholder="First ticker or company name" autocomplete="off"/><div class="acx" id="acCmp"></div></div>
+    <input class="cmpInp" id="cmp1" type="text" placeholder="Second ticker, like MSFT" autocomplete="off"/>
+    <input class="cmpInp" id="cmp2" type="text" placeholder="Third ticker, optional" autocomplete="off"/>
+    <button class="cmpBtn" id="cmpBtn">Compare</button>
+  </div>
+  <div class="askChips" id="peerChips" style="display:none"></div>
+  <div class="loading" id="cmpLoad">Reading each stock...</div>
+  <div id="cmpVerdict"></div>
+  <div id="cmpResults"></div>
+</div>
+<div class="view" id="view-watch">
+  <div class="vhead">
+    <div class="vhead-t">Saved and Alerts</div>
+    <div class="vhead-s">Your saved stocks, and the heads up when one of them moves. The watchlist that watches itself.</div>
+  </div>
+  <div class="vsec" id="alertsSec">
+    <div class="vsec-h">Alerts</div>
+    <div class="vsec-p">When a saved stock makes a notable move or the engine shifts on it, it shows up here so you do not miss it. A push to your phone is the next layer.</div>
+    <div id="alertsFeed"><div class="alertEmpty">Loading your alerts...</div></div>
+  </div>
+  <div class="stitle" id="watchTitle" style="display:none">&#11088; My Watchlist</div>
+    <div id="watchPanel" style="display:none"></div>
+    <div class="stitle">Live Signals</div>
+    <div id="panel">
+      <div class="sgempty" id="panelEmpty">Analyze any stock and it appears here with its real verdict and price. Every signal shown is live, never a placeholder.</div>
+    </div>
+</div>
+<div class="view" id="view-ask">
+  <div class="vhead">
+    <div class="vhead-t">Ask</div>
+    <div class="vhead-s">Type a question. Ask about one stock, or name a few and ask how they compare. The answer comes from the same live numbers the engine uses, in plain language.</div>
+  </div>
+  <div class="askInputs">
+    <div class="acWrap"><input class="cmpInp" id="askSym" type="text" placeholder="Ticker or company name, optional" autocomplete="off"/><div class="acx" id="acAsk"></div></div>
+    <input class="cmpInp" id="askQ" type="text" placeholder="Your question, like why is this a watch" autocomplete="off"/>
+    <button class="cmpBtn" id="askBtn">Ask</button>
+  </div>
+  <div class="askChips" id="askChips">
+    <button class="askChip" data-q="Why is this a watch?">Why this verdict</button>
+    <button class="askChip" data-q="What would change the call?">What would change it</button>
+    <button class="askChip" data-q="Explain the insider selling">Insider activity</button>
+    <button class="askChip" data-q="Is it expensive?">Valuation</button>
+  </div>
+  <div class="loading" id="askLoad">Thinking it through...</div>
+  <div id="askAnswer"></div>
+</div>
+</div>
+<div class="foot">
+  APEX Q INTELLIGENCE TERMINAL &nbsp;|&nbsp; ANALYST AGENT &bull; REGULATORY AGENT &bull; INSIDER AGENT &bull; NEWS AGENT &bull; SYNTHESIS ENGINE<br><br>
+  The insights provided are generated by our analytical engine for educational and illustrative purposes only.<br>
+  They are not intended as financial, investment, or legal advice. Every market participant is unique.<br>
+  We encourage you to perform your own due diligence or consult with a qualified professional before making any financial decisions.
+</div>
+<div class="authOverlay" id="authOverlay">
+  <div class="authBox">
+    <button class="authClose" id="authClose">&times;</button>
+    <div class="authLogo"><div class="lmark">&#9889;</div><div class="lname">Apex <span>Q</span></div></div>
+    <div class="authWelcome" id="authWelcome">Create your free account to save stocks and get alerts.</div>
+    <div class="authTabs">
+      <button class="authTab active" id="tabLogin">Log In</button>
+      <button class="authTab" id="tabSignup">Sign Up</button>
+    </div>
+    <div class="authErr" id="authErr" style="display:none"></div>
+    <input class="authInp" id="authUser" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <input class="authInp" id="authPass" type="password" placeholder="Password" autocomplete="current-password">
+    <div class="authHint" id="authHint"></div>
+    <button class="authSubmit" id="authSubmit">Log In</button>
+  </div>
+</div>
+<button id="installBtn" class="installBtn">&#9889; Install Apex Q</button>
+<div id="toast" class="toast"></div>
+<nav class="tabbar" id="tabbar">
+  <button class="tab active" data-view="home"><span class="tabi">&#128269;</span><span class="tabt">Home</span></button>
+  <button class="tab" data-view="discover"><span class="tabi">&#129517;</span><span class="tabt">Discover</span></button>
+  <button class="tab" data-view="scans"><span class="tabi">&#128225;</span><span class="tabt">Scans</span></button>
+  <button class="tab" data-view="compare"><span class="tabi">&#9878;&#65039;</span><span class="tabt">Compare</span></button>
+  <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Saved</span></button>
+  <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
+</nav>
+<script>
+var API = window.location.origin;
+var TKS = ["AAPL","MSFT","NVDA","AMD","TSLA","AMZN","GOOGL","META","SOFI","SPCX","SCHD","JPM","BAC","NFLX","BTC-USD"];
+var MKT = [
+  {s:"^GSPC",id:"m0"},{s:"^IXIC",id:"m1"},{s:"^DJI",id:"m2"},{s:"^RUT",id:"m3"},
+  {s:"^VIX",id:"m4"},{s:"GC=F",id:"m5"},{s:"CL=F",id:"m6"},{s:"BTC-USD",id:"m7"}
+];
 
-app = Flask(__name__)
-CORS(app)
+function esc(s){
+  if(s===null||s===undefined) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
 
-FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
-QUIVER_KEY = os.environ.get("QUIVER_KEY", "")
-GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
-DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY") or os.environ.get("DeepSeek") or ""
-FMP_KEY = os.environ.get("FMP_KEY", "")
-FMP_BASE = "https://financialmodelingprep.com"
+var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtMoney(n){
+  n = Number(n) || 0;
+  if(n >= 1e9) return "$" + (n/1e9).toFixed(1) + "B";
+  if(n >= 1e6) return "$" + (n/1e6).toFixed(1) + "M";
+  if(n >= 1e3) return "$" + (n/1e3).toFixed(0) + "K";
+  return "$" + n.toFixed(0);
+}
+function usDate(s){
+  if(!s) return "";
+  s = String(s).trim();
+  var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(iso){
+    var mo = parseInt(iso[2],10), d = parseInt(iso[3],10);
+    if(mo>=1 && mo<=12) return MONTHS[mo-1] + " " + d + ", " + iso[1];
+  }
+  var parts = s.split(/[\/\-]/);
+  if(parts.length===3 && parts[2].length===4){
+    var a = parseInt(parts[0],10), b = parseInt(parts[1],10), y = parts[2];
+    if(a>12 && b>=1 && b<=12) return MONTHS[b-1] + " " + a + ", " + y;
+    if(a>=1 && a<=12) return MONTHS[a-1] + " " + b + ", " + y;
+  }
+  return s;
+}
 
+function fmt(n){
+  if(!n || n==="N/A") return "N/A";
+  var x = parseFloat(n);
+  if(isNaN(x)) return "N/A";
+  if(x>=1e12) return "$"+(x/1e12).toFixed(2)+"T";
+  if(x>=1e9) return "$"+(x/1e9).toFixed(2)+"B";
+  if(x>=1e6) return "$"+(x/1e6).toFixed(2)+"M";
+  return "$"+x.toLocaleString();
+}
 
-def fmp_get(path):
-    # Safe FMP call. Reads the key from the environment, never raises, and returns None on
-    # any failure so the main report is never affected if FMP is missing or a plan limits it.
-    if not FMP_KEY:
-        return None
-    try:
-        sep = "&" if "?" in path else "?"
-        url = FMP_BASE + path + sep + "apikey=" + FMP_KEY
-        r = requests.get(url, timeout=8)
-        if r.status_code == 200:
-            return r.json()
-    except Exception as e:
-        logger.error("fmp_get error %s: %s" % (path, e))
-    return None
+function buildCard(r, idx, isLive){
+  var bid = "vb"+idx;
+  var body = "";
+  if(r.why){ body += "<div class=\"vrs\"><div class=\"vrst\">&#10067; Why This Matters</div><div class=\"vrstxt\">"+r.why+"</div></div>"; }
+  if(r.watch){ body += "<div class=\"vrs\"><div class=\"vrst\">&#128064; What To Watch For</div><div class=\"vrstxt\">"+r.watch+"</div></div>"; }
+  if(r.lesson){ body += "<div class=\"vlesson\"><div class=\"vlessont\">&#127891; The Lesson</div><div class=\"vlessontxt\">"+r.lesson+"</div></div>"; }
+  var cls = isLive ? "vr live" : "vr";
+  var head = "<div class=\"vr-hdr\" data-bid=\""+bid+"\"><span class=\"vi\">"+r.icon+"</span><div class=\"vrm\"><span class=\"vlbl\">"+r.label+"</span><span class=\"vshort\">"+(r.short||"")+"</span></div><span class=\"vbtn\" id=\"b"+bid+"\">&#9660; LEARN WHY</span></div>";
+  return "<div class=\""+cls+"\">"+head+"<div class=\"vr-body\" id=\""+bid+"\">"+body+"</div></div>";
+}
 
-CACHE = {}
-CACHE_TTL = 60 * 60 * 4
+function toggleCard(bid){
+  var body = document.getElementById(bid);
+  var btn = document.getElementById("b"+bid);
+  if(!body || !btn) return;
+  var open = body.classList.toggle("open");
+  btn.innerHTML = open ? "&#9650; CLOSE" : "&#9660; LEARN WHY";
+}
 
-def get_cache(key):
-    if key in CACHE:
-        data, ts = CACHE[key]
-        if time.time() - ts < CACHE_TTL:
-            return data
-    return None
+function buildReasons(d){
+  var reasons = [];
+  var chg = d.change_pct || 0;
+  var rec = d.recommendation || "HOLD";
+  var tgt = d.analyst_target;
+  var price = d.price || 0;
+  var pe = d.pe_ratio;
+  var beta = d.beta;
+  var name = esc(d.name || d.symbol);
 
-def set_cache(key, data):
-    CACHE[key] = (data, time.time())
+  if(chg > 3){
+    reasons.push({icon:"&#128200;", label:"Strong Price Momentum: +"+chg+"%", short:"Up "+chg+"% today. Heavy buying pressure.",
+      why:name+" moved up "+chg+" percent in a single trading day. A move this sharp means buyers are strongly outnumbering sellers. Large institutional investors tend to drive moves of this size, and they do not buy in size without a reason. Think of it like a store with a line around the block. Strong demand is visible and real.",
+      watch:"Check whether the trading volume today is higher than the average volume. A big price move on heavy volume is far more meaningful than the same move on light volume.",
+      lesson:"Price momentum is the speed and direction a stock is moving. Strong upward momentum on heavy volume is one of the earliest signals that something real is happening."});
+  } else if(chg > 1){
+    reasons.push({icon:"&#128202;", label:"Positive Price Action: +"+chg+"%", short:"Up "+chg+"% today. Buyers in control.",
+      why:name+" is up "+chg+" percent today. Steady gains like this show buyers consistently winning the day without a panic spike. A calm steady climb is often healthier than an explosive jump because it tends to last longer.",
+      watch:"Look for the trend to continue over two or three days in a row. A stock that climbs steadily is stronger than one that spikes once and fades.",
+      lesson:"Steady accumulation over several days shows real ongoing demand rather than a single burst of excitement."});
+  } else if(chg > 0){
+    reasons.push({icon:"&#10145;&#65039;", label:"Slight Upward Drift: +"+chg+"%", short:"Up "+chg+"% today. Barely moving.",
+      why:name+" barely moved today, only "+chg+" percent. That means buyers and sellers are almost evenly matched and the market has no strong opinion right now. This is not bad, but it is not a green light either.",
+      watch:"Wait for a clear catalyst such as an earnings report, an analyst upgrade, or insider buying to push the stock in a clear direction.",
+      lesson:"When a stock barely moves the market is undecided. Undecided stocks are risky because a single piece of news can swing them either way."});
+  } else if(chg < -5){
+    reasons.push({icon:"&#128201;", label:"Heavy Selling Pressure: "+chg+"%", short:"Down "+Math.abs(chg)+"% today. Heavy selling.",
+      why:name+" dropped "+Math.abs(chg)+" percent in one day. A drop this size means something spooked the market. It could be a weak earnings report, bad news, or a large investor heading for the exit. The risk of further decline is elevated until the reason is understood.",
+      watch:"Find out why it dropped before you do anything. Read the news section below. A drop caused by one bad quarter is very different from a drop caused by broad market fear.",
+      lesson:"Large single day drops can be a buying opportunity or the start of a longer fall. Knowing the reason behind the drop is always the first step."});
+  } else if(chg < -2){
+    reasons.push({icon:"&#128201;", label:"Significant Decline: "+chg+"%", short:"Down "+Math.abs(chg)+"% today. Sellers winning.",
+      why:name+" is down "+Math.abs(chg)+" percent today. Sellers are outnumbering buyers. This may be a normal pullback after a run, or it may be the start of a real change in direction. On its own it is a caution sign.",
+      watch:"Check whether the stock is still holding above its recent lows. If it breaks below those lows the selling can speed up.",
+      lesson:"Not every pullback is a crisis. Healthy stocks pull back all the time. The real question is whether the underlying business is still strong."});
+  } else {
+    reasons.push({icon:"&#10145;&#65039;", label:"Minor Pullback: "+chg+"%", short:"Down "+Math.abs(chg)+"% today. Small dip.",
+      why:name+" slipped "+Math.abs(chg)+" percent today. A small move like this is often just routine profit taking after a recent climb. It is not alarming by itself, though it adds a small note of caution.",
+      watch:"If the stock was climbing before this dip it is probably just catching its breath. If it was already falling this adds to the downward trend.",
+      lesson:"Small daily declines are completely normal. Every stock rises and falls daily. What matters is the trend over weeks, not one day."});
+  }
 
+  if(rec === "BUY" || rec === "STRONG_BUY"){
+    reasons.push({icon:"&#9989;", label:"Wall Street Rating: "+rec.replace("_"," "), short:"Professional analysts rate this a Buy.",
+      why:"Analysts at major banks spend months studying "+name+". They read every financial report, they talk to the management team, and they compare the company to every competitor. When the group view is Buy, these professionals are putting their reputation behind the idea that the stock should rise. That is why an adviser target and rating carry weight.",
+      watch:"Look at the analyst price target below. A wide gap between the current price and the target tells you how much room to grow the professionals believe is left.",
+      lesson:"An adviser rating represents hundreds of hours of professional research. A Buy from several independent analysts at once is a signal worth respecting."});
+  } else if(rec === "SELL" || rec === "STRONG_SELL"){
+    reasons.push({icon:"&#9940;", label:"Wall Street Rating: "+rec.replace("_"," "), short:"Professional analysts are negative here.",
+      why:"When the professionals who study "+name+" full time put out a Sell rating it is a serious warning. Their work points to the stock falling from here. This is not one person guessing. It is the shared view of several research teams who know the company well.",
+      watch:"Read the news section to understand what is driving the negative view. Slowing growth, heavy debt, rising competition, or management trouble are common causes.",
+      lesson:"Do not fight the research. When the people who know a company best say sell, that view deserves real respect even if you like the product."});
+  } else {
+    reasons.push({icon:"&#9888;&#65039;", label:"Wall Street Rating: Hold", short:"Analysts are waiting and watching.",
+      why:"A Hold rating means analysts do not see a strong reason to buy or sell "+name+" right now. The stock may be fairly priced, or the analysts may be waiting for the next earnings report before they commit to a stronger view. The adviser view matters because it tells you where the professional money is leaning, and right now it is neutral.",
+      watch:"A Hold can flip to a Buy fast after a strong earnings beat or good news. Watch for the next earnings date as a possible turning point.",
+      lesson:"Hold does not mean nothing is happening. It usually means the professionals are waiting for more information. That is often the quiet before a real move."});
+  }
 
-# CHUNK: send the bare domain to www, a backup in case the Porkbun forward misses
-@app.before_request
-def force_www():
-    host = (request.host or "").split(":")[0].lower()
-    if host == "apexq.io":
-        return redirect(request.url.replace("://apexq.io", "://www.apexq.io", 1), code=301)
-
-
-# CHUNK: stamp every JSON response with data_timestamp if it does not already carry one.
-# Cached endpoints embed their own fetch time, which is preserved here, so the frontend's
-# "Updated X ago" reflects when the data was actually pulled, not when it was served.
-@app.after_request
-def add_data_timestamp(response):
-    try:
-        ct = response.content_type or ""
-        if ct.startswith("application/json"):
-            payload = response.get_json(silent=True)
-            if isinstance(payload, dict) and "data_timestamp" not in payload:
-                payload["data_timestamp"] = int(time.time())
-                response.set_data(json.dumps(payload))
-    except Exception as e:
-        logger.error("data_timestamp stamp error: %s" % e)
-    return response
-
-
-# ---------- Database and accounts ----------
-import secrets as _secrets
-try:
-    import psycopg2
-except Exception as _e:
-    psycopg2 = None
-    logger.error("psycopg2 not available: %s" % _e)
-from werkzeug.security import generate_password_hash, check_password_hash
-
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
-
-def get_db():
-    if not DATABASE_URL or psycopg2 is None:
-        return None
-    return psycopg2.connect(DATABASE_URL)
-
-
-def ensure_db():
-    conn = get_db()
-    if conn is None:
-        logger.error("ensure_db: no database connection")
-        return
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "CREATE TABLE IF NOT EXISTS users ("
-            "id SERIAL PRIMARY KEY,"
-            "username TEXT UNIQUE NOT NULL,"
-            "password_hash TEXT NOT NULL,"
-            "created_at TIMESTAMP DEFAULT NOW())"
-        )
-        cur.execute(
-            "CREATE TABLE IF NOT EXISTS app_settings ("
-            "key TEXT PRIMARY KEY,"
-            "value TEXT NOT NULL)"
-        )
-        cur.execute(
-            "CREATE TABLE IF NOT EXISTS watchlist ("
-            "id SERIAL PRIMARY KEY,"
-            "user_id INTEGER NOT NULL,"
-            "symbol TEXT NOT NULL,"
-            "name TEXT,"
-            "added_at TIMESTAMP DEFAULT NOW(),"
-            "UNIQUE (user_id, symbol))"
-        )
-        conn.commit()
-        cur.close()
-        logger.info("ensure_db: tables ready")
-    except Exception as e:
-        logger.error("ensure_db error: %s" % e)
-    finally:
-        conn.close()
-
-
-def get_secret_key():
-    env_secret = os.environ.get("SECRET_KEY", "")
-    if env_secret:
-        return env_secret
-    conn = get_db()
-    if conn is None:
-        return "apexq-temporary-dev-secret"
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM app_settings WHERE key = 'secret_key'")
-        row = cur.fetchone()
-        if row:
-            cur.close()
-            return row[0]
-        new_secret = _secrets.token_hex(32)
-        cur.execute(
-            "INSERT INTO app_settings (key, value) VALUES ('secret_key', %s) "
-            "ON CONFLICT (key) DO NOTHING",
-            (new_secret,),
-        )
-        conn.commit()
-        cur.execute("SELECT value FROM app_settings WHERE key = 'secret_key'")
-        row = cur.fetchone()
-        cur.close()
-        return row[0] if row else new_secret
-    except Exception as e:
-        logger.error("get_secret_key error: %s" % e)
-        return "apexq-temporary-dev-secret"
-    finally:
-        conn.close()
-
-
-try:
-    ensure_db()
-except Exception as _e:
-    logger.error("startup ensure_db failed: %s" % _e)
-
-app.secret_key = get_secret_key()
-app.config.update(
-    SESSION_COOKIE_SECURE=True,
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
-)
-
-
-def current_user():
-    uid = session.get("user_id")
-    uname = session.get("username")
-    if uid and uname:
-        return {"id": uid, "username": uname}
-    return None
-
-def resolve_ticker(query):
-    query = query.strip()
-    try:
-        s = yf.Search(query, max_results=1)
-        if s.quotes:
-            return s.quotes[0].get("symbol", query.upper())
-    except:
-        pass
-    return query.upper()
-
-def fmt_price(val):
-    try:
-        return round(float(val), 2)
-    except:
-        return val
-
-def score_to_conviction(score):
-    if score >= 8:
-        return "Very High"
-    elif score >= 5:
-        return "High"
-    elif score >= 3:
-        return "Moderate"
-    elif score >= 1:
-        return "Low"
-    else:
-        return "Very Low"
-
-
-@app.route("/")
-def home():
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
-    html = open(path, encoding="utf-8").read()
-    return Response(html, mimetype="text/html")
-
-
-def _serve_file(filename, mimetype, binary=False):
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-    if binary:
-        return Response(open(path, "rb").read(), mimetype=mimetype)
-    return Response(open(path, encoding="utf-8").read(), mimetype=mimetype)
-
-
-@app.route("/manifest.json")
-def manifest():
-    return _serve_file("manifest.json", "application/json")
-
-
-@app.route("/sw.js")
-def service_worker():
-    return _serve_file("sw.js", "application/javascript")
-
-
-@app.route("/icon-192.png")
-def icon_192():
-    return _serve_file("icon-192.png", "image/png", binary=True)
-
-
-@app.route("/icon-512.png")
-def icon_512():
-    return _serve_file("icon-512.png", "image/png", binary=True)
-
-
-@app.route("/apple-touch-icon.png")
-def apple_touch_icon():
-    return _serve_file("apple-touch-icon.png", "image/png", binary=True)
-
-
-@app.route("/auth/me")
-def auth_me():
-    return jsonify({"user": current_user()})
-
-
-@app.route("/auth/signup", methods=["POST"])
-def auth_signup():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    password = data.get("password") or ""
-    if len(username) < 3 or len(username) > 30:
-        return jsonify({"error": "Username must be 3 to 30 characters."}), 400
-    if not all(c.isalnum() or c in "_." for c in username):
-        return jsonify({"error": "Username can use letters, numbers, underscore, and period only."}), 400
-    if len(password) < 8:
-        return jsonify({"error": "Password must be at least 8 characters."}), 400
-    conn = get_db()
-    if conn is None:
-        return jsonify({"error": "Accounts are not available right now."}), 500
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
-        if cur.fetchone():
-            cur.close()
-            return jsonify({"error": "That username is taken."}), 409
-        pw_hash = generate_password_hash(password)
-        cur.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id", (username, pw_hash))
-        uid = cur.fetchone()[0]
-        conn.commit()
-        cur.close()
-        session.permanent = True
-        session["user_id"] = uid
-        session["username"] = username
-        return jsonify({"ok": True, "user": {"id": uid, "username": username}})
-    except Exception as e:
-        logger.error("signup error: %s" % e)
-        return jsonify({"error": "Could not create account. Try again."}), 500
-    finally:
-        conn.close()
-
-
-@app.route("/auth/login", methods=["POST"])
-def auth_login():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    password = data.get("password") or ""
-    if not username or not password:
-        return jsonify({"error": "Enter your username and password."}), 400
-    conn = get_db()
-    if conn is None:
-        return jsonify({"error": "Accounts are not available right now."}), 500
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT id, username, password_hash FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
-        row = cur.fetchone()
-        cur.close()
-        if not row or not check_password_hash(row[2], password):
-            return jsonify({"error": "Wrong username or password."}), 401
-        session.permanent = True
-        session["user_id"] = row[0]
-        session["username"] = row[1]
-        return jsonify({"ok": True, "user": {"id": row[0], "username": row[1]}})
-    except Exception as e:
-        logger.error("login error: %s" % e)
-        return jsonify({"error": "Could not log in. Try again."}), 500
-    finally:
-        conn.close()
-
-
-@app.route("/auth/logout", methods=["POST"])
-def auth_logout():
-    session.clear()
-    return jsonify({"ok": True})
-
-
-@app.route("/watchlist", methods=["GET"])
-def watchlist_list():
-    u = current_user()
-    if not u:
-        return jsonify({"error": "not_logged_in"}), 401
-    conn = get_db()
-    if conn is None:
-        return jsonify({"error": "Database not available."}), 500
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT symbol, name FROM watchlist WHERE user_id = %s ORDER BY added_at DESC", (u["id"],))
-        rows = cur.fetchall()
-        cur.close()
-        return jsonify({"items": [{"symbol": r[0], "name": r[1] or r[0]} for r in rows]})
-    except Exception as e:
-        logger.error("watchlist list error: %s" % e)
-        return jsonify({"error": "Could not load your watchlist."}), 500
-    finally:
-        conn.close()
-
-
-@app.route("/watchlist/add", methods=["POST"])
-def watchlist_add():
-    u = current_user()
-    if not u:
-        return jsonify({"error": "not_logged_in"}), 401
-    data = request.get_json(silent=True) or {}
-    symbol = (data.get("symbol") or "").strip().upper()
-    name = (data.get("name") or "").strip()
-    if not symbol or len(symbol) > 15:
-        return jsonify({"error": "Invalid symbol."}), 400
-    conn = get_db()
-    if conn is None:
-        return jsonify({"error": "Database not available."}), 500
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO watchlist (user_id, symbol, name) VALUES (%s, %s, %s) "
-            "ON CONFLICT (user_id, symbol) DO UPDATE SET name = EXCLUDED.name",
-            (u["id"], symbol, name),
-        )
-        conn.commit()
-        cur.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        logger.error("watchlist add error: %s" % e)
-        return jsonify({"error": "Could not save to your watchlist."}), 500
-    finally:
-        conn.close()
-
-
-@app.route("/watchlist/remove", methods=["POST"])
-def watchlist_remove():
-    u = current_user()
-    if not u:
-        return jsonify({"error": "not_logged_in"}), 401
-    data = request.get_json(silent=True) or {}
-    symbol = (data.get("symbol") or "").strip().upper()
-    if not symbol:
-        return jsonify({"error": "Invalid symbol."}), 400
-    conn = get_db()
-    if conn is None:
-        return jsonify({"error": "Database not available."}), 500
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM watchlist WHERE user_id = %s AND symbol = %s", (u["id"], symbol))
-        conn.commit()
-        cur.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        logger.error("watchlist remove error: %s" % e)
-        return jsonify({"error": "Could not remove from your watchlist."}), 500
-    finally:
-        conn.close()
-
-
-@app.route("/search")
-def search_ticker():
-    q = request.args.get("q", "").strip()
-    if not q:
-        return jsonify({"error": "No query"}), 400
-    try:
-        s = yf.Search(q, max_results=6)
-        return jsonify({"results": [{"symbol": x.get("symbol"), "name": x.get("longname") or x.get("shortname")} for x in s.quotes if x.get("symbol")]})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-def clean_text(s):
-    # Strips HTML, decodes entities, normalizes odd characters, and rejoins broken
-    # ordinals like "16 th" so news text reads clean instead of garbled.
-    if not s:
-        return ""
-    s = str(s)
-    s = html.unescape(s)
-    s = re.sub(r"<[^>]+>", " ", s)
-    s = html.unescape(s)
-    repl = {
-        "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
-        "\u2013": " ", "\u2014": " ", "\u2026": "...", "\u00a0": " ",
-        "\u00ad": "", "\ufffd": "", "\u2022": " ", "\u200b": "",
+  if(tgt && price && tgt !== "N/A"){
+    var up = Math.round(((parseFloat(tgt) - price) / price) * 100);
+    if(up > 15){
+      reasons.push({icon:"&#127919;", label:up+"% Upside to Analyst Target", short:"Analysts see "+up+"% more room to grow.",
+        why:"The average analyst target for "+name+" is "+fmt(tgt)+" while the stock trades at "+fmt(price)+" today. That "+up+" percent gap is the upside the professionals believe is still available based on their models of future earnings. A target call matters because it is the analyst best estimate of what the company is truly worth.",
+        watch:"Targets change after earnings. A strong beat usually pushes targets higher. A miss usually pulls them down.",
+        lesson:"A large gap between the current price and the analyst target suggests the market has not yet priced in what the professionals see. That gap is opportunity."});
+    } else if(up > 0){
+      reasons.push({icon:"&#127919;", label:up+"% Upside to Target", short:"Modest "+up+"% upside to target.",
+        why:"Analysts see "+fmt(tgt)+" as fair value for "+name+" versus the current "+fmt(price)+". That is "+up+" percent of upside. It is positive but it is not a wide gap, which means most of the easy gains may already be priced in.",
+        watch:"The closer a stock gets to its target the less room is left. From here you need analysts to raise their target to keep the upside alive.",
+        lesson:"Targets narrow as a stock rises. The best entries come when a stock sits far below its target with strong fundamentals behind it."});
+    } else if(up < -5){
+      reasons.push({icon:"&#127919;", label:"Trading "+Math.abs(up)+"% Above Target", short:"Already priced above fair value.",
+        why:name+" at "+fmt(price)+" is trading "+Math.abs(up)+" percent above the analyst target of "+fmt(tgt)+". The stock has run ahead of what the professionals think it is worth. That is a valuation warning, because price tends to drift back toward fair value over time.",
+        watch:"Stocks above their target need strong earnings just to hold the line. Any disappointment can bring a sharp drop.",
+        lesson:"When a stock trades well above its target it is priced for perfection. Any stumble tends to be punished quickly."});
+    } else {
+      reasons.push({icon:"&#127919;", label:"Near Analyst Target", short:"Trading near fair value.",
+        why:name+" at "+fmt(price)+" sits right near the analyst target of "+fmt(tgt)+". The professionals see it as fairly priced right now, neither cheap nor expensive.",
+        watch:"At fair value the next move depends on whether the company can grow faster than expected. The next earnings report becomes the key test.",
+        lesson:"Fair value is a starting line, not a finish line. Companies that keep beating expectations see their fair value rise over time."});
     }
-    for k, v in repl.items():
-        s = s.replace(k, v)
-    s = re.sub(r"(\d)\s+(st|nd|rd|th)\b", r"\1\2", s, flags=re.IGNORECASE)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
-def trim_words(s, limit=170):
-    # Trims to a clean word boundary so summaries never cut off mid word.
-    if not s:
-        return ""
-    if len(s) <= limit:
-        return s
-    cut = s[:limit]
-    sp = cut.rfind(" ")
-    if sp > 50:
-        cut = cut[:sp]
-    return cut.rstrip(" ,.;:") + "..."
-
-
-def flip_name(s):
-    # Insider feeds list names last name first (RISHEL JEREMY DYLAN). Flip to natural
-    # first name first and clean the capitalization (Jeremy Dylan Rishel).
-    if not s:
-        return ""
-    s = str(s).strip()
-    if "," in s:
-        parts = [p.strip() for p in s.split(",")]
-        if len(parts) == 2:
-            s = parts[1] + " " + parts[0]
-    else:
-        toks = s.split()
-        if len(toks) >= 2:
-            s = " ".join(toks[1:] + [toks[0]])
-    return " ".join(w.capitalize() for w in s.split())
-
-
-INSIDER_CLEVEL = ["CHIEF", "CEO", "CFO", "COO", "CTO", "PRESIDENT", "CHAIR", "DIRECTOR", "OFFICER", "FOUNDER", "10%", "VICE PRESIDENT", "EVP", "SVP"]
-
-
-def classify_insider_kind(text):
-    # Shared with the full report so the sector list and the report can never disagree.
-    t = str(text).lower()
-    if any(w in t for w in ["award", "grant", "gift", "bonus"]):
-        return "grant"
-    if any(w in t for w in ["exercise", "conversion", "convert", "option", "derivative"]):
-        return "option"
-    if any(w in t for w in ["tax", "withh", "surrender", "forfeit"]):
-        return "tax"
-    if any(w in t for w in ["sale", "sold", "sell"]):
-        return "sell"
-    if any(w in t for w in ["purchase", "bought"]):
-        return "buy"
-    if "dispos" in t:
-        return "sell"
-    if "acqui" in t:
-        return "buy"
-    return "other"
-
-
-def is_strong_uptrend(info, cur):
-    # A stock up big over the past year. Used to read insider selling in context: trimming after
-    # a big run is profit taking, not a warning. Prefer the trailing one year return; fall back
-    # to price well above the 200 day average when the yearly figure is missing.
-    try:
-        yr = info.get("52WeekChange")
-        if isinstance(yr, (int, float)):
-            return yr >= 0.40
-        dma200 = info.get("twoHundredDayAverage")
-        if isinstance(dma200, (int, float)) and dma200 > 0 and isinstance(cur, (int, float)):
-            return cur >= dma200 * 1.20
-    except Exception:
-        pass
-    return False
-
-
-def insider_selling_cap(ticker_obj, cur_price, strong_uptrend=False):
-    # Returns True when a cluster of executives is selling, the same rule the full report uses
-    # to refuse an APPROVE. In a strong uptrend that selling is profit taking, not a warning,
-    # so it never caps. Used by the sector list so it never contradicts the full report.
-    if strong_uptrend:
-        return False
-    try:
-        it = ticker_obj.insider_transactions
-        if it is None or it.empty:
-            return False
-        clevel_sells = 0
-        exec_value = 0
-        price = cur_price if isinstance(cur_price, (int, float)) and cur_price > 0 else 0
-        for _, rr in it.head(12).iterrows():
-            row = rr.to_dict()
-            pos = row.get("Position") or row.get("Title") or row.get("Relation") or ""
-            desc = row.get("Transaction") or row.get("Text") or ""
-            basis = str(desc) if str(desc).strip() else " ".join(str(v) for v in row.values())
-            kind = classify_insider_kind(basis)
-            is_cl = any(c in str(pos).upper() for c in INSIDER_CLEVEL)
-            if is_cl and kind == "sell":
-                clevel_sells += 1
-                try:
-                    exec_value += int(float(row.get("Shares") or 0)) * price
-                except Exception:
-                    pass
-        return clevel_sells >= 3 or exec_value >= 20000000
-    except Exception:
-        return False
-
-
-def run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider):
-    # The referee checks every number for sanity before it reaches the screen,
-    # raises plain English flags for anything stale, missing, or unusual, and
-    # scores how much of the picture is solid so the report can state its confidence honestly.
-    flags = []
-
-    def warn(t):
-        flags.append({"level": "warn", "text": t})
-
-    def note(t):
-        flags.append({"level": "info", "text": t})
-
-    price_ok = isinstance(cur, (int, float)) and cur > 0
-    if not price_ok:
-        warn("The live price did not come back cleanly, so this read may be unreliable. Check the price on another source before trusting it.")
-
-    target_ok = (tgt != "N/A" and tgt is not None)
-    if target_ok and price_ok:
-        try:
-            ratio = float(tgt) / cur
-            if ratio >= 1.40 or ratio < 0.34:
-                warn("The analyst price target sits unusually far from the current price, which can mean it is stale or an outlier. Treat the upside it implies with caution rather than at face value.")
-        except Exception:
-            pass
-
-    pe_ok = (pe != "N/A" and pe is not None)
-    if pe_ok:
-        try:
-            pn = float(pe)
-            if pn < 0:
-                warn("This company has no positive earnings right now, so the PE ratio is not meaningful. That is common for fast growing or turnaround companies, but it adds risk.")
-            elif pn > 200:
-                warn("The PE ratio is extremely high, which means either very high growth expectations or unusually low earnings. Either way the valuation is stretched.")
-        except Exception:
-            pe_ok = False
-
-    beta_ok = (beta != "N/A" and beta is not None)
-    if beta_ok:
-        try:
-            b = float(beta)
-            if b < -1 or b > 4:
-                warn("The volatility reading is unusual, which can happen with newer or thinly traded stocks. The risk numbers here may be less reliable.")
-        except Exception:
-            beta_ok = False
-
-    vol_ok = isinstance(volume, (int, float)) and volume > 0
-    if vol_ok and volume < 100000:
-        warn("This stock trades on low daily volume. Thinly traded stocks can swing hard and can be harder to buy or sell at a fair price.")
-
-    mc_ok = isinstance(market_cap, (int, float))
-    if mc_ok and market_cap < 300000000:
-        warn("This is a very small company. Small companies can grow fast but are more volatile and carry higher risk.")
-
-    news_ok = bool(news)
-    if not news_ok:
-        note("No recent company news was found, so this read leans on the numbers more than the story.")
-
-    smart_ok = bool(congressional) or bool(insider)
-    hist_ok = hist is not None and len(hist) >= 2
-
-    data_points = sum(1 for x in [price_ok, hist_ok, pe_ok, target_ok, beta_ok, mc_ok, news_ok, smart_ok] if x)
-    warns = len([f for f in flags if f["level"] == "warn"])
-
-    if (not price_ok) or warns >= 2 or data_points <= 3:
-        confidence = "Low"
-    elif warns >= 1 or data_points <= 5:
-        confidence = "Medium"
-    else:
-        confidence = "High"
-
-    return confidence, flags
-
-
-@app.route("/analyze")
-def analyze():
-    query = request.args.get("symbol", "").strip()
-    if not query:
-        return jsonify({"error": "No symbol provided"}), 400
-    symbol = resolve_ticker(query)
-    logger.info(f"ANALYZE: {query} -> {symbol}")
-    result = compute_full_report(symbol)
-    if result is None:
-        return jsonify({"error": f"Could not pull data for {symbol}."}), 404
-    return jsonify(result)
-
-
-# CHUNK: pre-market and post-market move, computed from the live quote against the regular close
-def extended_hours(info, cur):
-    try:
-        state = (info.get("marketState") or "").upper()
-        if state in ("PRE", "PREPRE"):
-            price = info.get("preMarketPrice")
-            label = "pre market"
-        elif state in ("POST", "POSTPOST"):
-            price = info.get("postMarketPrice")
-            label = "after hours"
-        else:
-            return None
-        if price is None or not cur:
-            return None
-        price = round(float(price), 2)
-        chg = round(((price - cur) / cur) * 100, 2)
-        if abs(chg) < 0.1:
-            return None
-        return {"session": label, "state": state, "price": price, "change_pct": chg}
-    except Exception:
-        return None
-
-
-# CHUNK: flag a just released or imminent earnings report so the move has context
-def earnings_flag(info):
-    try:
-        ts = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
-        if not ts:
-            return None
-        hrs = (time.time() - float(ts)) / 3600.0
-        if 0 <= hrs <= 36:
-            return "recent"
-        if -36 <= hrs < 0:
-            return "soon"
-        return None
-    except Exception:
-        return None
-
-
-# CHUNK: shared full-report engine so Ask and the report use the same verdict
-def compute_full_report(symbol):
-    cached = get_cache(f"full_{symbol}")
-    if cached:
-        return cached
-
-    try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="5d", timeout=15)
-        info = ticker.info
-
-        if hist.empty:
-            return None
-
-        cur = fmt_price(hist["Close"].iloc[-1])
-        prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
-        chg = round(((cur - prev) / prev) * 100, 2)
-        pe_raw = info.get("trailingPE")
-        pe = round(float(pe_raw), 2) if pe_raw else "N/A"
-        tgt_raw = info.get("targetMeanPrice")
-        tgt = round(float(tgt_raw), 2) if tgt_raw else "N/A"
-        rec = info.get("recommendationKey", "hold").upper()
-        # CHUNK: know early if earnings just landed, so a likely stale target gets reduced weight below.
-        earn = earnings_flag(info)
-
-        score = 0
-        sharp_drop = chg <= -8
-
-        if chg > 2:
-            score += 2
-        elif chg > 0:
-            score += 1
-        elif chg <= -10:
-            score -= 5
-        elif chg <= -5:
-            score -= 3
-        elif chg <= -3:
-            score -= 2
-        else:
-            score -= 1
-
-        if rec in ["BUY", "STRONG_BUY"]:
-            score += 2
-        elif rec in ["SELL", "STRONG_SELL"]:
-            score -= 2
-
-        # On a sharp single-day drop the analyst target is almost certainly stale, set before
-        # the news broke. The huge upside it implies is an illusion created by the falling price,
-        # so it should not add to the score.
-        if tgt and cur and not sharp_drop:
-            try:
-                up = ((float(tgt) - cur) / cur) * 100
-                # CHUNK: a target right after earnings or far out of line is likely stale, so a big
-                # upside carries reduced weight, not the full bonus. It still counts, just less.
-                target_stale = (earn == "recent") or (up >= 40)
-                if up > 10:
-                    score += 1 if target_stale else 2
-                elif up > 0:
-                    score += 1
-                elif up < -5:
-                    score -= 1
-            except:
-                pass
-
-        # Congressional from Quiver
-        congressional = []
-        if QUIVER_KEY:
-            try:
-                url = f"https://api.quiverquant.com/beta/historical/congresstrading/{symbol}"
-                h = {"Authorization": f"Token {QUIVER_KEY}", "Accept": "application/json"}
-                r = requests.get(url, headers=h, timeout=8)
-                if r.status_code == 200:
-                    for t in r.json()[:8]:
-                        congressional.append({"politician": t.get("Representative", "Unknown"), "party": t.get("Party", ""), "action": t.get("Transaction", "Unknown"), "amount": t.get("Range", ""), "date": t.get("TransactionDate", "")})
-            except Exception as e:
-                logger.error(f"Congressional error: {e}")
-
-        cong_buys = len([t for t in congressional if "purchase" in str(t.get("action", "")).lower()])
-        cong_sells = len([t for t in congressional if "sale" in str(t.get("action", "")).lower()])
-        cong_net = cong_buys - cong_sells
-        if cong_net >= 2:
-            score += 2
-        elif cong_net == 1:
-            score += 1
-        elif cong_net <= -2:
-            score -= 1
-
-        # Insider activity. Primary source is yfinance (free, same source as the price data
-        # that already works), with Quiver as a fallback if a key is present.
-        insider = []
-        CLEVEL = ["CHIEF", "CEO", "CFO", "COO", "CTO", "PRESIDENT", "CHAIR", "DIRECTOR", "OFFICER", "FOUNDER", "10%", "VICE PRESIDENT", "EVP", "SVP"]
-
-        def classify_kind(text):
-            # Read what the filing actually is. Only real open market buys and sells move the
-            # verdict. Grants, option exercises, and tax withholding are routine and stay neutral.
-            t = str(text).lower()
-            if any(w in t for w in ["award", "grant", "gift", "bonus"]):
-                return "grant"
-            if any(w in t for w in ["exercise", "conversion", "convert", "option", "derivative"]):
-                return "option"
-            if any(w in t for w in ["tax", "withh", "surrender", "forfeit"]):
-                return "tax"
-            if any(w in t for w in ["sale", "sold", "sell"]):
-                return "sell"
-            if any(w in t for w in ["purchase", "bought"]):
-                return "buy"
-            if "dispos" in t:
-                return "sell"
-            if "acqui" in t:
-                return "buy"
-            return "other"
-
-        try:
-            it = ticker.insider_transactions
-            if it is not None and not it.empty:
-                def pick(row, *names):
-                    for n in names:
-                        if n in row and row.get(n) is not None:
-                            return row.get(n)
-                    return None
-                for _, rrow in it.head(12).iterrows():
-                    row = rrow.to_dict()
-                    name = pick(row, "Insider", "Name") or "Unknown"
-                    pos = pick(row, "Position", "Title", "Relation") or ""
-                    shares = pick(row, "Shares") or 0
-                    date_raw = pick(row, "Start Date", "Date", "startDate")
-                    # Read the actual filing type. Prefer the transaction description, fall back
-                    # to scanning the whole row, then map to buy or sell only for real trades.
-                    desc = pick(row, "Transaction", "Text") or ""
-                    basis = str(desc) if str(desc).strip() else " ".join(str(v) for v in row.values())
-                    kind = classify_kind(basis)
-                    action = "D" if kind == "sell" else ("A" if kind == "buy" else "")
-                    title_up = str(pos).upper()
-                    name_up = str(name).upper()
-                    is_cl = any(c in title_up for c in CLEVEL)
-                    fundish = any(w in name_up for w in ["L.P", "PARTNERS", "MANAGEMENT", "CAPITAL", " FUND", "FUND ", "LLC", "TRUST", "HOLDINGS", "ADVISOR", "ASSOCIATES", "GROUP"])
-                    is_holder = (not is_cl) or fundish or ("10%" in title_up)
-                    try:
-                        shares_val = int(float(shares))
-                    except Exception:
-                        shares_val = 0
-                    date_str = str(date_raw)[:10] if date_raw is not None else ""
-                    insider.append({
-                        "name": flip_name(name),
-                        "title": str(pos),
-                        "action": action,
-                        "kind": kind,
-                        "desc": str(desc)[:70],
-                        "shares": shares_val,
-                        "price": 0,
-                        "date": date_str,
-                        "is_clevel": is_cl,
-                        "is_holder": is_holder,
-                    })
-        except Exception as e:
-            logger.error("yfinance insider error: %s" % e)
-
-        # Grant detection fallback. When the data source gives no transaction wording (a blank
-        # description leaves a row as "other"), use the unmistakable fingerprint of a board grant:
-        # several insiders receiving the same share count on the same day. That pattern is annual
-        # director or executive stock pay, not selling, so label it GRANT and keep it neutral.
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for t in insider:
-            if t.get("kind") == "other" and t.get("shares"):
-                groups[(t.get("date"), t.get("shares"))].append(t)
-        for keypair, rows in groups.items():
-            if len(rows) >= 3:
-                for t in rows:
-                    t["kind"] = "grant"
-
-        if not insider and QUIVER_KEY:
-            try:
-                url = f"https://api.quiverquant.com/beta/historical/insiders/{symbol}"
-                h = {"Authorization": f"Token {QUIVER_KEY}", "Accept": "application/json"}
-                r = requests.get(url, headers=h, timeout=8)
-                if r.status_code == 200:
-                    for t in r.json()[:10]:
-                        title = str(t.get("Title", "")).upper()
-                        ad = t.get("AcquiredDisposed", "")
-                        k = "sell" if ad == "D" else ("buy" if ad == "A" else "other")
-                        nm_q = str(t.get("Name", "")).upper()
-                        is_cl_q = any(c in title for c in CLEVEL)
-                        fundish_q = any(w in nm_q for w in ["L.P", "PARTNERS", "MANAGEMENT", "CAPITAL", " FUND", "FUND ", "LLC", "TRUST", "HOLDINGS", "ADVISOR", "ASSOCIATES", "GROUP"])
-                        insider.append({"name": t.get("Name", "Unknown"), "title": t.get("Title", ""), "action": ad, "kind": k, "desc": "", "shares": t.get("Shares", 0), "price": fmt_price(t.get("Price", 0)), "date": t.get("Date", ""), "is_clevel": is_cl_q, "is_holder": (not is_cl_q) or fundish_q or ("10%" in title)})
-            except Exception as e:
-                logger.error(f"Insider Quiver fallback error: {e}")
-
-        insider = insider[:8]
-
-        ins_buys = len([t for t in insider if t.get("is_clevel") and t.get("action") == "A"])
-        ins_sells = len([t for t in insider if t.get("is_clevel") and t.get("action") == "D"])
-
-        # Estimate the dollar value of each sale using the current price, attach it to every row
-        # so it can be shown, and total it.
-        price_for_value = cur if isinstance(cur, (int, float)) and cur > 0 else 0
-        for t in insider:
-            try:
-                t["value"] = int(t.get("shares") or 0) * price_for_value
-            except Exception:
-                t["value"] = 0
-        exec_sell_value = sum(t.get("value", 0) for t in insider if t.get("is_clevel") and t.get("action") == "D")
-        all_sell_values = [t.get("value", 0) for t in insider if t.get("action") == "D"]
-        total_sell_value = sum(all_sell_values)
-        max_single_sell = max(all_sell_values) if all_sell_values else 0
-        # Split the selling. The headline counts only the company's own people (executives,
-        # officers, directors). Outside holders like activist funds are counted separately so
-        # a fund trimming a position never inflates the insider figure.
-        insider_sell_value = sum(t.get("value", 0) for t in insider if t.get("action") == "D" and not t.get("is_holder"))
-        holder_sell_value = sum(t.get("value", 0) for t in insider if t.get("action") == "D" and t.get("is_holder"))
-
-        mc_num = info.get("marketCap") if isinstance(info.get("marketCap"), (int, float)) else 0
-        big_block = max_single_sell >= 100000000 or (mc_num > 0 and max_single_sell >= 0.01 * mc_num)
-
-        # CHUNK: read insider selling in context. Buying is always a strong positive, so it scores
-        # straight away. Selling is softer, and after a big run it is usually profit taking. So in a
-        # strong uptrend the whole selling penalty is held to at most one point and never overrides
-        # an APPROVE. Flat or falling, selling keeps its full weight and can still cap the verdict.
-        strong_uptrend = is_strong_uptrend(info, cur)
-
-        if ins_buys >= 2:
-            score += 3
-        elif ins_buys == 1:
-            score += 2
-
-        sell_penalty = 0
-        if ins_sells >= 4:
-            sell_penalty += 4
-        elif ins_sells >= 2:
-            sell_penalty += 2
-        elif ins_sells == 1:
-            sell_penalty += 1
-        if exec_sell_value >= 50000000:
-            sell_penalty += 2
-        elif exec_sell_value >= 20000000:
-            sell_penalty += 1
-        if big_block:
-            sell_penalty += 1
-        if strong_uptrend:
-            sell_penalty = min(sell_penalty, 1)
-        score -= sell_penalty
-
-        heavy_insider_selling = ins_sells >= 3 or exec_sell_value >= 20000000
-
-        conviction = score_to_conviction(score)
-
-        if score >= 4:
-            verdict = "APPROVE"
-        elif score <= -2:
-            verdict = "PASS"
-        else:
-            verdict = "WATCH"
-
-        # Circuit breaker. Right after an unusually sharp single-day drop the situation is in
-        # flux and the bullish signals are likely stale, so the honest call is to hold at WATCH
-        # and tell the person to understand why it fell before considering anything.
-        alert = None
-        if sharp_drop:
-            alert = "sharp_drop"
-            verdict = "WATCH"
-
-        # Insider selling cap, read in context. A cluster of executives selling refuses an APPROVE
-        # while the people who know the company best head for the exit, unless the stock is in a
-        # strong uptrend, where that selling is profit taking after a run rather than a warning.
-        if heavy_insider_selling and verdict == "APPROVE" and not strong_uptrend:
-            verdict = "WATCH"
-            if alert is None:
-                alert = "insider_selling"
-
-        # News from Finnhub
-        news = []
-        if FINNHUB_KEY:
-            try:
-                today = datetime.now().strftime("%Y-%m-%d")
-                from_date = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-                url = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={from_date}&to={today}&token={FINNHUB_KEY}"
-                r = requests.get(url, timeout=8)
-                if r.status_code == 200:
-                    for n in r.json()[:6]:
-                        if n.get("headline"):
-                            news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": trim_words(clean_text(n.get("summary", "")))})
-                if not news:
-                    url2 = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
-                    r2 = requests.get(url2, timeout=8)
-                    if r2.status_code == 200:
-                        for n in r2.json()[:4]:
-                            if n.get("headline"):
-                                news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": trim_words(clean_text(n.get("summary", "")))})
-            except Exception as e:
-                logger.error(f"News error: {e}")
-
-        market_cap = info.get("marketCap", "N/A")
-        volume = int(hist["Volume"].iloc[-1]) if not hist.empty else 0
-        beta = fmt_price(info.get("beta"))
-        confidence, flags = run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider)
-
-        # FMP second source. Additive and non blocking: display first so it can be verified,
-        # then it will sharpen the verdict in a later step. Behind the 4 hour cache below.
-        fmp = {"grades": [], "insider_stats": None}
-        if FMP_KEY:
-            ud = fmp_get("/api/v4/upgrades-downgrades?symbol=%s" % symbol)
-            if not isinstance(ud, list) or not ud:
-                ud = fmp_get("/api/v3/grade/%s" % symbol)
-            if isinstance(ud, list):
-                for g in ud[:5]:
-                    firm = g.get("gradingCompany") or g.get("analystCompany") or g.get("company") or ""
-                    prev = g.get("previousGrade") or ""
-                    new = g.get("newGrade") or g.get("grade") or ""
-                    action = str(g.get("action") or "").lower()
-                    gdate = str(g.get("date") or g.get("publishedDate") or "")[:10]
-                    if firm or new:
-                        fmp["grades"].append({"firm": str(firm), "prev": str(prev), "new": str(new), "action": action, "date": gdate})
-            st = fmp_get("/api/v4/insider-trading/statistics?symbol=%s" % symbol)
-            if isinstance(st, list) and st:
-                s0 = st[0] or {}
-                buys = s0.get("purchases") or s0.get("totalPurchases") or s0.get("acquiredTransactions") or 0
-                sells = s0.get("sales") or s0.get("totalSales") or s0.get("disposedTransactions") or 0
-                ratio = s0.get("buySellRatio")
-                fmp["insider_stats"] = {"buys": buys, "sells": sells, "ratio": ratio}
-
-        # CHUNK: proactive Ask questions, chosen from this stock's live signals. Max 3 signal
-        # questions plus the always-on plain English one, so never more than 4.
-        suggested = []
-        try:
-            pe_num = float(pe)
-        except (TypeError, ValueError):
-            pe_num = None
-        up_num = None
-        try:
-            if isinstance(tgt, (int, float)) and cur:
-                up_num = round((tgt - cur) / cur * 100, 1)
-        except Exception:
-            up_num = None
-        if pe_num is not None and pe_num > 60:
-            suggested.append("Is this stock too expensive?")
-        if pe_num is not None and 0 < pe_num < 12:
-            suggested.append("Why is the PE so low?")
-        if up_num is not None and up_num > 20:
-            suggested.append("Why do analysts see so much upside?")
-        if up_num is not None and up_num < -10:
-            suggested.append("Why is it trading above analyst targets?")
-        if verdict == "PASS":
-            suggested.append("What would make this an APPROVE?")
-        elif verdict == "WATCH":
-            suggested.append("What would tip this to APPROVE or PASS?")
-        if insider_sell_value > 10000000 or ins_sells >= 3:
-            suggested.append("Why are executives selling?")
-        if ins_buys >= 1:
-            suggested.append("Why are executives buying their own stock?")
-        if cong_buys >= 1:
-            suggested.append("Why are lawmakers buying this?")
-        if cong_sells >= 2:
-            suggested.append("Why are lawmakers selling this?")
-        if isinstance(chg, (int, float)) and chg < -5:
-            suggested.append("Why did it drop so much today?")
-        if isinstance(chg, (int, float)) and chg > 5:
-            suggested.append("Why is it up so much today?")
-        suggested = suggested[:3]
-        suggested.append("Explain this verdict in plain English")
-
-        # CHUNK: build the pre/post market move and a plain-English note that keeps the verdict honest
-        ext = extended_hours(info, cur)
-        # CHUNK: targets set before a just released earnings report are stale, so flag the upside as provisional.
-        if earn == "recent" and tgt and tgt != "N/A" and cur:
-            try:
-                if ((float(tgt) - cur) / cur) * 100 > 0:
-                    flags.append({"level": "warn", "text": "These analyst targets were likely set before the recent earnings report, so the upside shown may be stale until analysts revise it. Treat it as provisional."})
-            except Exception:
-                pass
-        ext_note = ""
-        if ext:
-            direction = "up" if ext["change_pct"] >= 0 else "down"
-            ext_note = "%s is %s %s percent in %s trading, at about $%s." % (
-                symbol, direction, abs(ext["change_pct"]), ext["session"], ext["price"])
-            if earn == "recent":
-                ext_note += " This is right after an earnings report. The verdict below is based on the regular session close, so it does not yet reflect this move or how the stock trades at the next open. Big moves right after earnings often settle down, so treat this as fresh news to read, not a new verdict. See the news below."
-            else:
-                ext_note += " The verdict below is based on the regular session close, not this move."
-        elif earn == "recent":
-            ext_note = "%s reported earnings within about the last day. The verdict below is based on the most recent regular session close, so check the news below for the latest." % symbol
-        elif earn == "soon":
-            ext_note = "%s is expected to report earnings within about a day. Results can move a stock sharply, so keep that in mind alongside the verdict below." % symbol
-
-        # CHUNK: Feature 1 + Feature 4 — Apex Q Moat and Deep Fundamentals, read from the same
-        # fundamentals so the engine fetches them once. Rule based, educational, never invented.
-        prof_margin = info.get("profitMargins")
-        roe = info.get("returnOnEquity")
-        earn_growth = info.get("earningsGrowth")
-        rev_growth = info.get("revenueGrowth")
-        debt_eq = info.get("debtToEquity")
-
-        moat_buys = len([t for t in insider if t.get("is_clevel") and t.get("action") == "A" and t.get("kind") != "grant"])
-        have_moat_data = sum(1 for x in (prof_margin, roe, earn_growth, rev_growth) if isinstance(x, (int, float))) >= 2
-        if have_moat_data:
-            mscore = 0
-            if isinstance(prof_margin, (int, float)):
-                mscore += 2 if prof_margin > 0.15 else (1 if prof_margin > 0.10 else 0)
-            if isinstance(roe, (int, float)):
-                mscore += 2 if roe > 0.20 else (1 if roe > 0.15 else 0)
-            if isinstance(earn_growth, (int, float)):
-                mscore += 2 if earn_growth > 0.10 else (1 if earn_growth > 0.05 else 0)
-            if isinstance(rev_growth, (int, float)):
-                mscore += 2 if rev_growth > 0.10 else (1 if rev_growth > 0.05 else 0)
-            if moat_buys >= 2:
-                mscore += 1
-            if cong_buys >= 2:
-                mscore += 1
-            m_rating = "Wide" if mscore >= 7 else ("Narrow" if mscore >= 4 else "None")
-            pos_bits = []
-            if isinstance(prof_margin, (int, float)) and prof_margin > 0.15:
-                pos_bits.append("strong profitability")
-            if isinstance(roe, (int, float)) and roe > 0.20:
-                pos_bits.append("high return on equity")
-            if isinstance(earn_growth, (int, float)) and earn_growth > 0.10:
-                pos_bits.append("solid earnings growth")
-            if isinstance(rev_growth, (int, float)) and rev_growth > 0.10:
-                pos_bits.append("healthy revenue growth")
-            if moat_buys >= 2:
-                pos_bits.append("insider buying")
-            if cong_buys >= 2:
-                pos_bits.append("lawmaker buying")
-            if m_rating == "Wide":
-                m_reason = "Several durable strengths line up here" + ((", including " + ", ".join(pos_bits[:3])) if pos_bits else "") + ", which points to a real competitive advantage."
-            elif m_rating == "Narrow":
-                m_reason = "Some real strengths show up" + ((", such as " + ", ".join(pos_bits[:3])) if pos_bits else "") + ", but not deep enough to call the advantage wide."
-            else:
-                m_reason = "The fundamentals are mixed, with no clear durable edge standing out, so there is no real moat to point to yet."
-            apex_moat = {"rating": m_rating, "score": mscore, "reason": m_reason}
-        else:
-            apex_moat = {"rating": None, "score": 0, "reason": "Not enough data to estimate a moat for this one."}
-
-        revenue_growth = rev_growth if isinstance(rev_growth, (int, float)) else "N/A"
-        profit_margin = prof_margin if isinstance(prof_margin, (int, float)) else "N/A"
-        debt_to_equity = round(debt_eq / 100.0, 2) if isinstance(debt_eq, (int, float)) else "N/A"
-
-        result = {
-            "symbol": symbol,
-            "name": info.get("longName", symbol),
-            "sector": info.get("sector", ""),
-            "price": cur,
-            "change_pct": chg,
-            "recommendation": rec,
-            "verdict": verdict,
-            "alert": alert,
-            "conviction": conviction,
-            "score": score,
-            "pe_ratio": pe,
-            "analyst_target": tgt,
-            "market_cap": market_cap,
-            "volume": volume,
-            "beta": beta,
-            "confidence": confidence,
-            "flags": flags,
-            "fmp": fmp,
-            "insider_sell_value": insider_sell_value,
-            "holder_sell_value": holder_sell_value,
-            "insider_big_block": big_block,
-            "apex_moat": apex_moat,
-            "revenue_growth": revenue_growth,
-            "profit_margin": profit_margin,
-            "debt_to_equity": debt_to_equity,
-            "extended": ext,
-            "earnings": earn,
-            "extended_note": ext_note,
-            "news": news,
-            "congressional": congressional,
-            "insider": insider,
-            "suggested_questions": suggested,
-            "data_timestamp": int(time.time()),
-        }
-
-        set_cache(f"full_{symbol}", result)
-        return result
-
-    except Exception as e:
-        logger.error(f"Analyze error for {symbol}: {e}")
-        return None
-
-
-@app.route("/context")
-def context():
-    # Live market context. Runs separately so it can never slow or break the main report.
-    symbol = request.args.get("symbol", "").strip().upper()
-    if not symbol:
-        return jsonify({"live": None})
-    if not GEMINI_KEY:
-        return jsonify({"live": None})
-
-    cached = get_cache(f"ctx_{symbol}")
-    if cached is not None:
-        return jsonify({"live": cached})
-
-    try:
-        prompt = (
-            "You are the live intelligence layer for an educational stock app built for everyday people, "
-            "including beginners who have never invested before. The user is looking at " + symbol + ". "
-            "Using current market knowledge, return ONLY valid JSON, no markdown, no extra words, with these keys: "
-            "current_context (2 to 3 plain sentences on what is happening with this company right now, including any recent earnings, "
-            "government or regulatory news, and Wall Street developments), "
-            "why_it_matters (2 sentences on why a regular person with no finance background should care right now), "
-            "watch_for (one specific thing to watch in the next 30 days that could move the price), "
-            "simple_lesson (one sentence teaching a basic investing idea that applies to this exact situation, written for a smart teenager). "
-            "Keep every sentence simple and free of jargon."
-        )
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
-        payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2, "maxOutputTokens": 600}}
-        r = requests.post(url, json=payload, timeout=12)
-        logger.info(f"Gemini status {r.status_code} for {symbol}")
-        if r.status_code == 200:
-            data = r.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            if "```" in text:
-                for part in text.split("```"):
-                    p = part.strip()
-                    if p.startswith("json"):
-                        p = p[4:].strip()
-                    if p.startswith("{"):
-                        text = p
-                        break
-            live = json.loads(text)
-            set_cache(f"ctx_{symbol}", live)
-            return jsonify({"live": live})
-    except Exception as e:
-        logger.error(f"Context error for {symbol}: {e}")
-
-    set_cache(f"ctx_{symbol}", None)
-    return jsonify({"live": None})
-
-
-THEMES = {
-  "semi": {
-    "name": "Semiconductor Equipment and Materials",
-    "explainer": "These are the companies that build the machines and supply the special materials used to manufacture computer chips. They do not make the chips you hear about. They make the tools and the ingredients that every chipmaker needs to produce them.",
-    "why": "Every AI chip, phone, and data center runs on chips, and not a single one gets made without this equipment. When chip demand rises, these suppliers sell more tools to everyone in the industry at once, so they ride the whole wave instead of betting on one winner.",
-    "unknown": "People know the famous chip names but almost nobody knows the suppliers behind them. These companies rarely make headlines, yet they sit at the center of the entire supply chain.",
-    "tickers": ["ENTG","ONTO","ACLS","KLIC","COHU","FORM","AEHR","UCTT","ICHR","CAMT"]
-  },
-  "power": {
-    "name": "Power and Grid for the AI Era",
-    "explainer": "These companies build the electrical equipment, power systems, and grid hardware that move and manage electricity. Think transformers, switchgear, power conversion, backup power, and the gear that keeps data centers running.",
-    "why": "AI data centers use enormous amounts of electricity, and the grid was never built for this kind of demand. Someone has to supply all the new electrical equipment, and these are the companies that do it. The demand is physical and it is already here.",
-    "unknown": "Power equipment is unglamorous and easy to ignore, so most investors skip past it while chasing the flashy AI software names. The picks and shovels of the power build out get far less attention than they deserve.",
-    "tickers": ["GEV","POWL","AEIS","NVT","VRT","BE","FLNC","HUBB","AYI"]
-  },
-  "nuclear": {
-    "name": "Nuclear and Uranium",
-    "explainer": "This group covers companies that mine uranium, enrich nuclear fuel, and build the next generation of smaller, safer reactors. It is the full chain from the raw fuel in the ground to the reactor that turns it into power.",
-    "why": "AI and data centers need huge amounts of steady around the clock electricity, and nuclear is one of the few sources that can deliver it without carbon. After years out of favor, nuclear is being rebuilt, and demand for fuel and reactors is climbing.",
-    "unknown": "Nuclear spent decades as a feared and forgotten corner of the market, so most everyday investors never look at it. The shift back toward nuclear power is still early and under the radar for most people.",
-    "tickers": ["LEU","OKLO","SMR","BWXT","UEC","DNN","UUUU","NXE","CCJ"]
-  },
-  "defense": {
-    "name": "Defense Tech and Drones",
-    "explainer": "These companies build modern military technology. Not just traditional weapons, but drones, unmanned systems, electronics, sensors, space hardware, and the gear that defines how conflicts are fought today.",
-    "why": "Governments around the world are spending heavily to modernize their militaries, and the spending is shifting toward technology, drones, and space. That creates steady long term demand backed by national budgets rather than consumer moods.",
-    "unknown": "People think of a few giant defense contractors and stop there. The smaller, faster companies building the actual drones, sensors, and space systems get far less coverage even as the money flows their way.",
-    "tickers": ["KTOS","AVAV","MRCY","CW","RKLB","DRS","HII","LDOS"]
-  },
-  "automation": {
-    "name": "Industrial Automation and Robotics",
-    "explainer": "These companies make the machine vision, sensors, motion control, and robotic systems that let factories and warehouses run with less human labor. They are the brains and the eyes of modern automated production.",
-    "why": "Labor is expensive and hard to find, and companies are racing to automate. Bringing factories back to the United States adds even more demand. Automation is a long steady trend rather than a quick fad.",
-    "unknown": "Automation hardware is technical and quiet, so it rarely trends. Most people picture humanoid robots from movies and miss the real companies quietly automating the world right now.",
-    "tickers": ["CGNX","NOVT","ZBRA","NDSN","TER","ITRI","AZTA"]
-  },
-  "cyber": {
-    "name": "Cybersecurity",
-    "explainer": "These companies protect computers, networks, and data from hackers and attacks. They cover things like finding weaknesses before criminals do, protecting accounts and identities, and stopping breaches across the systems businesses depend on.",
-    "why": "Every business is now online, and attacks keep rising in cost and frequency. Security is not optional spending, it is something companies must keep paying for, which makes the demand sticky and recurring.",
-    "unknown": "Everyone knows a couple of the biggest security names, but the mid sized specialists that protect specific weak points get overlooked even though they are deeply embedded in how companies operate.",
-    "tickers": ["TENB","RPD","QLYS","VRNS","CYBR","S"]
-  },
-  "tech": {
-    "name": "Technology",
-    "explainer": "The broad technology sector covers software, hardware, and the digital tools that businesses and people run on every day. It is the largest and most watched part of the market.",
-    "why": "Technology drives modern growth, and the shift to AI, cloud, and automation keeps pulling money into the sector. It is where many of the biggest long term winners are found.",
-    "unknown": "Everyone watches a handful of giant tech names, but the sector is full of smaller software and tooling companies doing critical work that rarely makes the news.",
-    "tickers": ["MNDY","PATH","GTLB","ESTC","CFLT","PEGA","FROG","DOCN","BILL"]
-  },
-  "health": {
-    "name": "Health Care",
-    "explainer": "Health care covers companies that keep people healthy, from medical devices and diagnostics to treatments and the services that deliver care.",
-    "why": "People need health care in every economy, good or bad, which makes demand steady. An aging population and constant medical innovation keep the sector growing for the long run.",
-    "unknown": "Beyond the giant drug and insurance names, there is a deep bench of smaller device and diagnostics companies quietly solving specific problems that most investors never hear about.",
-    "tickers": ["PODD","TNDM","PEN","GKOS","IRTC","TMDX","INSP","NTRA","HALO"]
-  },
-  "financials": {
-    "name": "Financials",
-    "explainer": "Financials are the companies that move money. Banks, payment and fintech firms, advisory boutiques, and the plumbing that markets run on.",
-    "why": "Finance touches every other industry, so the sector reflects the whole economy. Rising activity, lending, and deal making all flow through these companies.",
-    "unknown": "People think of the few giant banks and stop there, missing the boutique advisory firms, payment companies, and market infrastructure names that quietly earn steady fees.",
-    "tickers": ["SOFI","AFRM","LPLA","JKHY","EVR","HLI","VIRT","FOUR","TW"]
-  },
-  "discretionary": {
-    "name": "Consumer Discretionary",
-    "explainer": "These are the things people buy when they have extra money. Restaurants, brands, retail, travel, and the products that are wants rather than needs.",
-    "why": "When people feel good about money they spend more here, so the sector can run hard in good times. Strong brands build fierce loyalty and pricing power.",
-    "unknown": "The famous names get all the attention, but the real growth often hides in smaller fast rising brands and restaurant chains before the crowd notices them.",
-    "tickers": ["CROX","BOOT","CAVA","WING","TXRH","ELF","ONON","CELH"]
-  },
-  "comm": {
-    "name": "Communication Services",
-    "explainer": "This sector covers how we connect and what we watch. Media, advertising, streaming, gaming, and the platforms that carry attention and content.",
-    "why": "Attention is the currency of the modern economy, and advertising and content spending follow it. The sector blends old media with fast moving digital platforms.",
-    "unknown": "Past the giant platforms, there are overlooked advertising, media, and connectivity companies that profit from the same attention economy without the spotlight.",
-    "tickers": ["CARG","YELP","MGNI","ROKU","TKO","LYV","CABO","IPG"]
-  },
-  "industrials": {
-    "name": "Industrials",
-    "explainer": "Industrials build and move the physical world. Construction, machinery, engineering, infrastructure, and the companies that put up buildings and power projects.",
-    "why": "A wave of building is underway, from data centers to factories returning to the United States to upgrading old infrastructure. These are the companies doing that physical work.",
-    "unknown": "The construction, engineering, and equipment firms behind the building boom get far less attention than the flashy names they are quietly building for.",
-    "tickers": ["PWR","STRL","FIX","ACM","AGX","BLDR","AAON","MLI","HWM"]
-  },
-  "staples": {
-    "name": "Consumer Staples",
-    "explainer": "Staples are the things people buy no matter what. Food, drinks, household basics, and the stores and distributors that supply them.",
-    "why": "Demand barely moves whether the economy is strong or weak, which makes these companies steady and defensive. They tend to hold up when the market gets scary.",
-    "unknown": "Everyone knows the giant brands, but the food distributors, specialty grocers, and smaller brands that feed the country quietly grow without much notice.",
-    "tickers": ["SFM","CHEF","PFGC","BRBR","FRPT","POST","COKE","CASY"]
-  },
-  "energy": {
-    "name": "Energy",
-    "explainer": "Energy covers companies that find, produce, and move oil and natural gas, plus the pipelines and services that support them.",
-    "why": "The world still runs on energy, and demand for power and fuel keeps climbing. These companies can throw off strong cash and pay healthy dividends.",
-    "unknown": "Beyond the supermajors everyone names, there are smaller producers and midstream pipeline companies that quietly generate serious cash flow.",
-    "tickers": ["PR","AR","RRC","MGY","CHRD","DTM","AROC","KGS"]
-  },
-  "utilities": {
-    "name": "Utilities",
-    "explainer": "Utilities provide the electricity and power that everything depends on, including the companies that generate and sell it.",
-    "why": "Electricity demand is surging because of AI data centers and electrification, and someone has to produce all that power. These companies sit right at the source.",
-    "unknown": "Utilities were long seen as boring and slow, so most investors ignore them, even as the power producers behind the AI boom become some of the most important names in the market.",
-    "tickers": ["VST","NRG","TLN","AES","PCG","CNP","NI","IDA"]
-  },
-  "realestate": {
-    "name": "Real Estate",
-    "explainer": "Real estate companies own and rent out property, but the modern sector is far more than apartments. It includes data centers, cell towers, storage, and the physical backbone of the digital world.",
-    "why": "The AI and internet boom needs physical homes, the data centers, towers, and fiber that real estate companies own and lease. That ties old fashioned property to the newest technology.",
-    "unknown": "People picture office buildings and malls and miss the specialized real estate companies that own the data centers and infrastructure quietly powering the digital economy.",
-    "tickers": ["IRM","COLD","CUBE","LAMR","DBRG","UNIT","ADC","VICI"]
-  },
-  "materials": {
-    "name": "Materials",
-    "explainer": "Materials companies dig up and process the raw stuff everything is made from. Metals, chemicals, specialty alloys, and the critical minerals modern technology needs.",
-    "why": "You cannot build chips, planes, electric cars, or weapons without these materials, and many of them are scarce or hard to source. Demand is rising as the world builds more advanced things.",
-    "unknown": "Mining and chemicals sound dull, so most people skip the sector, missing the specialty metals and critical mineral companies that sit at the base of the entire supply chain.",
-    "tickers": ["MP","ATI","CRS","KALU","CMC","ESI","AVNT","ALB"]
+  }
+
+  if(pe && pe !== "N/A"){
+    var pn = parseFloat(pe);
+    if(!isNaN(pn)){
+      if(pn < 12){
+        reasons.push({icon:"&#128176;", label:"PE "+pn.toFixed(1)+" &#8226; Potentially Undervalued", short:"Paying only "+pn.toFixed(1)+"x earnings. Average is 20x.",
+          why:"The price to earnings ratio of "+pn.toFixed(1)+" means you pay "+fmt(pn)+" for every one dollar "+name+" earns in a year. The average stock trades near twenty times earnings, so this company is priced well below average. That can mean a hidden bargain, or it can mean the market sees a problem. The PE ratio matters because it tells you how much you pay for each dollar of real profit.",
+          watch:"A low PE only helps if earnings are steady or growing. Check whether profits have been rising or falling over recent quarters.",
+          lesson:"The PE ratio is simply the price you pay per dollar of company profit. A low PE paired with growing earnings is one of the most powerful setups in investing."});
+      } else if(pn < 20){
+        reasons.push({icon:"&#128176;", label:"PE "+pn.toFixed(1)+" &#8226; Reasonably Valued", short:"PE at or below market average.",
+          why:"A PE of "+pn.toFixed(1)+" means you are paying a fair price for the earnings of "+name+". At or below the market average near twenty times, you are not overpaying. Fair pricing lowers the risk that the valuation alone drags the stock down. The PE ratio matters because an expensive stock has to grow just to justify its price.",
+          watch:"A reasonable PE plus steady earnings growth is the ideal pairing. Check that earnings have grown year over year.",
+          lesson:"The strongest long term picks combine a fair PE with growing earnings. You buy fair today and gain value as profits rise."});
+      } else if(pn > 60){
+        reasons.push({icon:"&#128184;", label:"PE "+pn.toFixed(1)+" &#8226; High Valuation", short:"Steep premium. Needs strong growth.",
+          why:"A PE of "+pn.toFixed(1)+" means you pay over "+Math.round(pn)+" dollars for every one dollar "+name+" earns. That demands exceptional future growth. If growth slows even slightly the stock can fall hard because investors stop accepting the premium. The PE ratio matters most here, because a high number means a small mistake gets punished.",
+          watch:"Ask what is driving the high PE. Is it genuine fast growth, or is it hype and momentum. Separate the story from the math.",
+          lesson:"High PE stocks need fast growth just to hold their price. When growth slows they can fall quickly. Keep position sizes smaller here."});
+      } else {
+        reasons.push({icon:"&#128203;", label:"PE "+pn.toFixed(1)+" &#8226; Growth Premium", short:"Above average. Growth must justify it.",
+          why:"A PE of "+pn.toFixed(1)+" sits above the market average near twenty. That is acceptable for a fast growing company, but the growth has to actually arrive to justify the higher price you pay today. The PE ratio matters because it sets the bar the company must clear.",
+          watch:"Compare the PE to the growth rate. A PE of thirty five with thirty percent growth is reasonable. A PE of thirty five with five percent growth is expensive.",
+          lesson:"A high PE is not automatically bad if growth backs it up. Divide the PE by the growth rate for a clearer read on true value."});
+      }
+    }
+  }
+
+  if(beta && beta !== "N/A"){
+    var b = parseFloat(beta);
+    if(!isNaN(b)){
+      if(b > 1.5){
+        reasons.push({icon:"&#127794;", label:"Beta "+b.toFixed(2)+" &#8226; High Volatility", short:"Moves "+b.toFixed(1)+"x as much as the market.",
+          why:"Beta measures how much "+name+" moves compared to the whole market. A beta of "+b.toFixed(2)+" means when the market rises one percent this stock tends to rise "+b.toFixed(2)+" percent, and it falls harder when the market drops. More reward, more risk.",
+          watch:"High volatility stocks need tighter exit plans. A ten percent market drop can hit this stock fifteen to twenty percent. Plan for that before you buy.",
+          lesson:"Beta is your risk multiplier. A high number means bigger swings both ways, so keep the position size smaller to manage risk."});
+      } else if(b < 0.5){
+        reasons.push({icon:"&#128737;&#65039;", label:"Beta "+b.toFixed(2)+" &#8226; Low Volatility", short:"Calmer than the market.",
+          why:"A beta of "+b.toFixed(2)+" means "+name+" is much steadier than the overall market. It does not swing as hard either way. This is common with defensive companies like utilities and dividend payers. Less drama, smaller swings.",
+          watch:"Low volatility stocks hold up better in downturns but tend to lag in strong bull runs. They are built for stability, not excitement.",
+          lesson:"Low volatility stocks are the shock absorbers of a portfolio. They smooth out the ride and suit anyone who cannot stomach big swings."});
+      }
+    }
+  }
+
+  if(d.congressional && d.congressional.length){
+    var cBuys = d.congressional.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("purchase") >= 0; });
+    var cSells = d.congressional.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("sale") >= 0; });
+    if(cBuys.length >= 2){
+      var cnames = cBuys.slice(0,3).map(function(b){ return esc(b.politician); }).join(", ");
+      reasons.push({icon:"&#127963;&#65039;", label:"Congressional Buying Detected", short:"Members of Congress are buying this.",
+        why:"By law, every member of Congress must publicly report their stock trades within forty five days. Recent purchases were disclosed in "+name+", including "+cnames+". When several lawmakers buy the same stock around the same time it can hint at positive expectations about coming policy or regulation. The sentiment of the government matters because lawmakers sometimes see policy shifts before the public does, and those shifts can directly help or hurt a company.",
+        watch:"Check which committees these members sit on. A lawmaker on the committee that regulates this industry carries far more weight than an unrelated member.",
+        lesson:"Congressional trades are public and most people ignore them. They give everyday investors a window into where policy insiders are placing their own money."});
+    } else if(cBuys.length === 1){
+      reasons.push({icon:"&#127963;&#65039;", label:"Congressional Buying Detected", short:esc(cBuys[0].politician)+" bought this stock.",
+        why:esc(cBuys[0].politician)+" recently bought shares of "+name+" with personal money, disclosed under the federal STOCK Act. A single purchase is worth noting because lawmakers sometimes have early sight of policy and regulation that can move a company. The sentiment of the government matters because those policy moves can change a company outlook overnight.",
+        watch:"One member buying is interesting. Several buying the same name is far stronger. Watch for more disclosures to follow.",
+        lesson:"The STOCK Act made congressional trading public so ordinary investors can see what policy insiders are doing with their own cash."});
+    } else if(cSells.length >= 2){
+      reasons.push({icon:"&#127963;&#65039;", label:"Congressional Selling Detected", short:"Members of Congress are selling.",
+        why:"Several members of Congress recently sold shares of "+name+". Lawmakers sell for many ordinary reasons like taxes and spreading out wealth, but several selling the same name at once can signal worry about coming policy headwinds. The sentiment of the government matters because a regulatory change can hurt a company before the wider market reacts.",
+        watch:"Check whether these members sit on a committee that regulates this industry. That makes the selling far more meaningful.",
+        lesson:"Congressional selling is a weaker signal than buying, but it is worth watching when several members exit the same name in a short window."});
+    }
+  }
+
+  if(d.insider && d.insider.length){
+    var iBuys = d.insider.filter(function(t){ return t.is_clevel && t.action === "A"; });
+    var iSells = d.insider.filter(function(t){ return t.is_clevel && t.action === "D"; });
+    var buysDominate = iBuys.length > iSells.length;
+    if(iBuys.length >= 2 && buysDominate){
+      var inames = iBuys.slice(0,3).map(function(t){ return esc(t.name)+" ("+esc(t.title)+")"; }).join(", ");
+      reasons.push({icon:"&#128188;", label:"Executive Cluster Buy", short:"Multiple executives buying their own stock.",
+        why:"Several executives, including "+inames+", recently bought shares of "+name+" with their own personal money. These people see every internal number before the public does. The only reason an executive spends personal cash on company stock is the belief that the price is going higher. When several buy at once it is one of the strongest signals in all of investing, because you cannot fake real money on the line.",
+        watch:"Look at how much they bought. A chief executive spending a million dollars of personal money is a far stronger signal than a small token purchase.",
+        lesson:"Insider buying is the ultimate vote of confidence. Real personal money from the people who know the company best deserves real attention."});
+    } else if(iBuys.length === 1 && buysDominate){
+      var ib = iBuys[0];
+      reasons.push({icon:"&#128188;", label:"Executive Buy: "+esc(ib.title), short:esc(ib.name)+" bought shares personally.",
+        why:esc(ib.name)+", the "+esc(ib.title)+" of "+name+", recently bought shares with personal money. Executives see financial data and forward plans the public never sees. When they spend their own cash on the stock it signals they see value the market has not caught up to yet.",
+        watch:"Ask whether the purchase is large relative to their pay. A leader buying a meaningful amount is more telling than a small symbolic buy.",
+        lesson:"An open market purchase by an executive is very different from stock handed to them as pay. A purchase means they paid real money, just like any investor."});
+    } else if(iSells.length >= 2){
+      reasons.push({icon:"&#128188;", label:"Executive Selling Cluster", short:"Multiple executives selling shares.",
+        why:"Several executives recently sold shares of "+name+". Executives sell for many ordinary reasons such as taxes and spreading out their wealth, but heavy selling by several leaders at once can sometimes signal they are bracing for weaker results. It lowers conviction without being a clear alarm.",
+        watch:"Find out whether these are pre scheduled sales set up months ago or fresh decisions to sell. Fresh decisions carry far more weight.",
+        lesson:"Context decides everything with insider selling. Routine planned sales are normal. Sudden selling by many leaders at once is the kind that carries a warning."});
+    } else if(iSells.length === 1){
+      var isl = iSells[0];
+      reasons.push({icon:"&#128188;", label:"Executive Sale: "+esc(isl.title), short:esc(isl.name)+" sold shares.",
+        why:esc(isl.name)+", the "+esc(isl.title)+" of "+name+", recently sold shares. A single insider sale is weak as a signal on its own, because executives sell for many ordinary reasons. It is worth noting but not alarming by itself.",
+        watch:"Watch whether more insiders follow. One sale is noise. A cluster of leaders selling is the real signal.",
+        lesson:"One insider selling tells you little. Weigh it lightly unless others join in."});
+    }
+  }
+
+  if(d.news && d.news.length){
+    reasons.push({icon:"&#128240;", label:"Recent News Coverage", short:"Active news flow on this name.",
+      why:"Apex Q pulled the most recent news on "+name+". News moves stocks in the short term faster than almost anything else. A single headline can shift the direction of a stock within minutes, which is why staying current on the story matters.",
+      watch:"Look for a pattern across the articles. Is the coverage mostly positive or mostly negative. Are the same themes repeating around growth, competition, or regulation.",
+      lesson:"News drives the short term. Fundamentals drive the long term. Use the news to read today, and use the fundamentals to decide if the price is fair."});
+  }
+
+  return reasons;
+}
+
+function renderGrades(fmp){
+  var title = document.getElementById("gradeTitle");
+  var s = document.getElementById("grades");
+  if(!s || !title) return;
+  var grades = (fmp && fmp.grades) ? fmp.grades : [];
+  if(!grades.length){
+    title.style.display = "none";
+    s.style.display = "none";
+    s.innerHTML = "";
+    return;
+  }
+  var ups = 0, downs = 0;
+  var rows = grades.map(function(g){
+    var act = (g.action || "").toLowerCase();
+    var cls = "gray", lab = "";
+    if(act.indexOf("up") >= 0){ cls = "buy"; lab = "UPGRADE"; ups++; }
+    else if(act.indexOf("down") >= 0){ cls = "sell"; lab = "DOWNGRADE"; downs++; }
+    else { cls = "gray"; lab = "RATING"; }
+    var change = g.prev ? (esc(g.prev) + " &rarr; " + esc(g.new)) : esc(g.new);
+    return "<div class=\"tr\"><span class=\"" + cls + "\">" + lab + "</span><span>" + esc(g.firm) + "</span><span class=\"gray\">" + change + "</span><span class=\"gray\">" + esc(usDate(g.date)) + "</span></div>";
+  }).join("");
+  var bc = ups > downs ? "bg" : (downs > ups ? "br" : "by");
+  var bl = ups > downs ? "MORE UPGRADES" : (downs > ups ? "MORE DOWNGRADES" : "MIXED");
+  title.style.display = "block";
+  s.style.display = "block";
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Recent Analyst Moves</div><div class=\"ibdg " + bc + "\">" + bl + "</div></div><div class=\"itxt\">" + rows + "<div class=\"iwhy\">Why it matters: a target is just a number, but the direction analysts are moving is the live signal. A run of upgrades means the pros are turning more positive. A run of downgrades is a warning the story may be weakening.</div></div></div>";
+}
+
+function renderCong(data){
+  var s = document.getElementById("cong");
+  if(!data || !data.length){
+    s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Congressional Trading</div><div class=\"ibdg bg\">CLEAN</div></div><div class=\"itxt\">No recent congressional trades on record for this stock. No members of Congress have publicly reported buying or selling it lately.<div class=\"iwhy\">Why it matters: lawmakers sometimes see policy changes before the public. A clean record is neutral, neither a plus nor a minus.</div></div></div>";
+    return;
+  }
+  var buys = data.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("purchase") >= 0; });
+  var sells = data.filter(function(t){ return t.action && t.action.toLowerCase().indexOf("sale") >= 0; });
+  var bc = buys.length > sells.length ? "bg" : (sells.length > buys.length ? "br" : "by");
+  var bl = buys.length > sells.length ? "RECENT BUYING" : (sells.length > buys.length ? "RECENT SELLING" : "MIXED");
+  var rows = data.map(function(t){
+    var cls = (t.action && t.action.toLowerCase().indexOf("purchase") >= 0) ? "buy" : "sell";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+esc(t.action)+"</span><span>"+esc(t.politician)+"</span><span class=\"gray\">("+esc(t.party)+")</span><span class=\"gray\">"+esc(t.amount)+"</span><span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
+  }).join("");
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Congressional Trades</div><div class=\"ibdg "+bc+"\">"+bl+"</div></div><div class=\"itxt\">"+rows+"<div class=\"iwhy\">Why it matters: members of Congress must report trades by law. When several buy or sell the same name it can hint at policy moves coming that the wider market has not priced in yet.</div></div></div>";
+}
+
+function renderIns(data, sellValue, bigBlock){
+  var s = document.getElementById("ins");
+  if(!data || !data.length){
+    s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Activity</div><div class=\"ibdg bg\">CLEAN</div></div><div class=\"itxt\">No recent insider filings found. Company executives and directors have not reported unusual trades in their own stock lately.<div class=\"iwhy\">Why it matters: insiders know the company best. A quiet record is neutral. Heavy buying would be a strong positive, heavy selling a caution.</div></div></div>";
+    return;
+  }
+  var buys = data.filter(function(t){ return t.action === "A"; });
+  var sells = data.filter(function(t){ return t.action === "D"; });
+  var cb = data.filter(function(t){ return t.is_clevel && t.action === "A" && !t.is_holder; });
+  var bc = buys.length > sells.length ? "bg" : (sells.length > buys.length ? "br" : "by");
+  var lbl = buys.length > sells.length ? "BUYING" : "SELLING";
+  if(cb.length >= 2 && buys.length > sells.length){ lbl = "CLUSTER BUY"; }
+  var kindMap = {sell:{c:"sell",l:"SELL"}, buy:{c:"buy",l:"BUY"}, grant:{c:"gray",l:"GRANT"}, option:{c:"gray",l:"OPTION"}, tax:{c:"gray",l:"TAX"}, other:{c:"gray",l:"FILED"}};
+  var shown = data.slice(0,8);
+  var insiderTotal = 0, holderTotal = 0;
+  shown.forEach(function(t){
+    if(t.kind === "sell" || t.action === "D"){
+      if(t.is_holder){ holderTotal += (t.value || 0); }
+      else { insiderTotal += (t.value || 0); }
+    }
+  });
+  var rows = shown.map(function(t){
+    var isSell = (t.kind === "sell" || t.action === "D");
+    var k;
+    if(t.is_holder && isSell){ k = {c:"gray", l:"FUND SELL"}; }
+    else { k = kindMap[t.kind] || (t.action === "A" ? kindMap.buy : (t.action === "D" ? kindMap.sell : kindMap.other)); }
+    var cls = k.c, act = k.l;
+    var titleText = t.title;
+    if(t.is_holder && (!titleText || titleText.toLowerCase() === "unknown")){ titleText = "Outside Holder"; }
+    var sh = t.shares ? ("<span class=\"gray\">"+parseInt(t.shares).toLocaleString()+" shares</span>") : "";
+    var val = t.value ? ("<span class=\"gray\">"+fmtMoney(t.value)+"</span>") : "";
+    var dsc = t.desc ? ("<span class=\"gray idesc\">"+esc(t.desc)+"</span>") : "";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+act+"</span><span>"+esc(t.name)+"</span><span class=\"gray\">"+esc(titleText)+"</span>"+sh+val+dsc+"<span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
+  }).join("");
+  var sellNote = "";
+  if(insiderTotal > 0){
+    sellNote += "<div class=\"isum\">Recent selling by company insiders, the executives and directors: <b>"+fmtMoney(insiderTotal)+"</b></div>";
+  }
+  if(holderTotal > 0){
+    sellNote += "<div class=\"isum holder\">A large outside holder also sold about <b>"+fmtMoney(holderTotal)+"</b>. This is a fund or major shareholder, not company management, so it is counted separately. Big holders often sell for portfolio reasons that say little about the business.</div>";
+  }
+  s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Insider Trades</div><div class=\"ibdg "+bc+"\">"+lbl+"</div></div><div class=\"itxt\">"+sellNote+rows+"<div class=\"iwhy\">Why it matters: executives buy their own stock for only one reason, they expect it to rise. They sell for many reasons. That is why insider buying is a stronger signal than insider selling, but a large cluster of executives selling, or a very large dollar amount, is a real caution. Sales by outside funds are shown separately because they are a weaker signal about the company itself.</div></div></div>";
+}
+
+function renderNews(data){
+  var s = document.getElementById("news");
+  if(!data || !data.length){
+    s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">News Feed</div><div class=\"ibdg by\">NO RESULTS</div></div><div class=\"itxt\">No articles found in the last sixty days. Light coverage is not automatically bad. Some of the best opportunities sit in names the headlines have not found yet.</div></div>";
+    return;
+  }
+  var isGen = data.some(function(n){ return n.source && n.source.indexOf("General") >= 0; });
+  var pre = isGen ? "<div class=\"ic\" style=\"margin-bottom:8px\"><div class=\"ih\"><div class=\"it\">General Market News</div><div class=\"ibdg by\">NO COMPANY NEWS</div></div><div class=\"itxt\" style=\"font-size:12px\">No company specific news in the last sixty days. Showing general market news instead.</div></div>" : "";
+  var items = data.map(function(n){
+    var sum = n.summary ? ("<div class=\"nsum\">"+esc(n.summary)+"</div>") : "";
+    return "<div class=\"ni\"><div class=\"ns\">"+esc(n.source)+"</div><div class=\"nh\">"+esc(n.headline)+"</div>"+sum+"</div>";
+  }).join("");
+  s.innerHTML = pre + items;
+}
+
+function loadTicker(sym){
+  return fetch(API + "/analyze?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
+    if(d.price){
+      var up = d.change_pct >= 0;
+      var cls = up ? "tup" : "tdn";
+      var sign = up ? "+" : "";
+      return "<span class=\"tki\" data-sym=\""+esc(sym)+"\"><span class=\"tsym\">"+esc(d.symbol)+"</span><span class=\"tpx\">$"+d.price.toLocaleString()+"</span><span class=\""+cls+"\">"+sign+d.change_pct+"%</span></span>";
+    }
+    return "";
+  }).catch(function(){ return ""; });
+}
+
+function buildTicker(){
+  var tk = document.getElementById("tktrack");
+  var chain = Promise.resolve("");
+  TKS.forEach(function(s){
+    chain = chain.then(function(acc){
+      return loadTicker(s).then(function(html){ return acc + html; });
+    });
+  });
+  chain.then(function(all){
+    if(all){ tk.innerHTML = all + all; }
+  });
+}
+
+function loadMarket(){
+  MKT.forEach(function(m){
+    var el = document.getElementById(m.id);
+    fetch(API + "/analyze?symbol=" + encodeURIComponent(m.s)).then(function(r){ return r.json(); }).then(function(d){
+      if(d.price && el){
+        var sign = d.change_pct >= 0 ? "+" : "";
+        el.textContent = d.price.toLocaleString() + " (" + sign + d.change_pct + "%)";
+        el.className = "mv " + (d.change_pct >= 0 ? "up" : "dn");
+      } else if(el){
+        el.textContent = "N/A"; el.className = "mv ld";
+      }
+    }).catch(function(){
+      if(el){ el.textContent = "N/A"; el.className = "mv ld"; }
+    });
+  });
+}
+
+function setActiveChip(el){
+  var chips = document.querySelectorAll(".discchip");
+  for(var i=0;i<chips.length;i++){ chips[i].classList.remove("active"); }
+  el.classList.add("active");
+}
+
+function loadTheme(key){
+  var box = document.getElementById("discResults");
+  if(!box) return;
+  box.style.display = "block";
+  box.innerHTML = "<div class=\"discLoading\">Scanning the basket. The first look takes a moment, then it is instant.</div>";
+  fetch(API + "/discover?theme=" + encodeURIComponent(key)).then(function(r){ return r.json(); }).then(function(d){
+    if(d.error || !d.results){ box.innerHTML = "<div class=\"discLoading\">Could not load this basket. Try again.</div>"; return; }
+    var head = "<div class=\"discExp\"><div class=\"discExpName\">" + esc(d.name) + "</div>"
+      + "<div class=\"discExpRow\"><span class=\"discExpT\">What it is</span>" + esc(d.explainer) + "</div>"
+      + "<div class=\"discExpRow\"><span class=\"discExpT\">Why it matters</span>" + esc(d.why) + "</div>"
+      + "<div class=\"discExpRow\"><span class=\"discExpT\">Why most people miss it</span>" + esc(d.unknown) + "</div></div>";
+    if(!d.results.length){
+      box.innerHTML = head + "<div class=\"discLoading\">Market data is busy right now. Tap this industry again in a moment.</div>";
+      return;
+    }
+    var rows = d.results.map(function(s){
+      var vc = s.verdict === "APPROVE" ? "va" : (s.verdict === "PASS" ? "vp" : "vw");
+      var chg = s.change_pct || 0;
+      var sgn = chg >= 0 ? "+" : "";
+      var up = (s.upside !== null && s.upside !== undefined) ? ((s.upside >= 0 ? "+" : "") + s.upside + "% to analyst target") : "";
+      return "<div class=\"discRow\" data-sym=\"" + esc(s.symbol) + "\"><div class=\"discRowL\"><div class=\"discSym\">" + esc(s.symbol) + "</div><div class=\"discName\">" + esc(s.name) + "</div></div>"
+        + "<div class=\"discRowR\"><div class=\"discBadge " + vc + "\">" + s.verdict + "</div>"
+        + "<div class=\"discMeta\">$" + (s.price || 0).toLocaleString() + " &#8226; <span class=\"" + (chg >= 0 ? "gp" : "gn") + "\">" + sgn + chg + "%</span></div>"
+        + "<div class=\"discUp\">" + up + "</div></div></div>";
+    }).join("");
+    box.innerHTML = head + "<div class=\"discList\">" + rows + "</div><div class=\"discFoot\">Ranked by the same engine that scores every stock on Apex Q. Tap any name for the full breakdown. Educational only, never advice.</div>";
+  }).catch(function(){ box.innerHTML = "<div class=\"discLoading\">Connection issue. Try again.</div>"; });
+}
+
+function go(sym){
+  showView("home");
+  document.getElementById("si").value = sym;
+  var rpt = document.getElementById("rpt");
+  if(rpt){ rpt.scrollIntoView({behavior:"smooth", block:"start"}); }
+  run();
+}
+
+function suggest(q){
+  fetch(API + "/search?q=" + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
+    var ac = document.getElementById("ac");
+    if(d.results && d.results.length){
+      ac.innerHTML = d.results.map(function(x){
+        return "<div class=\"aci\" data-sym=\""+esc(x.symbol)+"\"><span class=\"acs\">"+esc(x.symbol)+"</span><span class=\"acn\">"+esc(x.name||"")+"</span></div>";
+      }).join("");
+      ac.style.display = "block";
+    } else {
+      ac.style.display = "none";
+    }
+  }).catch(function(){});
+}
+
+var REASON_COUNT = 0;
+
+function loadLiveContext(symbol){
+  fetch(API + "/context?symbol=" + encodeURIComponent(symbol)).then(function(r){ return r.json(); }).then(function(res){
+    if(!res || !res.live){ return; }
+    var L = res.live;
+    var card = {
+      icon: "&#128225;",
+      label: "Live Market Context",
+      short: "What is happening with this name right now.",
+      why: esc(L.current_context || "") + (L.why_it_matters ? (" " + esc(L.why_it_matters)) : ""),
+      watch: esc(L.watch_for || ""),
+      lesson: esc(L.simple_lesson || "")
+    };
+    var vrl = document.getElementById("vrl");
+    if(!vrl) return;
+    var html = buildCard(card, "live0", true);
+    vrl.insertAdjacentHTML("afterbegin", html);
+  }).catch(function(){});
+}
+
+function run(){
+  var val = document.getElementById("si").value.trim();
+  if(!val) return;
+  document.getElementById("ac").style.display = "none";
+  document.getElementById("lb").classList.add("on");
+  document.getElementById("rpt").style.opacity = "0.3";
+
+  fetch(API + "/analyze?symbol=" + encodeURIComponent(val)).then(function(r){ return r.json(); }).then(function(d){
+    if(d.error){
+      document.getElementById("sym").textContent = "NOT FOUND";
+      document.getElementById("sfull").textContent = d.error;
+      document.getElementById("lb").classList.remove("on");
+      document.getElementById("rpt").style.opacity = "1";
+      currentSymbol = null;
+      updateSaveBtn();
+      return;
+    }
+
+    currentSymbol = d.symbol || val;
+    currentName = d.name || "";
+    updateSaveBtn();
+    updateAskChips(d.suggested_questions);
+    document.getElementById("sym").textContent = d.symbol || val;
+    document.getElementById("sfull").textContent = d.name || val;
+    document.getElementById("ssect").textContent = d.sector || "";
+    document.getElementById("spx").textContent = "$" + (d.price || 0).toLocaleString();
+    document.getElementById("mp").textContent = "$" + (d.price || 0).toLocaleString();
+
+    var chg = d.change_pct || 0;
+    var sign = chg >= 0 ? "+" : "";
+    document.getElementById("schg").textContent = sign + chg + "% today";
+    document.getElementById("schg").className = "sc " + (chg >= 0 ? "up" : "dn");
+    document.getElementById("mc").textContent = sign + chg + "%";
+    document.getElementById("mc").className = "mv2 " + (chg >= 0 ? "pos" : "neg");
+    document.getElementById("ms").textContent = d.conviction || "--";
+    document.getElementById("mpe").textContent = d.pe_ratio || "N/A";
+    document.getElementById("mt").textContent = (d.analyst_target && d.analyst_target !== "N/A") ? ("$" + d.analyst_target) : "N/A";
+    document.getElementById("mm").textContent = fmt(d.market_cap);
+
+    // CHUNK: Feature 1: Moat badge and plain English reason
+    var moatWrap = document.getElementById("moatWrap");
+    var moat = d.apex_moat;
+    if(moatWrap){
+      if(moat && moat.rating){
+        var mcls = moat.rating === "Wide" ? "moatWide" : (moat.rating === "Narrow" ? "moatNarrow" : "moatNone");
+        var mlabel = moat.rating === "Wide" ? "Wide Moat &#127984;" : (moat.rating === "Narrow" ? "Narrow Moat" : "No Moat");
+        moatWrap.innerHTML = "<span class=\"moatBadge " + mcls + "\">" + mlabel + "</span><div class=\"moatReason\">" + esc(moat.reason || "") + "</div>";
+        moatWrap.style.display = "block";
+      } else {
+        moatWrap.innerHTML = ""; moatWrap.style.display = "none";
+      }
+    }
+
+    // CHUNK: Feature 2: price vs analyst target gauge
+    var gauge = document.getElementById("mtGauge");
+    if(gauge){
+      var gtgt = d.analyst_target, gpx = d.price || 0;
+      if(gtgt && gtgt !== "N/A" && gpx){
+        var tnum = parseFloat(gtgt);
+        var ups = tnum ? Math.round(((tnum - gpx) / gpx) * 1000) / 10 : 0;
+        var fillPct, fillColor;
+        if(gpx <= tnum){ fillPct = tnum > 0 ? Math.max(5, Math.min(100, (gpx / tnum) * 100)) : 0; fillColor = "var(--green)"; }
+        else { fillPct = 100; fillColor = "var(--red)"; }
+        var gword = ups >= 0 ? (ups + "% upside") : (Math.abs(ups) + "% downside");
+        gauge.innerHTML = "<div class=\"ml2\">Price vs Analyst Target</div><div class=\"target-gauge\"><div class=\"fill\" style=\"width:" + fillPct + "%;background:" + fillColor + "\"></div></div><div class=\"gaugeTxt\">$" + gpx.toLocaleString() + " current, $" + tnum.toLocaleString() + " target, " + gword + "</div>";
+      } else {
+        gauge.innerHTML = "<div class=\"ml2\">Price vs Analyst Target</div><div class=\"gaugeTxt\">No analyst target is available for this one right now.</div>";
+      }
+    }
+
+    // CHUNK: Feature 4: Deep Fundamentals three card stack
+    var deep = document.getElementById("deepFund");
+    if(deep){
+      var fundCard = function(label, value, cls){ return "<div class=\"met\"><div class=\"ml2\">" + label + "</div><div class=\"mv2 " + cls + "\">" + value + "</div></div>"; };
+      var fcards = [];
+      var rg = d.revenue_growth;
+      if(typeof rg === "number"){
+        var rgp = Math.round(rg * 1000) / 10;
+        if(rgp >= 0){ fcards.push(fundCard("How fast it is growing", rgp + "% annual revenue growth", rgp > 10 ? "pos" : (rgp > 3 ? "neu" : "neg"))); }
+        else { fcards.push(fundCard("How fast it is growing", "Revenue is declining", "neg")); }
+      } else { fcards.push(fundCard("How fast it is growing", "Not reported", "neu")); }
+      var pm = d.profit_margin;
+      if(typeof pm === "number"){
+        var pmp = Math.round(pm * 1000) / 10;
+        if(pmp >= 0){ fcards.push(fundCard("How much profit it keeps", pmp + " cents of every dollar is profit", pmp > 15 ? "pos" : (pmp > 5 ? "neu" : "neg"))); }
+        else { fcards.push(fundCard("How much profit it keeps", "Currently unprofitable", "neg")); }
+      } else { fcards.push(fundCard("How much profit it keeps", "Not reported", "neu")); }
+      var de = d.debt_to_equity;
+      if(typeof de === "number"){
+        if(de < 0){ fcards.push(fundCard("How much debt it carries", "Negative equity, a real caution", "neg")); }
+        else { var deWord = de < 1 ? "less debt than equity" : (de < 2 ? "a moderate debt load" : "more debt than equity"); fcards.push(fundCard("How much debt it carries", de + ", " + deWord, de < 1 ? "pos" : (de < 2 ? "neu" : "neg"))); }
+      } else { fcards.push(fundCard("How much debt it carries", "Not reported", "neu")); }
+      deep.innerHTML = fcards.join("");
+    }
+
+    // CHUNK: Valuation Deep Dive cards
+    var valGrid = document.getElementById("valGrid");
+    if(valGrid){
+      var vdCard = function(label, value, desc, cls){ return "<div class=\"met\"><div class=\"ml2\">" + label + "</div><div class=\"mv2 " + cls + "\">" + value + "</div><div class=\"valDesc\">" + desc + "</div></div>"; };
+      var vdCards = [];
+      var vdPeg = d.peg_ratio;
+      if(typeof vdPeg === "number"){ vdCards.push(vdCard("Growth-adjusted P/E", String(vdPeg), "How much you pay for growth", vdPeg < 1 ? "pos" : (vdPeg < 2 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("Growth-adjusted P/E", "N/A", "How much you pay for growth", "neu")); }
+      var vdPb = d.price_to_book;
+      if(typeof vdPb === "number"){ vdCards.push(vdCard("P/B – Assets vs Price", String(vdPb), "What the company's assets are worth", vdPb < 1.5 ? "pos" : (vdPb < 3 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("P/B – Assets vs Price", "N/A", "What the company's assets are worth", "neu")); }
+      var vdPs = d.price_to_sales;
+      if(typeof vdPs === "number"){ vdCards.push(vdCard("P/S – Price vs Revenue", String(vdPs), "Price vs. Revenue", vdPs < 2 ? "pos" : (vdPs < 5 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("P/S – Price vs Revenue", "N/A", "Price vs. Revenue", "neu")); }
+      var vdEv = d.ev_to_ebitda;
+      if(typeof vdEv === "number"){ vdCards.push(vdCard("EV/EBITDA – Enterprise Value", String(vdEv), "Enterprise Value to operating profit", vdEv < 15 ? "pos" : (vdEv < 25 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("EV/EBITDA – Enterprise Value", "N/A", "Enterprise Value to operating profit", "neu")); }
+      var vdRoe = d.roe;
+      if(typeof vdRoe === "number"){ var vdRoePct = Math.round(vdRoe * 1000) / 10; vdCards.push(vdCard("ROE – Return on Equity", vdRoePct + "%", "How well management uses shareholder money", vdRoePct > 15 ? "pos" : (vdRoePct > 8 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("ROE – Return on Equity", "N/A", "How well management uses shareholder money", "neu")); }
+      var vdFcf = d.fcf_yield;
+      if(typeof vdFcf === "number"){ vdCards.push(vdCard("FCF Yield – Free Cash Flow", vdFcf + "%", "Cash the company generates for you", vdFcf > 5 ? "pos" : (vdFcf > 2 ? "neu" : "neg"))); }
+      else { vdCards.push(vdCard("FCF Yield – Free Cash Flow", "N/A", "Cash the company generates for you", "neu")); }
+      valGrid.innerHTML = vdCards.join("");
+    }
+
+    // CHUNK: Sector Guide card
+    var sectorCard = document.getElementById("sectorCard");
+    if(sectorCard){
+      if(d.sector_guide){
+        sectorCard.innerHTML = "<div class=\"ih\"><div class=\"it\">What matters for this sector</div></div><div class=\"itxt\">" + esc(d.sector_guide) + "</div>";
+        sectorCard.style.display = "block";
+      } else { sectorCard.style.display = "none"; }
+    }
+
+    // CHUNK: Feature 5: Apex Q Classroom, one lesson chosen from the live signals
+    var classroom = document.getElementById("classroom");
+    if(classroom){
+      var peNum = (d.pe_ratio && d.pe_ratio !== "N/A") ? parseFloat(d.pe_ratio) : null;
+      var insL = d.insider || [];
+      var hasInsiderBuy = insL.filter(function(t){ return t.is_clevel && t.action === "A" && t.kind !== "grant"; }).length >= 1;
+      var congL = d.congressional || [];
+      var hasCongBuy = congL.filter(function(t){ return String(t.action || "").toLowerCase().indexOf("purchase") >= 0; }).length >= 1;
+      var lesson;
+      if(peNum !== null && peNum > 60){ lesson = {t: "What a High PE Ratio Really Means", b: "A high price to earnings number means investors are paying a lot today for each dollar the company earns, betting that profits will grow fast. That can be fair for a real grower, but it also means the stock has further to fall if growth slows. A high PE is not automatically bad, it just raises the bar the company has to clear. Always ask what growth is already priced in."}; }
+      else if(peNum !== null && peNum < 12){ lesson = {t: "Value Stocks and the PE Ratio", b: "A low price to earnings number can mean a stock is cheap next to what it earns, which is what value investors hunt for. But cheap can also be a warning that the market expects trouble ahead. The skill is telling a real bargain apart from a value trap. Look at whether the business is steady or shrinking before you call it a deal."}; }
+      else if(d.verdict === "PASS"){ lesson = {t: "Why Patience Pays, the Art of Sitting Out", b: "A PASS does not mean a stock is bad forever, it means today the risk outweighs the reward. Some of the best decisions in investing are the trades you skip. Cash is a position, and waiting for a clearer setup is a real strategy. The market will still be here when the picture improves."}; }
+      else if(hasInsiderBuy){ lesson = {t: "Insider Buying, Why Executives Buy Their Own Stock", b: "When a company officer buys shares with their own money it is worth noting, because there is really only one reason to buy, they expect the price to rise. That is why insider buying is a stronger signal than insider selling, which happens for many ordinary reasons. It is not a guarantee, but a cluster of insiders buying is a quiet vote of confidence from the people who know the company best."}; }
+      else if(hasCongBuy){ lesson = {t: "Congressional Trades, What They Signal and What They Do Not", b: "Members of Congress must report their trades by law, and some investors watch these filings closely. The thinking is that lawmakers sometimes see policy shifts before the public does. Treat it as one small clue, not a reason on its own, since the reports can lag the actual trade by weeks. It is context, never a command."}; }
+      else if(d.verdict === "WATCH"){ lesson = {t: "The Buy/Sell/Hold Framework", b: "Professional investors think in three simple buckets. Buy when a stock is undervalued (low multiples, strong fundamentals, good moat). Sell when the business is deteriorating, overvalued, or you find a better place for your money. Hold when the stock is fairly priced and the business is steady. Apex Q's APPROVE/PASS/WATCH verdicts are a simplified version of this thinking: APPROVE suggests the numbers lean positive, PASS says step aside, and WATCH means wait for a clearer picture."}; }
+      else { lesson = {t: "How to Read a Stock Report Without Panic", b: "A stock report is a set of signals, not a crystal ball, and no single number tells the whole story. Read each piece in context, the price move, the valuation, the analyst view, the insider and lawmaker activity, and see whether they agree or disagree. When they disagree, that is your cue to slow down, not speed up. The goal is understanding, not a rushed yes or no."}; }
+      classroom.innerHTML = "<div class=\"ic classCard\"><div class=\"ih\"><div class=\"it\">" + esc(lesson.t) + "</div></div><div class=\"itxt\">" + lesson.b + "</div></div>";
+    }
+
+    var v = d.verdict || "WATCH";
+    document.getElementById("vbox").className = "vb " + v.toLowerCase();
+    document.getElementById("vbdg").className = "vbdg " + v.toLowerCase();
+    var vi = {APPROVE:"&#9989;", PASS:"&#10060;", WATCH:"&#9889;"};
+    document.getElementById("vbdg").innerHTML = vi[v] + " " + v;
+    document.getElementById("vsco").textContent = "Market Intelligence Rating: " + (d.conviction || "--");
+
+    var nm = esc(d.name || d.symbol);
+    var conf = {
+      APPROVE: "The weight of evidence leans positive on " + nm + ". The signals below across price, valuation, analyst calls, and smart money line up more positive than negative. Read each one to understand the full picture before acting.",
+      PASS: "The weight of evidence leans negative on " + nm + " right now. More signals point down than up. The cards below explain exactly what is dragging on this name and what would need to change.",
+      WATCH: "The signals on " + nm + " are mixed right now. Some point up and some point down, so the patient move is to watch and wait for a clearer setup. The cards below explain each signal in plain English."
+    };
+    var alertHtml = "";
+    if(d.alert === "sharp_drop"){
+      alertHtml = "<div class=\"vdrop\">&#9888;&#65039; This stock just had an unusually sharp drop. The analyst target and rating shown below were most likely set before the drop, so they may be stale and the upside they imply can be an illusion created by the falling price. Understand why it fell before considering anything. That is why the call is held at WATCH.</div>";
+    } else if(d.alert === "insider_selling"){
+      alertHtml = "<div class=\"vdrop\">&#9888;&#65039; Several company executives recently sold large amounts of their own stock. Insiders sell for many reasons, so this is not proof of trouble, but a cluster of top officers selling at once is a real caution. That is why the call is held at WATCH. Read the Insider Activity section below.</div>";
+    }
+    // CHUNK: pre/post market and earnings banner, shown above the verdict so a stale verdict never misleads
+    var extHtml = "";
+    if(d.extended_note){
+      var extUp = (d.extended && typeof d.extended.change_pct === "number") ? d.extended.change_pct >= 0 : true;
+      var extBg = extUp ? "#e8f0ff" : "#fdecec";
+      var extBd = extUp ? "#003eaa" : "#c0392b";
+      var extIcon = extUp ? "&#128200;" : "&#128201;";
+      extHtml = "<div style=\"background:" + extBg + ";border-left:4px solid " + extBd + ";padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:14px;line-height:1.5;color:#1a1a1a\">" + extIcon + " " + esc(d.extended_note) + "</div>";
+    }
+    document.getElementById("vconf").innerHTML = extHtml + alertHtml + (conf[v] || "");
+
+    var confLevel = d.confidence || "Medium";
+    var cmap = {
+      High: {t: "High", c: "cf-high", x: "The data came back complete and consistent. This is a full picture."},
+      Medium: {t: "Medium", c: "cf-med", x: "Some data was missing or worth a second look. A solid read, but verify the key points yourself."},
+      Low: {t: "Low", c: "cf-low", x: "Key data was missing or looked off. Lean on your own research here and treat this as a starting point only."}
+    };
+    var ci = cmap[confLevel] || cmap.Medium;
+    var ce = document.getElementById("vconfidence");
+    ce.className = "vconfidence " + ci.c;
+    ce.innerHTML = "<div class=\"cf-row\"><span class=\"cf-dot\"></span>DATA CONFIDENCE: " + ci.t.toUpperCase() + "</div><div class=\"cf-exp\">" + ci.x + "</div>";
+    ce.style.display = "block";
+
+    var flags = d.flags || [];
+    var fe = document.getElementById("vflags");
+    if(flags.length){
+      fe.innerHTML = flags.map(function(f){
+        var cls = f.level === "warn" ? "vflag warn" : "vflag info";
+        var ic = f.level === "warn" ? "&#9888;&#65039; " : "&#8505;&#65039; ";
+        return "<div class=\"" + cls + "\">" + ic + esc(f.text) + "</div>";
+      }).join("");
+      fe.style.display = "block";
+    } else {
+      fe.innerHTML = "";
+      fe.style.display = "none";
+    }
+
+    var meanTxt = {
+      APPROVE: "APPROVE means the data leans toward a good entry. It does not mean a sure thing. No signal is ever certain. Always size your position sensibly and decide in advance the level where you would step out if you are wrong.",
+      PASS: "PASS means the data says step aside for now. It does not mean the company is bad forever. It means today the risk outweighs the reward. Conditions can change and flip this to a WATCH or an APPROVE later.",
+      WATCH: "WATCH means do not act yet. The signals disagree, so there is no clear edge today. Patience is a position. Wait for the picture to sharpen before you commit money."
+    };
+    var vmean = document.getElementById("vmean");
+    vmean.innerHTML = "<div class=\"vmeant\">What " + v + " Means</div><div class=\"vmeantxt\">" + meanTxt[v] + "</div>";
+    vmean.style.display = "block";
+
+    var wg = document.getElementById("wguide");
+    if(v === "WATCH"){
+      wg.innerHTML = "<div class=\"wg yellow\"><div class=\"wgt\">&#128064; What To Watch For</div><div class=\"wgtxt\">A clear price move above plus two percent on heavy volume. An analyst upgrade to Buy. A C level executive buying shares. A member of Congress disclosing a purchase. Any of these would tip the balance.</div></div><div class=\"wg blue\"><div class=\"wgt\">&#9889; What Changes The Verdict</div><div class=\"wgtxt\">To reach APPROVE the positive signals need to outweigh the negative ones. An analyst upgrade or insider buying are the fastest ways to get there. To slip to PASS the price would need to break down alongside a negative analyst call.</div></div>";
+    } else if(v === "PASS"){
+      wg.innerHTML = "<div class=\"wg red\"><div class=\"wgt\">&#128064; Watch For Recovery Signs</div><div class=\"wgtxt\">Price finding a floor and holding above recent lows. An analyst upgrade. Insider or congressional buying. These would be the first hints the tide is turning.</div></div><div class=\"wg blue\"><div class=\"wgt\">&#9889; What Changes The Verdict</div><div class=\"wgtxt\">To climb to WATCH the price needs to stabilize and at least one negative signal needs to flip positive. To reach APPROVE several signals would need to line up positive at once.</div></div>";
+    } else {
+      wg.innerHTML = "";
+    }
+
+    var reasons = buildReasons(d);
+    REASON_COUNT = reasons.length;
+    var vrl = document.getElementById("vrl");
+    vrl.innerHTML = reasons.map(function(r, i){ return buildCard(r, i, false); }).join("");
+
+    renderCong(d.congressional || []);
+    renderIns(d.insider || [], d.insider_sell_value || 0, d.insider_big_block || false);
+    renderNews(d.news || []);
+    renderGrades(d.fmp || {});
+
+    var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
+    var panel = document.getElementById("panel");
+    var emptyEl = document.getElementById("panelEmpty");
+    if(emptyEl){ emptyEl.remove(); }
+    var ex = panel.querySelector("[data-sym=\"" + d.symbol + "\"]");
+    var pcard = "<div class=\"sg\" data-sym=\"" + esc(d.symbol) + "\"><div class=\"sgtop\"><div class=\"sgsym\">" + esc(d.symbol) + "</div><div class=\"sgv " + vc + "\">" + v + "</div></div><div class=\"sgi\">$" + (d.price || 0).toLocaleString() + " | " + esc(d.conviction || "") + " | " + esc(d.name) + "</div></div>";
+    if(ex){ ex.outerHTML = pcard; }
+    else { panel.insertAdjacentHTML("afterbegin", pcard); }
+    var pcards = panel.querySelectorAll(".sg");
+    for(var ci = pcards.length - 1; ci >= 12; ci--){ pcards[ci].remove(); }
+
+    // Fire the live context request AFTER the report is on screen. It can only add, never block.
+    loadLiveContext(d.symbol || val);
+
+  }).catch(function(){
+    document.getElementById("sym").textContent = "ERROR";
+    document.getElementById("sfull").textContent = "Connection failed. Please try again.";
+  }).then(function(){
+    document.getElementById("lb").classList.remove("on");
+    document.getElementById("rpt").style.opacity = "1";
+  });
+}
+
+document.addEventListener("click", function(e){
+  var hdr = e.target.closest(".vr-hdr");
+  if(hdr){ toggleCard(hdr.getAttribute("data-bid")); return; }
+  var rem = e.target.closest("[data-remove]");
+  if(rem){ e.stopPropagation(); removeFromWatch(rem.getAttribute("data-remove")); return; }
+  var themeEl = e.target.closest("[data-theme]");
+  if(themeEl){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
+  var symEl = e.target.closest("[data-sym]");
+  if(symEl){ go(symEl.getAttribute("data-sym")); return; }
+  if(e.target.id === "analyzeBtn"){ run(); return; }
+  if(!e.target.closest(".srow")){ document.getElementById("ac").style.display = "none"; }
+});
+
+var acT;
+document.getElementById("si").addEventListener("input", function(){
+  clearTimeout(acT);
+  var v = this.value.trim();
+  if(v.length < 2){ document.getElementById("ac").style.display = "none"; return; }
+  acT = setTimeout(function(){ suggest(v); }, 300);
+});
+
+document.getElementById("si").addEventListener("keypress", function(e){
+  if(e.key === "Enter"){ run(); }
+});
+
+// CHUNK: Ask/Compare name resolution — autocomplete that fills the input, like Home search
+function attachAc(inputId, dropId){
+  var inp = document.getElementById(inputId);
+  var drop = document.getElementById(dropId);
+  if(!inp || !drop){ return; }
+  var t;
+  inp.addEventListener("input", function(){
+    clearTimeout(t);
+    var v = this.value.trim();
+    if(v.length < 2){ drop.style.display = "none"; return; }
+    t = setTimeout(function(){
+      fetch(API + "/search?q=" + encodeURIComponent(v)).then(function(r){ return r.json(); }).then(function(dd){
+        if(dd.results && dd.results.length){
+          drop.innerHTML = dd.results.map(function(x){
+            return "<div class=\"aci\" data-fill=\"" + esc(x.symbol) + "\"><span class=\"acs\">" + esc(x.symbol) + "</span><span class=\"acn\">" + esc(x.name || "") + "</span></div>";
+          }).join("");
+          drop.style.display = "block";
+        } else { drop.style.display = "none"; }
+      }).catch(function(){});
+    }, 300);
+  });
+  drop.addEventListener("click", function(e){
+    var item = e.target.closest("[data-fill]");
+    if(!item){ return; }
+    inp.value = item.getAttribute("data-fill");
+    drop.style.display = "none";
+  });
+}
+attachAc("askSym", "acAsk");
+attachAc("cmp0", "acCmp");
+
+buildTicker();
+loadMarket();
+
+var currentUser = null;
+var authMode = "login";
+var watchSymbols = [];
+var currentSymbol = null;
+var currentName = "";
+
+function setAuthMode(mode){
+  authMode = mode;
+  document.getElementById("tabLogin").classList.toggle("active", mode === "login");
+  document.getElementById("tabSignup").classList.toggle("active", mode === "signup");
+  document.getElementById("authSubmit").textContent = mode === "login" ? "Log In" : "Create Account";
+  document.getElementById("authHint").textContent = mode === "signup" ? "Username 3 to 30 characters. Password at least 8 characters." : "";
+  document.getElementById("authPass").setAttribute("autocomplete", mode === "login" ? "current-password" : "new-password");
+  var err = document.getElementById("authErr");
+  err.style.display = "none";
+}
+
+function openAuth(mode){
+  setAuthMode(mode || "login");
+  document.getElementById("authErr").style.display = "none";
+  document.getElementById("authOverlay").classList.add("on");
+}
+
+function closeAuth(){
+  document.getElementById("authOverlay").classList.remove("on");
+}
+
+function showAuthErr(msg){
+  var err = document.getElementById("authErr");
+  err.textContent = msg;
+  err.style.display = "block";
+}
+
+function submitAuth(){
+  var u = document.getElementById("authUser").value.trim();
+  var p = document.getElementById("authPass").value;
+  if(!u || !p){ showAuthErr("Enter your username and password."); return; }
+  var btn = document.getElementById("authSubmit");
+  btn.disabled = true;
+  var path = authMode === "signup" ? "/auth/signup" : "/auth/login";
+  fetch(API + path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({username: u, password: p})
+  }).then(function(r){ return r.json().then(function(d){ return {status: r.status, body: d}; }); }).then(function(res){
+    btn.disabled = false;
+    if(res.body && res.body.ok){
+      currentUser = res.body.user;
+      document.getElementById("authPass").value = "";
+      closeAuth();
+      refreshMe();
+    } else {
+      showAuthErr((res.body && res.body.error) ? res.body.error : "Something went wrong. Try again.");
+    }
+  }).catch(function(){
+    btn.disabled = false;
+    showAuthErr("Connection issue. Try again.");
+  });
+}
+
+function doLogout(){
+  fetch(API + "/auth/logout", {method: "POST", credentials: "same-origin"}).then(function(){
+    currentUser = null;
+    refreshMe();
+  }).catch(function(){});
+}
+
+function refreshMe(){
+  fetch(API + "/auth/me", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    currentUser = (d && d.user) ? d.user : null;
+    var b = document.getElementById("acctBtn");
+    if(!b) return;
+    if(currentUser){ b.textContent = currentUser.username; b.classList.add("loggedin"); }
+    else { b.textContent = "Log In"; b.classList.remove("loggedin"); }
+    loadWatchlist();
+  }).catch(function(){});
+}
+
+function updateSaveBtn(){
+  var row = document.getElementById("saveRow");
+  var btn = document.getElementById("saveBtn");
+  if(!btn || !row) return;
+  if(!currentSymbol){ row.style.display = "none"; return; }
+  row.style.display = "block";
+  var saved = watchSymbols.indexOf(currentSymbol) >= 0;
+  if(saved){ btn.className = "saveBtn saved"; btn.innerHTML = "&#11088; Saved to Watchlist"; }
+  else { btn.className = "saveBtn"; btn.innerHTML = "&#9734; Save to Watchlist"; }
+}
+
+function renderWatchCards(items){
+  var panel = document.getElementById("watchPanel");
+  if(!panel) return;
+  panel.innerHTML = items.map(function(it){
+    var sid = it.symbol.replace(/[^A-Za-z0-9]/g, "_");
+    var nm = (it.name && it.name !== it.symbol) ? it.name : "";
+    return "<div class=\"sg watchCard\" data-sym=\"" + esc(it.symbol) + "\">"
+      + "<button class=\"watchRemove\" data-remove=\"" + esc(it.symbol) + "\" aria-label=\"Remove\">&times;</button>"
+      + "<div class=\"sgtop\"><div class=\"sgsym\">" + esc(it.symbol) + "</div><div class=\"sgv loading\" id=\"wv_" + sid + "\">&#8230;</div></div>"
+      + "<div class=\"sgi\" id=\"wi_" + sid + "\">" + (nm ? esc(nm) : "Tap to open report") + "</div></div>";
+  }).join("");
+}
+
+function fillWatchCard(it){
+  var sid = it.symbol.replace(/[^A-Za-z0-9]/g, "_");
+  return fetch(API + "/analyze?symbol=" + encodeURIComponent(it.symbol)).then(function(r){ return r.json(); }).then(function(d){
+    var v = document.getElementById("wv_" + sid);
+    var i = document.getElementById("wi_" + sid);
+    if(v){
+      if(d && d.verdict){
+        var vc = d.verdict === "APPROVE" ? "va" : (d.verdict === "PASS" ? "vp" : "vw");
+        v.className = "sgv " + vc;
+        v.textContent = d.verdict;
+      } else {
+        v.className = "sgv loading";
+        v.textContent = "N/A";
+      }
+    }
+    if(i){
+      if(d && d.price){
+        var sgn = (d.change_pct >= 0 ? "+" : "");
+        var nm = d.name || it.name || "";
+        i.innerHTML = "<span class=\"wPrice\">$" + d.price.toLocaleString() + "</span> <span class=\"" + (d.change_pct >= 0 ? "wUp" : "wDn") + "\">" + sgn + (d.change_pct || 0) + "%</span>" + (nm ? " &bull; " + esc(nm) : "");
+      } else {
+        i.textContent = "Tap to open report";
+      }
+    }
+  }).catch(function(){
+    var i = document.getElementById("wi_" + sid);
+    if(i) i.textContent = "Tap to open report";
+  });
+}
+
+function loadWatchlist(){
+  var t = document.getElementById("watchTitle");
+  var p = document.getElementById("watchPanel");
+  if(!currentUser){
+    watchSymbols = [];
+    if(t) t.style.display = "none";
+    if(p){ p.style.display = "none"; p.innerHTML = ""; }
+    updateSaveBtn();
+    return;
+  }
+  fetch(API + "/watchlist", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    var items = (d && d.items) ? d.items : [];
+    watchSymbols = items.map(function(x){ return x.symbol; });
+    updateSaveBtn();
+    if(!items.length){
+      if(t) t.style.display = "none";
+      if(p){ p.style.display = "none"; p.innerHTML = ""; }
+      return;
+    }
+    if(t) t.style.display = "flex";
+    if(p) p.style.display = "block";
+    renderWatchCards(items);
+    var idx = 0;
+    function nextFill(){
+      if(idx >= items.length) return;
+      var it = items[idx++];
+      fillWatchCard(it).then(function(){ setTimeout(nextFill, 150); });
+    }
+    nextFill();
+  }).catch(function(){});
+}
+
+function toggleSave(){
+  if(!currentSymbol) return;
+  if(!currentUser){ openAuth("login"); return; }
+  var saved = watchSymbols.indexOf(currentSymbol) >= 0;
+  var path = saved ? "/watchlist/remove" : "/watchlist/add";
+  fetch(API + path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({symbol: currentSymbol, name: currentName})
+  }).then(function(r){ return r.json(); }).then(function(res){
+    if(res && res.ok){
+      if(saved){ watchSymbols = watchSymbols.filter(function(s){ return s !== currentSymbol; }); }
+      else { watchSymbols.push(currentSymbol); }
+      updateSaveBtn();
+      loadWatchlist();
+    } else if(res && res.error === "not_logged_in"){
+      openAuth("login");
+    }
+  }).catch(function(){});
+}
+
+function removeFromWatch(sym){
+  fetch(API + "/watchlist/remove", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({symbol: sym})
+  }).then(function(r){ return r.json(); }).then(function(res){
+    if(res && res.ok){
+      watchSymbols = watchSymbols.filter(function(s){ return s !== sym; });
+      updateSaveBtn();
+      loadWatchlist();
+    }
+  }).catch(function(){});
+}
+
+document.getElementById("acctBtn").addEventListener("click", function(){
+  if(currentUser){
+    if(confirm("Log out of Apex Q?")){ doLogout(); }
+  } else {
+    openAuth("login");
+  }
+});
+document.getElementById("authClose").addEventListener("click", closeAuth);
+document.getElementById("tabLogin").addEventListener("click", function(){ setAuthMode("login"); });
+document.getElementById("tabSignup").addEventListener("click", function(){ setAuthMode("signup"); });
+document.getElementById("authSubmit").addEventListener("click", submitAuth);
+document.getElementById("saveBtn").addEventListener("click", toggleSave);
+document.getElementById("authOverlay").addEventListener("click", function(e){ if(e.target.id === "authOverlay"){ closeAuth(); } });
+document.getElementById("authPass").addEventListener("keypress", function(e){ if(e.key === "Enter"){ submitAuth(); } });
+function loadTrending(){
+  fetch(API + "/trending").then(function(r){ return r.json(); }).then(function(d){
+    var items = (d && d.items) ? d.items : [];
+    var row = document.getElementById("qrow");
+    var lab = document.getElementById("qlabel");
+    if(!row) return;
+    if(!items.length){ row.innerHTML = ""; if(lab) lab.style.display = "none"; return; }
+    if(lab) lab.style.display = "block";
+    row.innerHTML = items.map(function(it){
+      var chg = "";
+      if(it.change_pct !== null && it.change_pct !== undefined){
+        chg = " <span class=\"" + (it.change_pct >= 0 ? "qup" : "qdn") + "\">" + (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%</span>";
+      }
+      return "<div class=\"qp\" data-sym=\"" + esc(it.symbol) + "\">" + esc(it.symbol) + chg + "</div>";
+    }).join("");
+  }).catch(function(){});
+}
+
+var _scanLoaded = false;
+function loadScan(lens){
+  var btns = document.querySelectorAll(".lens");
+  for(var i=0;i<btns.length;i++){ btns[i].classList.toggle("active", btns[i].getAttribute("data-lens") === lens); }
+  var load = document.getElementById("scanLoad");
+  var res = document.getElementById("scanResults");
+  if(load){ load.classList.add("on"); }
+  if(res){ res.innerHTML = ""; }
+  fetch(API + "/scan?lens=" + encodeURIComponent(lens)).then(function(r){ return r.json(); }).then(function(d){
+    if(load){ load.classList.remove("on"); }
+    var items = (d && d.items) ? d.items : [];
+    if(!res){ return; }
+    if(!items.length){ res.innerHTML = "<div class=\"scanEmpty\">No names match this lens right now. Markets shift through the day, so check back later or try another lens.</div>"; return; }
+    res.innerHTML = items.map(function(it){
+      var v = it.verdict || "WATCH";
+      var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
+      var c = (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%";
+      var cc = it.change_pct >= 0 ? "pos" : "neg";
+      return "<div class=\"scanRow\" data-sym=\"" + esc(it.symbol) + "\">"
+        + "<div class=\"scanTop\"><div class=\"scanSym\">" + esc(it.symbol) + "</div><div class=\"scanV " + vc + "\">" + v + "</div></div>"
+        + "<div class=\"scanName\">" + esc(it.name || "") + "</div>"
+        + "<div class=\"scanReason\">" + esc(it.reason || "") + "</div>"
+        + "<div class=\"scanMeta\"><span class=\"" + cc + "\">" + c + "</span> <span class=\"gray\">$" + (it.price || 0).toLocaleString() + "</span></div>"
+        + "</div>";
+    }).join("");
+  }).catch(function(){
+    if(load){ load.classList.remove("on"); }
+    if(res){ res.innerHTML = "<div class=\"scanEmpty\">Could not load the scan. Check your connection and try again.</div>"; }
+  });
+}
+var _lensBtns = document.querySelectorAll(".lens");
+for(var _l=0; _l<_lensBtns.length; _l++){
+  _lensBtns[_l].addEventListener("click", function(){ loadScan(this.getAttribute("data-lens")); });
+}
+
+function runCompare(){
+  var syms = [];
+  ["cmp0", "cmp1", "cmp2"].forEach(function(id){ var v = document.getElementById(id).value.trim(); if(v){ syms.push(v); } });
+  var verd = document.getElementById("cmpVerdict");
+  var res = document.getElementById("cmpResults");
+  if(syms.length < 2){ verd.innerHTML = "<div class=\"scanEmpty\">Type at least two tickers to compare.</div>"; res.innerHTML = ""; return; }
+  var load = document.getElementById("cmpLoad");
+  if(load){ load.classList.add("on"); }
+  verd.innerHTML = ""; res.innerHTML = "";
+  fetch(API + "/compare?symbols=" + encodeURIComponent(syms.join(","))).then(function(r){ return r.json(); }).then(function(d){
+    if(load){ load.classList.remove("on"); }
+    var items = (d && d.items) ? d.items : [];
+    if(!items.length){ verd.innerHTML = "<div class=\"scanEmpty\">Could not read those tickers. Check the symbols and try again.</div>"; return; }
+    if(d.reason){ verd.innerHTML = "<div class=\"cmpV\"><div class=\"cmpVh\">Which looks strongest</div><div class=\"cmpVt\">" + esc(d.reason) + "</div></div>"; }
+    res.innerHTML = items.map(function(it){
+      var v = it.verdict || "WATCH";
+      var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
+      var best = (it.symbol === d.strongest);
+      var c = (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%";
+      var cc = it.change_pct >= 0 ? "pos" : "neg";
+      var pe = (it.pe_ratio && it.pe_ratio !== "N/A") ? it.pe_ratio : "n/a";
+      var up = (it.upside !== null && it.upside !== undefined) ? (it.upside + "%") : "n/a";
+      return "<div class=\"cmpCard" + (best ? " cmpBest" : "") + "\" data-sym=\"" + esc(it.symbol) + "\">"
+        + (best ? "<div class=\"cmpFlag\">Strongest here</div>" : "")
+        + "<div class=\"cmpTop\"><div class=\"cmpSym\">" + esc(it.symbol) + "</div><div class=\"scanV " + vc + "\">" + v + "</div></div>"
+        + "<div class=\"cmpName\">" + esc(it.name || "") + "</div>"
+        + "<div class=\"cmpGrid\">"
+          + "<div><div class=\"cmpL\">Price</div><div class=\"cmpVal\">$" + (it.price || 0).toLocaleString() + "</div></div>"
+          + "<div><div class=\"cmpL\">Today</div><div class=\"cmpVal " + cc + "\">" + c + "</div></div>"
+          + "<div><div class=\"cmpL\">Upside</div><div class=\"cmpVal\">" + up + "</div></div>"
+          + "<div><div class=\"cmpL\">PE</div><div class=\"cmpVal\">" + pe + "</div></div>"
+        + "</div></div>";
+    }).join("");
+  }).catch(function(){ if(load){ load.classList.remove("on"); } verd.innerHTML = "<div class=\"scanEmpty\">Could not run the compare. Try again.</div>"; });
+}
+var _cmpBtn = document.getElementById("cmpBtn");
+if(_cmpBtn){ _cmpBtn.addEventListener("click", function(){ loadPeers(); runCompare(); }); }
+
+// CHUNK: Feature 3: suggest sector peers in the Compare tab
+function loadPeers(){
+  var box = document.getElementById("peerChips");
+  if(!box){ return; }
+  var sym = (document.getElementById("cmp0").value || "").trim().toUpperCase();
+  if(!sym){ box.style.display = "none"; box.innerHTML = ""; return; }
+  fetch(API + "/peers?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
+    var peers = (d && d.peers) ? d.peers : [];
+    if(!peers.length){ box.style.display = "none"; box.innerHTML = ""; return; }
+    box.innerHTML = "<span class=\"peerLabel\">Suggested peers</span>" + peers.map(function(p){ return "<button class=\"askChip peerChip\" data-peer=\"" + esc(p) + "\">" + esc(p) + "</button>"; }).join("");
+    box.style.display = "flex";
+    var chips = box.querySelectorAll(".peerChip");
+    for(var i = 0; i < chips.length; i++){
+      chips[i].addEventListener("click", function(){ fillPeer(this.getAttribute("data-peer")); });
+    }
+  }).catch(function(){ box.style.display = "none"; box.innerHTML = ""; });
+}
+function fillPeer(sym){
+  var ids = ["cmp0", "cmp1", "cmp2"];
+  for(var i = 0; i < ids.length; i++){
+    var el = document.getElementById(ids[i]);
+    if(el && !el.value.trim()){ el.value = sym; return; }
+  }
+  var last = document.getElementById("cmp2");
+  if(last){ last.value = sym; }
+}
+var _cmp0 = document.getElementById("cmp0");
+if(_cmp0){ _cmp0.addEventListener("blur", loadPeers); }
+
+var _moversLoaded = false;
+function loadMovers(){
+  fetch(API + "/movers").then(function(r){ return r.json(); }).then(function(d){
+    function fill(id, arr){
+      var el = document.getElementById(id);
+      if(!el){ return; }
+      if(!arr || !arr.length){ el.innerHTML = "<div class=\"moversEmpty\">Live list unavailable right now.</div>"; return; }
+      el.innerHTML = arr.map(function(it){
+        var c = (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%";
+        var cc = it.change_pct >= 0 ? "pos" : "neg";
+        return "<div class=\"moverRow\" data-sym=\"" + esc(it.symbol) + "\"><span class=\"moverSym\">" + esc(it.symbol) + "</span><span class=\"" + cc + "\">" + c + "</span></div>";
+      }).join("");
+    }
+    fill("moversUp", d && d.gainers);
+    fill("moversDn", d && d.losers);
+  }).catch(function(){
+    var u = document.getElementById("moversUp"), n = document.getElementById("moversDn");
+    if(u){ u.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
+    if(n){ n.innerHTML = "<div class=\"moversEmpty\">Could not load.</div>"; }
+  });
+}
+
+function updateAskChips(qs){
+  var row = document.getElementById("askChips");
+  if(!row || !qs || !qs.length){ return; }
+  row.innerHTML = qs.map(function(q){ return "<button class=\"askChip\" data-q=\"" + esc(q) + "\">" + esc(q) + "</button>"; }).join("");
+  var chips = row.querySelectorAll(".askChip");
+  for(var i=0;i<chips.length;i++){
+    chips[i].addEventListener("click", function(){
+      if(currentSymbol){ var sb = document.getElementById("askSym"); if(sb){ sb.value = currentSymbol; } }
+      document.getElementById("askQ").value = this.getAttribute("data-q");
+      showView("ask");
+      runAsk();
+    });
   }
 }
 
-
-def light_score(symbol):
-    cached = get_cache("disc_" + symbol)
-    if cached is not None:
-        return cached
-    try:
-        t = yf.Ticker(symbol)
-        hist = t.history(period="5d", timeout=10)
-        if hist.empty:
-            return None
-        info = t.info
-        cur = fmt_price(hist["Close"].iloc[-1])
-        prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
-        chg = round(((cur - prev) / prev) * 100, 2)
-        pe_raw = info.get("trailingPE")
-        pe = round(float(pe_raw), 2) if pe_raw else "N/A"
-        tgt_raw = info.get("targetMeanPrice")
-        tgt = round(float(tgt_raw), 2) if tgt_raw else "N/A"
-        rec = info.get("recommendationKey", "hold").upper()
-        score = 0
-        if chg > 2:
-            score += 2
-        elif chg > 0:
-            score += 1
-        elif chg < -3:
-            score -= 2
-        else:
-            score -= 1
-        if rec in ["BUY", "STRONG_BUY"]:
-            score += 2
-        elif rec in ["SELL", "STRONG_SELL"]:
-            score -= 2
-        upside = None
-        if tgt and cur and str(tgt) != "N/A":
-            try:
-                upside = round(((float(tgt) - cur) / cur) * 100, 1)
-                # CHUNK: an unusually large upside often means a stale or outlier target, so it
-                # carries reduced weight here too, matching the full report.
-                if upside > 10:
-                    score += 1 if upside >= 40 else 2
-                elif upside > 0:
-                    score += 1
-                elif upside < -5:
-                    score -= 1
-            except:
-                pass
-        if pe != "N/A":
-            try:
-                pn = float(pe)
-                if pn < 20:
-                    score += 1
-                elif pn > 60:
-                    score -= 1
-            except:
-                pass
-        conviction = score_to_conviction(score)
-        verdict = "APPROVE" if score >= 4 else ("PASS" if score <= -2 else "WATCH")
-        # Same insider selling cap the full report uses, read in the same context, so the sector
-        # list can never show APPROVE on a stock the full report would hold at WATCH, and never
-        # caps a strong uptrend where insider selling is just profit taking after a run.
-        if verdict == "APPROVE" and insider_selling_cap(t, cur, is_strong_uptrend(info, cur)):
-            verdict = "WATCH"
-        # Extra fields used by the Scans lenses, read from the same data we already have.
-        div_yield = None
-        drate = info.get("dividendRate")
-        if drate and cur:
-            try:
-                div_yield = round(float(drate) / cur * 100, 2)
-            except Exception:
-                div_yield = None
-        if div_yield is None:
-            raw_dy = info.get("dividendYield")
-            if raw_dy:
-                try:
-                    v = float(raw_dy)
-                    div_yield = round(v * 100, 2) if v < 1 else round(v, 2)
-                except Exception:
-                    div_yield = None
-        near_high = None
-        hi = info.get("fiftyTwoWeekHigh")
-        if hi and cur:
-            try:
-                near_high = round(cur / float(hi) * 100, 1)
-            except Exception:
-                near_high = None
-        res = {
-            "symbol": symbol,
-            "name": info.get("longName", symbol),
-            "sector": info.get("sector", ""),
-            "price": cur,
-            "change_pct": chg,
-            "pe_ratio": pe,
-            "analyst_target": tgt,
-            "upside": upside,
-            "div_yield": div_yield,
-            "near_high": near_high,
-            "market_cap": info.get("marketCap", "N/A"),
-            "conviction": conviction,
-            "score": score,
-            "verdict": verdict,
-        }
-        set_cache("disc_" + symbol, res)
-        return res
-    except Exception as e:
-        logger.error("light_score %s: %s" % (symbol, e))
-        return None
-
-
-_TREND = {"data": None, "ts": 0}
-
-
-SCAN_UNIVERSE = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "AVGO", "JPM",
-    "BAC", "V", "MA", "UNH", "JNJ", "LLY", "XOM", "CVX", "WMT", "COST",
-    "HD", "PG", "KO", "DIS", "NFLX", "CRM", "ORCL", "ADBE", "INTC", "QCOM",
-    "VZ", "PFE", "MRK", "CAT", "BA", "NKE",
-]
-
-_SCAN = {"data": None, "ts": 0}
-
-
-def scan_universe():
-    # Scores a broad set of large, widely held US stocks once and caches the whole set for
-    # half an hour. Each symbol is cached on its own too, so this shares work with the sector
-    # lists and stays cheap after the first warmup.
-    now = time.time()
-    if _SCAN["data"] is not None and now - _SCAN["ts"] < 1800:
-        return _SCAN["data"]
-    rows = []
-    for sym in SCAN_UNIVERSE:
-        r = light_score(sym)
-        if r:
-            rows.append(r)
-    _SCAN["data"] = rows
-    _SCAN["ts"] = now
-    return rows
-
-
-@app.route("/scan")
-def scan():
-    lens = (request.args.get("lens") or "strong").lower()
-    rows = scan_universe()
-    out = []
-
-    def num(v):
-        return isinstance(v, (int, float))
-
-    if lens == "highs":
-        cand = [r for r in rows if num(r.get("near_high")) and r["near_high"] >= 90]
-        cand.sort(key=lambda r: r["near_high"], reverse=True)
-        for r in cand[:12]:
-            out.append(dict(r, reason="Trading at %s%% of its 52 week high, near the top of its range." % r["near_high"]))
-    elif lens == "growth":
-        cand = [r for r in rows if num(r.get("upside")) and r["upside"] > 0]
-        cand.sort(key=lambda r: r["upside"], reverse=True)
-        for r in cand[:12]:
-            out.append(dict(r, reason="Analysts see about %s%% upside to their average price target." % r["upside"]))
-    elif lens == "value":
-        cand = []
-        for r in rows:
-            try:
-                pen = float(r.get("pe_ratio"))
-            except (TypeError, ValueError):
-                continue
-            if 3 <= pen <= 18:
-                cand.append((pen, r))
-        cand.sort(key=lambda x: x[0])
-        for pen, r in cand[:12]:
-            out.append(dict(r, reason="Priced at about %s times earnings, on the lower, more value leaning end." % pen))
-    elif lens == "dividend":
-        cand = [r for r in rows if num(r.get("div_yield")) and r["div_yield"] >= 1.5]
-        cand.sort(key=lambda r: r["div_yield"], reverse=True)
-        for r in cand[:12]:
-            out.append(dict(r, reason="Pays about a %s%% dividend yield, toward the higher end of the group." % r["div_yield"]))
-    else:
-        lens = "strong"
-        cand = [r for r in rows if num(r.get("change_pct")) and r["change_pct"] > 0]
-        cand.sort(key=lambda r: r["change_pct"], reverse=True)
-        for r in cand[:12]:
-            out.append(dict(r, reason="Up %s%% today, among the strongest movers in the group." % r["change_pct"]))
-
-    return jsonify({"lens": lens, "items": out})
-
-
-def compare_reason(best, items):
-    v = best.get("verdict", "WATCH")
-    msg = best["symbol"] + " looks strongest in this group. "
-    descr = {
-        "APPROVE": "the engine leans positive on it",
-        "WATCH": "the engine holds it at watch, but it scores above the others here",
-        "PASS": "the engine is cautious on it, yet it still scores the least weak of the group",
-    }
-    dtext = descr.get(v, "it scores highest of the group")
-    msg += dtext[0].upper() + dtext[1:] + ". "
-    # CHUNK: only genuine positives count as reasons it is strongest. A down day is a caveat,
-    # never a reason, so it is framed honestly instead of being listed as a plus.
-    extras = []
-    caveats = []
-    up = best.get("upside")
-    chg = best.get("change_pct")
-    if isinstance(up, (int, float)) and up > 0:
-        extras.append("analysts see about %s%% upside to its average target" % up)
-    if isinstance(chg, (int, float)) and chg > 0:
-        extras.append("it is up %s%% today" % chg)
-    try:
-        pe_v = round(float(best.get("pe_ratio")), 1)
-        if pe_v <= 30:
-            extras.append("it trades at a reasonable %s times earnings" % pe_v)
-        elif pe_v > 45:
-            caveats.append("its valuation is rich at about %s times earnings" % pe_v)
-    except (TypeError, ValueError):
-        pass
-    if isinstance(chg, (int, float)) and chg < 0:
-        caveats.append("it is actually down %s%% today, so the edge here is in its other signals, not today's move" % abs(chg))
-    if extras:
-        msg += "Among the reasons: " + ", ".join(extras) + ". "
-    if caveats:
-        msg += "Worth noting: " + ", and ".join(caveats) + ". "
-    msg += "This weighs the same signals you see in each full report. Educational only, never advice."
-    return msg
-
-
-@app.route("/compare")
-def compare():
-    raw = request.args.get("symbols", "")
-    syms = [s.strip().upper() for s in raw.split(",") if s.strip()][:3]
-    items = []
-    for s in syms:
-        r = light_score(s)
-        if r:
-            items.append(r)
-    strongest = None
-    reason = ""
-    if items:
-        best = max(items, key=lambda r: (r.get("score", 0), r.get("upside") or 0, r.get("change_pct") or 0))
-        strongest = best["symbol"]
-        reason = compare_reason(best, items)
-    return jsonify({"items": items, "strongest": strongest, "reason": reason})
-
-
-# CHUNK: Feature 3 — suggest peers in the same sector for the Compare tab. Sector does not change,
-# so the answer is cached. Falls back to a default large-cap group when the sector is unknown.
-PEERS_FALLBACK = ["AAPL", "MSFT", "NVDA", "AMZN"]
-
-
-@app.route("/peers")
-def peers():
-    symbol = request.args.get("symbol", "").strip().upper()
-    if not symbol:
-        return jsonify({"peers": []})
-    cached = get_cache("peers_" + symbol)
-    if cached is not None:
-        return jsonify({"peers": cached})
-    sector = None
-    try:
-        sector = (yf.Ticker(symbol).info or {}).get("sector") or (yf.Ticker(symbol).info or {}).get("industry")
-    except Exception as e:
-        logger.error("peers sector lookup %s: %s" % (symbol, e))
-    out = []
-    if sector:
-        for s in SCAN_UNIVERSE:
-            if s == symbol:
-                continue
-            try:
-                si = (yf.Ticker(s).info or {}).get("sector")
-            except Exception:
-                si = None
-            if si and si == sector:
-                out.append(s)
-            if len(out) >= 4:
-                break
-    if not out:
-        out = [s for s in PEERS_FALLBACK if s != symbol][:4]
-    set_cache("peers_" + symbol, out)
-    return jsonify({"peers": out})
-
-
-_MOVERS = {"data": None, "ts": 0}
-
-
-@app.route("/movers")
-def movers():
-    # The biggest gainers and decliners across the whole market, pulled live and refreshed every
-    # half hour. Surfaces names well beyond the usual large caps, which fits the Discover idea.
-    now = time.time()
-    if _MOVERS["data"] is not None and now - _MOVERS["ts"] < 1800:
-        return jsonify(_MOVERS["data"])
-
-    def pct(v):
-        try:
-            return round(float(str(v).replace("%", "").replace("(", "-").replace(")", "").strip()), 2)
-        except Exception:
-            return None
-
-    def grab(path):
-        data = fmp_get(path)
-        out = []
-        if isinstance(data, list):
-            for d in data[:10]:
-                sym = d.get("symbol")
-                if not sym or len(sym) > 6:
-                    continue
-                out.append({
-                    "symbol": sym,
-                    "name": d.get("name") or sym,
-                    "change_pct": pct(d.get("changesPercentage")),
-                    "price": d.get("price"),
-                })
-        return out
-
-    out = {"gainers": grab("/api/v3/stock_market/gainers"), "losers": grab("/api/v3/stock_market/losers"), "data_timestamp": int(time.time())}
-    _MOVERS["data"] = out
-    _MOVERS["ts"] = now
-    return jsonify(out)
-
-
-@app.route("/alerts")
-def alerts():
-    # Reads the logged in user's saved stocks, scores each one, and surfaces only the names
-    # that warrant a look right now. This is the in app feed. A push to the phone is the next layer.
-    u = current_user()
-    if not u:
-        return jsonify({"status": "logged_out", "alerts": []})
-    conn = get_db()
-    if conn is None:
-        return jsonify({"status": "error", "alerts": []})
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT symbol, name FROM watchlist WHERE user_id = %s ORDER BY added_at DESC", (u["id"],))
-        rows = cur.fetchall()
-        cur.close()
-    except Exception as e:
-        logger.error("alerts list error: %s" % e)
-        return jsonify({"status": "error", "alerts": []})
-    finally:
-        conn.close()
-
-    if not rows:
-        return jsonify({"status": "empty", "alerts": []})
-
-    out = []
-    for sym, nm in rows:
-        r = light_score(sym)
-        if not r:
-            continue
-        chg = r.get("change_pct")
-        v = r.get("verdict")
-        name = r.get("name") or nm or sym
-        alert = None
-        if isinstance(chg, (int, float)) and chg <= -5:
-            alert = {"kind": "caution", "reason": "Down %s%% today, a sharp move worth checking." % abs(chg)}
-        elif v == "PASS":
-            alert = {"kind": "caution", "reason": "The engine has turned cautious on it. Open the full report for why."}
-        elif v == "APPROVE":
-            alert = {"kind": "positive", "reason": "The engine currently leans positive on it."}
-        elif isinstance(chg, (int, float)) and chg >= 5:
-            alert = {"kind": "positive", "reason": "Up %s%% today, a notable move." % chg}
-        if alert:
-            alert.update({"symbol": sym, "name": name, "change_pct": chg, "verdict": v})
-            out.append(alert)
-    out.sort(key=lambda a: 0 if a["kind"] == "caution" else 1)
-    return jsonify({"status": "ok", "alerts": out, "total_saved": len(rows)})
-
-
-def fmt_money_py(v):
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return "an unclear amount"
-    if v >= 1e9:
-        return "$%.1fB" % (v / 1e9)
-    if v >= 1e6:
-        return "$%.1fM" % (v / 1e6)
-    if v >= 1e3:
-        return "$%.0fK" % (v / 1e3)
-    return "$%.0f" % v
-
-
-def _safe_float(v, default):
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return default
-
-
-def insider_brief(symbol, price):
-    try:
-        t = yf.Ticker(symbol)
-        it = t.insider_transactions
-        if it is None or it.empty:
-            return {"selling": False, "clevel_sells": 0, "sell_value": 0}
-        clevel_sells = 0
-        sell_value = 0
-        p = price if isinstance(price, (int, float)) and price > 0 else 0
-        for _, rr in it.head(12).iterrows():
-            row = rr.to_dict()
-            pos = row.get("Position") or row.get("Title") or row.get("Relation") or ""
-            desc = row.get("Transaction") or row.get("Text") or ""
-            basis = str(desc) if str(desc).strip() else " ".join(str(x) for x in row.values())
-            if any(c in str(pos).upper() for c in INSIDER_CLEVEL) and classify_insider_kind(basis) == "sell":
-                clevel_sells += 1
-                try:
-                    sell_value += int(float(row.get("Shares") or 0)) * p
-                except Exception:
-                    pass
-        return {"selling": clevel_sells >= 1, "clevel_sells": clevel_sells, "sell_value": sell_value}
-    except Exception:
-        return {"selling": False, "clevel_sells": 0, "sell_value": 0}
-
-
-def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None):
-    try:
-        facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
-                 % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
-        ins_src = extra_insider if extra_insider is not None else ins
-        if ins_src is not None:
-            facts += " Insider picture: about %s recent C level sales." % ins_src.get("clevel_sells")
-        if extra_news:
-            heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
-            if heads:
-                facts += " Recent headlines: " + heads + "."
-        prompt = (
-            "You are the explanation layer for an educational stock app for everyday people and beginners. "
-            "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
-            "Here are the engine's current facts for this stock: " + facts + " "
-            "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
-            "Do not use any dashes or hyphens, use plain words. "
-            "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
-        )
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
-        payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400}}
-        r = requests.post(url, json=payload, timeout=12)
-        if r.status_code == 200:
-            data = r.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        logger.error("ask_gemini %s non-200 status %s: %s" % (symbol, r.status_code, str(r.text)[:200]))
-    except Exception as e:
-        logger.error("ask_gemini %s: %s" % (symbol, e))
-        # CHUNK: log the raw response for debugging
-        try:
-            logger.error("ask_gemini raw response: %s" % str(r.text)[:200])
-        except Exception:
-            pass
-    return None
-
-
-# CHUNK: DeepSeek AI provider, same grounding rules as Gemini
-def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None):
-    try:
-        facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
-                 % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
-        ins_src = extra_insider if extra_insider is not None else ins
-        if ins_src is not None:
-            facts += " Insider picture: about %s recent C level sales." % ins_src.get("clevel_sells")
-        if extra_news:
-            heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
-            if heads:
-                facts += " Recent headlines: " + heads + "."
-        prompt = (
-            "You are the explanation layer for an educational stock app for everyday people and beginners. "
-            "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
-            "Here are the engine's current facts for this stock: " + facts + " "
-            "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
-            "Do not use any dashes or hyphens, use plain words. "
-            "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
-        )
-        headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
-        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 400}
-        r = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=15)
-        if r.status_code == 200:
-            data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
-        logger.error("ask_deepseek %s non-200 status %s: %s" % (symbol, r.status_code, str(r.text)[:200]))
-    except Exception as e:
-        logger.error("ask_deepseek %s: %s" % (symbol, e))
-        try:
-            logger.error("ask_deepseek raw response: %s" % str(r.text)[:200])
-        except Exception:
-            pass
-    return None
-
-
-def ask_fallback(symbol, q, d, ins, extra_news=None, extra_insider=None):
-    ql = q.lower()
-    v = d.get("verdict", "WATCH")
-    chg = d.get("change_pct")
-    pe = d.get("pe_ratio")
-    up = d.get("upside")
-    # CHUNK: ground news questions in the report's actual headlines when we have them
-    if extra_news and any(w in ql for w in ["news", "headline", "article", "report", "press", "announce", "update"]):
-        heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
-        if heads:
-            return "Here are the most recent headlines for " + symbol + ". " + heads + ". Read the full articles in the News Feed section of the report. Educational only, never advice."
-    # CHUNK: answer 'why did it move' questions with available signals
-    if any(p in ql for p in ["why did it drop", "why is it down", "why did it fall", "why is it falling", "why did it rise", "why is it up", "why did it jump", "why is it rising", "why did it move", "what happened", "what caused", "what changed", "what's new", "whats new", "what is new", "any news", "news today"]):
-        move_bits = []
-        if isinstance(chg, (int, float)) and chg <= -0.01:
-            move_bits.append("it is down %s%% today" % abs(chg))
-        elif isinstance(chg, (int, float)) and chg >= 0.01:
-            move_bits.append("it is up %s%% today" % chg)
-        if v in ("PASS", "WATCH", "APPROVE"):
-            move_bits.append("the engine currently reads it at %s" % v)
-        move_ins = ins if ins is not None else insider_brief(symbol, d.get("price"))
-        if move_ins and move_ins.get("selling"):
-            move_bits.append("company executives have been selling recently, which can weigh on a stock")
-        if isinstance(up, (int, float)) and up < 0:
-            move_bits.append("it was already trading above the average analyst target, which can pull a price back")
-        if move_bits:
-            reasons = ", and ".join(move_bits)
-            reasons = reasons[0].upper() + reasons[1:]
-            return "Here is what the engine can see. " + reasons + ". That said, the real reason for a daily move is usually news, an earnings report, an analyst call, or a broader market swing, which the numbers alone do not capture. Check the News Feed section in the full report for the real story. Educational only, never advice."
-        return "Here is what the engine can see. The numbers on this one do not explain today's move, which usually means it is being driven by news, earnings, or a broader market swing rather than the signals. Check the News Feed section in the full report for the real story. Educational only, never advice."
-    parts = []
-    if any(w in ql for w in ["why", "watch", "verdict", "call", "rating", "approve", "pass", "buy", "hold"]):
-        if v == "WATCH":
-            parts.append("%s is at WATCH, which means the signals disagree, so there is no clear edge today and the patient move is to wait for the picture to sharpen." % symbol)
-        elif v == "APPROVE":
-            parts.append("%s is at APPROVE, which means the positive signals currently outweigh the negative ones." % symbol)
-        elif v == "PASS":
-            parts.append("%s is at PASS, which means the negatives outweigh the positives right now." % symbol)
-    if any(w in ql for w in ["change", "would", "flip", "improve", "turn", "move it"]):
-        parts.append("To move toward APPROVE the engine wants the positives to outweigh the negatives. The fastest ways are an analyst upgrade to Buy, a C level executive buying shares, or a clear price move up on heavy volume. It slips toward PASS if the price breaks down alongside a negative analyst call or heavy executive selling.")
-    ins_src = extra_insider if extra_insider is not None else ins
-    if ins_src is not None:
-        if ins_src.get("selling"):
-            n = ins_src.get("clevel_sells")
-            parts.append("On insiders: company people have been selling, about %s C level sale%s recently, roughly %s in value. Executives sell for many reasons, so selling alone is a softer signal than buying, but a cluster is a caution." % (n, "" if n == 1 else "s", fmt_money_py(ins_src.get("sell_value"))))
-        else:
-            parts.append("On insiders: no notable cluster of executive selling is showing up right now, which is neutral.")
-    if any(w in ql for w in ["valuation", "expensive", "cheap", "pe", "p/e", "earnings", "overvalued", "undervalued", "value"]):
-        if pe and str(pe) != "N/A":
-            tail = " That is on the higher side, so a lot of growth is already priced in." if _safe_float(pe, 0) > 40 else (" That is on the lower, more value leaning side." if _safe_float(pe, 99) < 18 else " That sits in a middle range.")
-            parts.append("On valuation: it trades at about %s times earnings." % pe + tail)
-        else:
-            parts.append("On valuation: a price to earnings number is not available for it right now, which is common for companies without steady profits.")
-    if any(w in ql for w in ["target", "upside", "analyst", "potential", "go up"]):
-        if isinstance(up, (int, float)):
-            parts.append("On the analyst view: the average price target sits about %s%% %s today's price." % (abs(up), "above" if up >= 0 else "below"))
-    if any(w in ql for w in ["today", "moving", "doing", "price today"]):
-        if isinstance(chg, (int, float)):
-            parts.append("Today it is %s%% %s." % (abs(chg), "up" if chg >= 0 else "down"))
-    if not parts:
-        parts.append("%s is at %s right now." % (symbol, v))
-        if isinstance(chg, (int, float)):
-            parts.append("It is %s%% %s today." % (abs(chg), "up" if chg >= 0 else "down"))
-        if isinstance(up, (int, float)):
-            parts.append("Analysts see about %s%% %s their average target." % (abs(up), "above" if up >= 0 else "below"))
-        parts.append("Open the full report for the complete breakdown.")
-    parts.append("This is educational, not advice.")
-    return " ".join(parts)
-
-
-# CHUNK: fuzzy ticker correction for common misspellings
-FUZZY_TICKERS = {
-    "NDVA": "NVDA", "NVDIA": "NVDA", "NVIDA": "NVDA",
-    "APPL": "AAPL", "APLE": "AAPL",
-    "TESLA": "TSLA",
-    "GOOG": "GOOGL", "GOGL": "GOOGL",
-    "MICROSOFT": "MSFT",
-    "AMAZON": "AMZN",
-    "FACEBOOK": "META",
-    "NETFLIX": "NFLX",
-    "JPMORGAN": "JPM",
-    "BITCOIN": "BTC-USD",
+function showToast(msg){
+  var t = document.getElementById("toast");
+  if(!t){ return; }
+  t.textContent = msg;
+  t.classList.add("on");
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(function(){ t.classList.remove("on"); }, 2000);
 }
 
-
-def fuzzy_ticker(typo):
-    # Returns a corrected ticker for a common misspelling, or None. Case-insensitive.
-    if not typo:
-        return None
-    return FUZZY_TICKERS.get(str(typo).strip().upper())
-
-
-NAME_TO_TICKER = {
-    "bank of america": "BAC", "bofa": "BAC",
-    "jpmorgan chase": "JPM", "jp morgan chase": "JPM", "jpmorgan": "JPM", "jp morgan": "JPM", "chase": "JPM",
-    "wells fargo": "WFC", "citigroup": "C", "citi": "C", "goldman sachs": "GS", "goldman": "GS",
-    "morgan stanley": "MS", "us bancorp": "USB", "us bank": "USB",
-    "apple": "AAPL", "microsoft": "MSFT", "alphabet": "GOOGL", "google": "GOOGL", "amazon": "AMZN",
-    "meta": "META", "facebook": "META", "nvidia": "NVDA", "tesla": "TSLA", "netflix": "NFLX",
-    "broadcom": "AVGO", "oracle": "ORCL", "salesforce": "CRM", "adobe": "ADBE", "qualcomm": "QCOM",
-    "intel": "INTC", "palantir": "PLTR",
-    "exxon mobil": "XOM", "exxon": "XOM", "chevron": "CVX", "conocophillips": "COP", "occidental": "OXY",
-    "walmart": "WMT", "costco": "COST", "target": "TGT", "home depot": "HD", "nike": "NKE",
-    "mcdonalds": "MCD", "starbucks": "SBUX", "coca cola": "KO", "coke": "KO", "pepsico": "PEP", "pepsi": "PEP",
-    "disney": "DIS", "johnson and johnson": "JNJ", "pfizer": "PFE", "merck": "MRK", "eli lilly": "LLY",
-    "lilly": "LLY", "unitedhealth": "UNH", "boeing": "BA", "caterpillar": "CAT", "ford": "F",
-    "general motors": "GM", "verizon": "VZ", "visa": "V", "mastercard": "MA",
+function fallbackCopy(text){
+  try {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand("copy"); document.body.removeChild(ta);
+  } catch(e){}
 }
 
-SECTOR_TO_TICKER = {
-    "energy": "XOM", "oil and gas": "XOM", "oil": "XOM",
-    "technology": "AAPL", "tech": "AAPL",
-    "banking": "JPM", "financials": "JPM", "financial": "JPM", "banks": "JPM", "bank": "JPM",
-    "healthcare": "JNJ", "health care": "JNJ", "health": "JNJ",
-    "retail": "WMT", "automotive": "TSLA", "auto": "TSLA", "cars": "TSLA",
-    "semiconductors": "NVDA", "semiconductor": "NVDA", "chips": "NVDA", "chip": "NVDA",
-    "defense": "BA", "artificial intelligence": "NVDA",
+function shareSnapshot(){
+  if(!currentSymbol){ return; }
+  var url = window.location.origin + "/s/" + currentSymbol;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(function(){ showToast("Link copied. Anyone can see this snapshot."); }).catch(function(){ fallbackCopy(url); showToast("Link copied. Anyone can see this snapshot."); });
+  } else {
+    fallbackCopy(url);
+    showToast("Link copied. Anyone can see this snapshot.");
+  }
+}
+var _shareBtn = document.getElementById("shareBtn");
+if(_shareBtn){ _shareBtn.addEventListener("click", shareSnapshot); }
+
+function runAsk(){
+  var sym = document.getElementById("askSym").value.trim();
+  var q = document.getElementById("askQ").value.trim();
+  var ans = document.getElementById("askAnswer");
+  if(!ans){ return; }
+  if(!sym){ ans.innerHTML = "<div class=\"scanEmpty\">Type a ticker first, like AAPL.</div>"; return; }
+  if(!q){ ans.innerHTML = "<div class=\"scanEmpty\">Type a question, or tap one of the suggestions.</div>"; return; }
+  var load = document.getElementById("askLoad");
+  if(load){ load.classList.add("on"); }
+  ans.innerHTML = "";
+  fetch(API + "/ask?symbol=" + encodeURIComponent(sym) + "&q=" + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
+    if(load){ load.classList.remove("on"); }
+    var a = (d && d.answer) ? d.answer : "No answer came back. Try rephrasing the question.";
+    var v = d && d.verdict;
+    var badge = "";
+    if(v){ var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw"); badge = "<div class=\"askVerdict scanV " + vc + "\">" + v + "</div>"; }
+    ans.innerHTML = "<div class=\"askCard\"><div class=\"askQ2\">" + esc(q) + "</div>" + badge + "<div class=\"askA\">" + esc(a) + "</div></div>";
+  }).catch(function(){ if(load){ load.classList.remove("on"); } ans.innerHTML = "<div class=\"scanEmpty\">Could not get an answer right now. Try again.</div>"; });
+}
+var _askBtn = document.getElementById("askBtn");
+if(_askBtn){ _askBtn.addEventListener("click", runAsk); }
+var _askChips = document.querySelectorAll(".askChip");
+for(var _ac=0; _ac<_askChips.length; _ac++){
+  _askChips[_ac].addEventListener("click", function(){ document.getElementById("askQ").value = this.getAttribute("data-q"); runAsk(); });
 }
 
-COMMON_TICKERS = set(NAME_TO_TICKER.values()) | set(SECTOR_TO_TICKER.values()) | set(SCAN_UNIVERSE)
-
-
-def extract_entities(text):
-    tl = " " + text.lower() + " "
-    found = []
-    seen = set()
-    for tok in re.findall(r"\b[A-Z]{2,5}\b", text):
-        if tok in COMMON_TICKERS and tok not in seen:
-            found.append((tok, tok, False))
-            seen.add(tok)
-    for name in sorted(NAME_TO_TICKER, key=len, reverse=True):
-        if any(name + suff in tl for suff in [" ", ",", ".", "?"]) and (" " + name) in tl:
-            tkr = NAME_TO_TICKER[name]
-            if tkr not in seen:
-                found.append((tkr, name.title(), False))
-                seen.add(tkr)
-    for sec in sorted(SECTOR_TO_TICKER, key=len, reverse=True):
-        if any(sec + suff in tl for suff in [" ", ",", ".", "?"]) and (" " + sec) in tl:
-            tkr = SECTOR_TO_TICKER[sec]
-            if tkr not in seen:
-                found.append((tkr, sec.title() + " stocks, using " + tkr + " as a bellwether", True))
-                seen.add(tkr)
-    return found
-
-
-PRIVATE_COMPANIES = {
-    "spacex": "SpaceX", "starlink": "Starlink", "openai": "OpenAI", "anthropic": "Anthropic",
-    "stripe": "Stripe", "databricks": "Databricks", "bytedance": "ByteDance", "tiktok": "TikTok",
-    "x corp": "X", "discord": "Discord", "epic games": "Epic Games", "valve": "Valve",
+function loadAlerts(){
+  var feed = document.getElementById("alertsFeed");
+  if(!feed){ return; }
+  fetch(API + "/alerts").then(function(r){ return r.json(); }).then(function(d){
+    var st = d && d.status;
+    if(st === "logged_out"){ feed.innerHTML = "<div class=\"alertEmpty\">Log in and save a few stocks, and alerts on them will show up here.</div>"; return; }
+    if(st === "empty"){ feed.innerHTML = "<div class=\"alertEmpty\">No saved stocks yet. Open any report and tap Save to Watchlist, and it will be watched here.</div>"; return; }
+    var a = (d && d.alerts) ? d.alerts : [];
+    if(!a.length){ feed.innerHTML = "<div class=\"alertEmpty\">All quiet. None of your saved stocks need attention right now.</div>"; return; }
+    feed.innerHTML = a.map(function(it){
+      var k = it.kind === "caution" ? "alertCaution" : "alertPositive";
+      var tag = it.kind === "caution" ? "WORTH A LOOK" : "POSITIVE";
+      return "<div class=\"alertRow " + k + "\" data-sym=\"" + esc(it.symbol) + "\">"
+        + "<div class=\"alertTop\"><span class=\"alertSym\">" + esc(it.symbol) + "</span><span class=\"alertTag\">" + tag + "</span></div>"
+        + "<div class=\"alertReason\">" + esc(it.reason || "") + "</div>"
+        + "</div>";
+    }).join("");
+  }).catch(function(){ feed.innerHTML = "<div class=\"alertEmpty\">Could not load alerts right now.</div>"; });
 }
 
+function showView(name){
+  var vs = document.querySelectorAll(".view");
+  for(var i=0;i<vs.length;i++){ vs[i].classList.remove("active"); }
+  var el = document.getElementById("view-" + name);
+  if(el){ el.classList.add("active"); }
+  var ts = document.querySelectorAll(".tab");
+  for(var j=0;j<ts.length;j++){ ts[j].classList.toggle("active", ts[j].getAttribute("data-view") === name); }
+  if(name === "scans" && !_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
+  if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
+  if(name === "watch"){ loadAlerts(); }
+  if(name === "ask"){
+    var asb = document.getElementById("askSym");
+    if(asb && !asb.value.trim() && currentSymbol){ asb.value = currentSymbol; }
+  }
+  window.scrollTo(0, 0);
+}
+var _tabs = document.querySelectorAll(".tab");
+for(var _t=0; _t<_tabs.length; _t++){
+  _tabs[_t].addEventListener("click", function(){ showView(this.getAttribute("data-view")); });
+}
 
-def extract_private(text):
-    tl = " " + text.lower() + " "
-    out = []
-    seen = set()
-    for k in sorted(PRIVATE_COMPANIES, key=len, reverse=True):
-        if any(k + suff in tl for suff in [" ", ",", ".", "?"]) and (" " + k) in tl:
-            v = PRIVATE_COMPANIES[k]
-            if v not in seen:
-                out.append(v)
-                seen.add(v)
-    return out
+refreshMe();
+loadTrending();
 
+if("serviceWorker" in navigator){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("/sw.js").catch(function(){});
+  });
+}
 
-def coach_answer(q, entities, private):
-    scored = []
-    for tkr, label, is_sec in entities[:4]:
-        r = light_score(tkr)
-        if r:
-            scored.append((label, is_sec, r))
-    parts = ["First, the honest part. I am an educational tool, not a financial advisor, so I will not tell you where to put your money. That is your call, and a real one. What I can do is show you how each one looks on the signals, in plain language, so you can decide for yourself."]
-    for pname in private:
-        parts.append(pname + " is privately held and not traded on the stock market, so there is no public stock for it to read and you cannot buy it like a normal share. If it ever goes public, that changes.")
-    if not scored:
-        if private:
-            parts.append("That leaves nothing public here to compare. Name a publicly traded company or a ticker and I can break it down.")
-        else:
-            parts.append("I could not match that to stocks I can read. Try naming the companies or tickers directly, like Bank of America, JPMorgan, and Exxon.")
-        parts.append("Educational only, never advice.")
-        return " ".join(parts)
-    if private:
-        parts.append("Here is the one I can actually read." if len(scored) == 1 else "Here are the ones I can actually read.")
-    for label, is_sec, r in scored:
-        v = r.get("verdict", "WATCH")
-        chg = r.get("change_pct")
-        up = r.get("upside")
-        pe = r.get("pe_ratio")
-        line = label + " is at " + v + " right now."
-        bits = []
-        if isinstance(chg, (int, float)):
-            bits.append("%s%% %s today" % (abs(chg), "up" if chg >= 0 else "down"))
-        if isinstance(up, (int, float)):
-            bits.append("analysts see about %s%% %s their average target" % (abs(up), "above" if up >= 0 else "below"))
-        try:
-            bits.append("around %s times earnings" % round(float(pe), 1))
-        except (TypeError, ValueError):
-            pass
-        if bits:
-            line += " It is " + ", ".join(bits) + "."
-        parts.append(line)
-    parts.append("How to think about it, without anyone deciding for you. The amount of money, including the figure you mentioned, does not change what the signals say about each name. What matters more is your own time horizon, how much risk you can sit with, and whether you spread money out rather than put it all in one place. Concentrating everything in a single stock is how beginners get hurt.")
-    parts.append("None of this is a recommendation. For a real decision with real money, your own homework and a licensed professional are the right next step. Educational only, never advice.")
-    return " ".join(parts)
-
-
-def coach_gemini(q, entities):
-    facts = []
-    for tkr, label, is_sec in entities[:4]:
-        r = light_score(tkr)
-        if r:
-            facts.append("%s (%s): verdict %s, %s percent today, analyst upside %s percent, PE %s" % (label, tkr, r.get("verdict"), r.get("change_pct"), r.get("upside"), r.get("pe_ratio")))
-    if not facts:
-        return None
-    prompt = (
-        "You are the educational explanation layer of a stock app for everyday people and beginners. "
-        "The user asked, possibly by voice: \"" + q + "\". "
-        "Here are the engine's current live facts: " + "; ".join(facts) + ". "
-        "STRICT RULES: You are not a financial advisor. Do not tell the user where to invest, do not recommend a specific stock to buy, and do not suggest how to split any amount of money. "
-        "Instead, explain in simple plain language how each option looks based on the facts, what the differences mean, and how a beginner should think the decision through themselves, including risk, time horizon, and not concentrating money in one name. "
-        "Make clear the dollar amount does not change what the signals say. "
-        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. End by clearly stating this is educational only, not advice, and that they should do their own research and consider a licensed professional. Return plain text only, no markdown."
-    )
-    try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
-        payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.3, "maxOutputTokens": 500}}
-        r = requests.post(url, json=payload, timeout=12)
-        if r.status_code == 200:
-            data = r.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        logger.error("coach_gemini: %s" % e)
-    return None
-
-
-# CHUNK: DeepSeek coach for multi-stock comparison questions
-def ask_deepseek_coach(q, entities):
-    facts = []
-    for tkr, label, is_sec in entities[:4]:
-        r = light_score(tkr)
-        if r:
-            facts.append("%s (%s): verdict %s, %s percent today, analyst upside %s percent, PE %s" % (label, tkr, r.get("verdict"), r.get("change_pct"), r.get("upside"), r.get("pe_ratio")))
-    if not facts:
-        return None
-    prompt = (
-        "You are the educational explanation layer of a stock app for everyday people and beginners. "
-        "The user asked, possibly by voice: \"" + q + "\". "
-        "Here are the engine's current live facts: " + "; ".join(facts) + ". "
-        "STRICT RULES: You are not a financial advisor. Do not tell the user where to invest, do not recommend a specific stock to buy, and do not suggest how to split any amount of money. "
-        "Instead, explain in simple plain language how each option looks based on the facts, what the differences mean, and how a beginner should think the decision through themselves, including risk, time horizon, and not concentrating money in one name. "
-        "Make clear the dollar amount does not change what the signals say. "
-        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. End by clearly stating this is educational only, not advice, and that they should do their own research and consider a licensed professional. Return plain text only, no markdown."
-    )
-    try:
-        headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
-        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 500}
-        r = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=15)
-        if r.status_code == 200:
-            data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
-        logger.error("ask_deepseek_coach non-200 status %s: %s" % (r.status_code, str(r.text)[:200]))
-    except Exception as e:
-        logger.error("ask_deepseek_coach: %s" % e)
-        try:
-            logger.error("ask_deepseek_coach raw response: %s" % str(r.text)[:200])
-        except Exception:
-            pass
-    return None
-
-
-@app.route("/ask")
-def ask():
-    symbol = (request.args.get("symbol") or "").strip().upper()
-    q = (request.args.get("q") or "").strip()
-    if not q:
-        return jsonify({"answer": "Ask a question, like why is this a watch, or name a few stocks and ask how they compare."})
-    ql = q.lower()
-    entities = extract_entities(q)
-    private = extract_private(q)
-    allocation = any(p in ql for p in [
-        "where should i", "where do i", "should i invest", "invest", "put my money",
-        "put $", "split", "allocate", "best to buy", "which should i buy",
-        "which one should i", "what should i buy", "better buy", "worth buying",
-    ])
-    comparison = any(p in ql for p in [
-        "difference", "compare", "comparison", "versus", " vs ", "vs.", "between",
-        "stronger", "better than", "which is better",
-    ])
-    trigger = allocation or comparison
-    total_named = len(entities) + len(private)
-    if total_named >= 2 or (trigger and total_named >= 1):
-        # CHUNK: DeepSeek primary, Gemini fallback, rules-based final safety net
-        if entities and not private:
-            if DEEPSEEK_KEY:
-                a = ask_deepseek_coach(q, entities)
-                if a:
-                    return jsonify({"answer": a})
-            if GEMINI_KEY:
-                a = coach_gemini(q, entities)
-                if a:
-                    return jsonify({"answer": a})
-        return jsonify({"answer": coach_answer(q, entities, private)})
-
-    sym = symbol or (entities[0][0] if entities else "")
-    if not sym:
-        if private:
-            return jsonify({"answer": coach_answer(q, [], private)})
-        return jsonify({"answer": "Tell me which stock you mean. Type a ticker in the box, or name the company in your question."})
-    d = light_score(sym)
-    # CHUNK: try fuzzy fix before giving up
-    if not d:
-        fixed = fuzzy_ticker(sym)
-        if fixed and fixed != sym:
-            d_fixed = light_score(fixed)
-            if d_fixed:
-                logger.info("fuzzy ticker correction: %s -> %s" % (sym, fixed))
-                sym = fixed
-                d = d_fixed
-    if not d:
-        return jsonify({"answer": "I could not pull live data for " + sym + " right now. It may be an unusual ticker, or data is briefly unavailable. Try again, or check the symbol."})
-    # CHUNK: defer to the authoritative full report verdict so Ask never contradicts the report
-    full = compute_full_report(sym)
-    if full and full.get("verdict"):
-        d = dict(d)
-        d["verdict"] = full.get("verdict")
-        if full.get("conviction"):
-            d["conviction"] = full.get("conviction")
-    # CHUNK: pull the specific data the question is about, so the answer is grounded in real facts.
-    # The full report and its news are already in hand from the verdict step above, so reuse it.
-    extra_news = None
-    if any(w in ql for w in ["news", "headline", "article", "report", "press", "announce", "update"]):
-        if isinstance(full, dict) and full.get("news"):
-            extra_news = full["news"][:3]
-    ins = None
-    if any(w in ql for w in ["insider", "executive", "exec", "selling", "sold", "buying", "bought"]):
-        ins = insider_brief(sym, d.get("price"))
-    # CHUNK: DeepSeek primary, Gemini fallback, rules-based final safety net
-    if DEEPSEEK_KEY:
-        a = ask_deepseek(sym, q, d, ins, extra_news=extra_news, extra_insider=ins)
-        if a:
-            return jsonify({"answer": a, "verdict": d.get("verdict")})
-    if GEMINI_KEY:
-        a = ask_gemini(sym, q, d, ins, extra_news=extra_news, extra_insider=ins)
-        if a:
-            return jsonify({"answer": a, "verdict": d.get("verdict")})
-    return jsonify({"answer": ask_fallback(sym, q, d, ins, extra_news=extra_news, extra_insider=ins), "verdict": d.get("verdict")})
-
-
-@app.route("/trending")
-def trending():
-    # The day's trending stocks, the names most actively traded right now. Pulled live from
-    # FMP and refreshed every half hour so it stays current without burning the daily call budget.
-    now = time.time()
-    if _TREND["data"] is not None and now - _TREND["ts"] < 1800:
-        return jsonify(_TREND["data"])
-
-    def parse_pct(v):
-        try:
-            return round(float(str(v).replace("%", "").replace("(", "-").replace(")", "").strip()), 2)
-        except Exception:
-            return None
-
-    items = []
-    data = fmp_get("/api/v3/stock_market/actives")
-    if not isinstance(data, list) or not data:
-        data = fmp_get("/api/v3/stock_market/gainers")
-    if isinstance(data, list):
-        for d in data[:12]:
-            sym = d.get("symbol")
-            if not sym or len(sym) > 6:
-                continue
-            items.append({
-                "symbol": sym,
-                "name": d.get("name") or sym,
-                "change_pct": parse_pct(d.get("changesPercentage")),
-                "price": d.get("price"),
-            })
-
-    out = {"items": items, "data_timestamp": int(time.time())}
-    _TREND["data"] = out
-    _TREND["ts"] = now
-    return jsonify(out)
-
-
-@app.route("/themes")
-def themes():
-    out = []
-    for k in THEMES:
-        out.append({"key": k, "name": THEMES[k]["name"]})
-    return jsonify({"themes": out})
-
-
-@app.route("/discover")
-def discover():
-    key = request.args.get("theme", "").strip()
-    if key not in THEMES:
-        return jsonify({"error": "Unknown theme"}), 404
-    cached = get_cache("theme_" + key)
-    if cached:
-        return jsonify(cached)
-    theme = THEMES[key]
-    results = []
-    for sym in theme["tickers"]:
-        r = light_score(sym)
-        if r:
-            results.append(r)
-    results.sort(key=lambda x: x["score"], reverse=True)
-    out = {
-        "key": key,
-        "name": theme["name"],
-        "explainer": theme["explainer"],
-        "why": theme["why"],
-        "unknown": theme["unknown"],
-        "results": results,
-        "data_timestamp": int(time.time()),
-    }
-    set_cache("theme_" + key, out)
-    return jsonify(out)
-
-
-# CHUNK: shareable read-only snapshot at /s/<symbol>. Standalone HTML, no app shell, no auth.
-@app.route("/s/<symbol>")
-def snapshot(symbol):
-    symbol = (symbol or "").strip().upper()
-    d = light_score(symbol)
-    e = html.escape
-    if not d:
-        return Response("<html><body style='font-family:sans-serif;padding:40px;text-align:center'><h2>Snapshot unavailable</h2><p>We could not read " + e(symbol) + " right now. <a href='/'>Open Apex Q</a></p></body></html>", mimetype="text/html")
-
-    v = d.get("verdict", "WATCH")
-    vcolor = {"APPROVE": "#0a8f3c", "PASS": "#c1121f", "WATCH": "#b8860b"}.get(v, "#b8860b")
-    chg = d.get("change_pct")
-    chg_color = "#0a8f3c" if isinstance(chg, (int, float)) and chg >= 0 else "#c1121f"
-    chg_txt = (("+" if isinstance(chg, (int, float)) and chg >= 0 else "") + str(chg) + "%") if isinstance(chg, (int, float)) else "n/a"
-    name = d.get("name", symbol)
-    price = d.get("price", 0)
-    pe = d.get("pe_ratio", "N/A")
-    tgt = d.get("analyst_target", "N/A")
-    mc = fmt_money_py(d.get("market_cap")) if isinstance(d.get("market_cap"), (int, float)) else "n/a"
-    up = d.get("upside")
-
-    # Plain English read, written here with simple logic, no AI call.
-    if v == "APPROVE":
-        para = "The signals on " + str(name) + " lean positive right now. The engine sees more pointing up than down."
-    elif v == "PASS":
-        para = "The engine is cautious on " + str(name) + " right now. More of the signals point down than up."
-    else:
-        para = "The signals on " + str(name) + " are mixed right now, so the patient read is to watch and wait for a clearer setup."
-    if isinstance(up, (int, float)):
-        para += " Analysts see about " + str(abs(up)) + " percent " + ("above" if up >= 0 else "below") + " today's price on average."
-
-    page = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>%(sym)s snapshot, Apex Q</title>
-<style>
-body{margin:0;background:#eef1f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f1419;padding:24px;}
-.card{max-width:520px;margin:0 auto;background:#fff;border:1px solid #dde2ea;border-radius:18px;padding:26px;box-shadow:0 8px 30px rgba(0,0,0,.06);}
-.brand{font-size:13px;font-weight:800;letter-spacing:1px;color:#003eaa;text-transform:uppercase;}
-.sym{font-size:34px;font-weight:800;margin:10px 0 2px;letter-spacing:-1px;}
-.name{font-size:15px;color:#5b6573;margin-bottom:16px;}
-.price{font-size:26px;font-weight:800;}
-.chg{font-size:15px;font-weight:700;margin-left:8px;}
-.verdict{display:inline-block;margin:16px 0;padding:8px 16px;border-radius:10px;color:#fff;font-weight:800;letter-spacing:1px;font-size:15px;}
-.conv{font-size:13px;color:#5b6573;margin-bottom:6px;}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0;}
-.cell{background:#f6f8fb;border:1px solid #e6ebf2;border-radius:11px;padding:12px;}
-.lbl{font-size:11px;color:#5b6573;text-transform:uppercase;letter-spacing:.4px;}
-.val{font-size:17px;font-weight:700;margin-top:3px;}
-.para{font-size:15px;line-height:1.6;background:#f6f8fb;border-radius:12px;padding:16px;margin:6px 0 4px;}
-.foot{font-size:12px;color:#5b6573;line-height:1.6;margin-top:20px;border-top:1px solid #e6ebf2;padding-top:16px;}
-.foot a{color:#003eaa;font-weight:700;text-decoration:none;}
-</style></head><body>
-<div class="card">
-  <div class="brand">Apex Q</div>
-  <div class="sym">%(sym)s</div>
-  <div class="name">%(name)s</div>
-  <div><span class="price">$%(price)s</span><span class="chg" style="color:%(chgc)s">%(chg)s</span></div>
-  <div class="verdict" style="background:%(vc)s">%(verdict)s</div>
-  <div class="conv">How strong the signal is: %(conv)s</div>
-  <div class="grid">
-    <div class="cell"><div class="lbl">Price vs Earnings</div><div class="val">%(pe)s</div></div>
-    <div class="cell"><div class="lbl">What analysts think it is worth</div><div class="val">%(tgt)s</div></div>
-    <div class="cell"><div class="lbl">Total company value</div><div class="val">%(mc)s</div></div>
-    <div class="cell"><div class="lbl">Move today</div><div class="val" style="color:%(chgc)s">%(chg)s</div></div>
-  </div>
-  <div class="para">%(para)s</div>
-  <div class="foot">Powered by Apex Q, an educational stock intelligence terminal. This is not financial advice. <a href="/">Open the full terminal</a></div>
-</div>
-</body></html>""" % {
-        "sym": e(symbol),
-        "name": e(str(name)),
-        "price": e(str(price)),
-        "chg": e(chg_txt),
-        "chgc": chg_color,
-        "vc": vcolor,
-        "verdict": e(v),
-        "conv": e(str(d.get("conviction", ""))),
-        "pe": e(str(pe)) if pe not in (None, "N/A") else "n/a",
-        "tgt": ("$" + e(str(tgt))) if isinstance(tgt, (int, float)) else "n/a",
-        "mc": e(mc),
-        "para": e(para),
-    }
-    return Response(page, mimetype="text/html")
-
-
-# CHUNK: temporary debug endpoint — remove after testing
-@app.route("/debug/ask")
-def debug_ask():
-    symbol = "NVDA"
-    q = "Why did it drop today?"
-    d = light_score(symbol)
-    if not d:
-        return jsonify({"error": "light_score returned None for " + symbol})
-    ins = insider_brief(symbol, d.get("price"))
-    result = {
-        "symbol": symbol,
-        "light_score_ok": True,
-        "price": d.get("price"),
-        "verdict": d.get("verdict"),
-        "change_pct": d.get("change_pct"),
-        "deepseek_key_set": bool(DEEPSEEK_KEY),
-        "deepseek_key_preview": (DEEPSEEK_KEY[:8] + "...") if DEEPSEEK_KEY else "NOT SET",
-        "gemini_key_set": bool(GEMINI_KEY),
-        "gemini_key_preview": (GEMINI_KEY[:8] + "...") if GEMINI_KEY else "NOT SET",
-        "insider_sells": ins.get("clevel_sells") if ins else 0,
-    }
-    if DEEPSEEK_KEY:
-        try:
-            a = ask_deepseek(symbol, q, d, ins)
-            result["deepseek_result"] = (a[:200] if a else "None returned")
-            result["deepseek_error"] = None
-        except Exception as e:
-            result["deepseek_result"] = "None returned"
-            result["deepseek_error"] = str(e)[:200]
-    if GEMINI_KEY:
-        try:
-            a = ask_gemini(symbol, q, d, ins)
-            result["gemini_result"] = (a[:200] if a else "None returned")
-            result["gemini_error"] = None
-        except Exception as e:
-            result["gemini_result"] = "None returned"
-            result["gemini_error"] = str(e)[:200]
-    fb = ask_fallback(symbol, q, d, ins)
-    result["fallback_result"] = (fb[:200] if fb else "")
-    return jsonify(result)
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False)
+var deferredPrompt = null;
+window.addEventListener("beforeinstallprompt", function(e){
+  e.preventDefault();
+  deferredPrompt = e;
+  var b = document.getElementById("installBtn");
+  if(b){ b.style.display = "block"; }
+});
+var ib = document.getElementById("installBtn");
+if(ib){
+  ib.addEventListener("click", function(){
+    if(!deferredPrompt) return;
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(function(){
+      deferredPrompt = null;
+      ib.style.display = "none";
+    });
+  });
+}
+</script>
+</body>
+</html>
