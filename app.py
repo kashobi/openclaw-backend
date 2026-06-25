@@ -1493,18 +1493,32 @@ def compare_reason(best, items):
         "WATCH": "the engine holds it at watch, but it scores above the others here",
         "PASS": "the engine is cautious on it, yet it still scores the least weak of the group",
     }
-    msg += descr.get(v, "it scores highest of the group") + ". "
+    dtext = descr.get(v, "it scores highest of the group")
+    msg += dtext[0].upper() + dtext[1:] + ". "
+    # CHUNK: only genuine positives count as reasons it is strongest. A down day is a caveat,
+    # never a reason, so it is framed honestly instead of being listed as a plus.
     extras = []
-    if isinstance(best.get("upside"), (int, float)):
-        extras.append("analysts see about %s%% upside to target" % best["upside"])
-    if isinstance(best.get("change_pct"), (int, float)):
-        extras.append("it is %s%% %s today" % (abs(best["change_pct"]), "up" if best["change_pct"] >= 0 else "down"))
+    caveats = []
+    up = best.get("upside")
+    chg = best.get("change_pct")
+    if isinstance(up, (int, float)) and up > 0:
+        extras.append("analysts see about %s%% upside to its average target" % up)
+    if isinstance(chg, (int, float)) and chg > 0:
+        extras.append("it is up %s%% today" % chg)
     try:
-        extras.append("it trades at about %s times earnings" % round(float(best.get("pe_ratio")), 1))
+        pe_v = round(float(best.get("pe_ratio")), 1)
+        if pe_v <= 30:
+            extras.append("it trades at a reasonable %s times earnings" % pe_v)
+        elif pe_v > 45:
+            caveats.append("its valuation is rich at about %s times earnings" % pe_v)
     except (TypeError, ValueError):
         pass
+    if isinstance(chg, (int, float)) and chg < 0:
+        caveats.append("it is actually down %s%% today, so the edge here is in its other signals, not today's move" % abs(chg))
     if extras:
         msg += "Among the reasons: " + ", ".join(extras) + ". "
+    if caveats:
+        msg += "Worth noting: " + ", and ".join(caveats) + ". "
     msg += "This weighs the same signals you see in each full report. Educational only, never advice."
     return msg
 
