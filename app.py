@@ -841,9 +841,46 @@ def earnings_flag(info):
         return None
 
 
+# CHUNK: normalize a news timestamp from any source into unix seconds. Handles unix ints in
+# seconds or milliseconds, and ISO 8601 strings with or without a Z or fractional seconds. This
+# is what makes the "x hours ago" stamp show on yfinance items, whose dates are ISO strings.
+def _news_ts(val):
+    if not val:
+        return 0
+    if isinstance(val, (int, float)):
+        v = int(val)
+        return v // 1000 if v > 100000000000 else v
+    s = str(val).strip()
+    if s.isdigit():
+        v = int(s)
+        return v // 1000 if v > 100000000000 else v
+    try:
+        return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        pass
+    try:
+        base = re.split(r"[.+]", s)[0]
+        return int(datetime.strptime(base, "%Y-%m-%dT%H:%M:%S").timestamp())
+    except Exception:
+        return 0
+
+
+# CHUNK: a summary should be a sentence, never a bare link. Drop it if it is a URL or just the
+# article link, so a raw URL never shows up where the teaser belongs.
+def _clean_summary(summary, link=""):
+    s = clean_text(summary or "")
+    if not s:
+        return ""
+    if re.match(r"^https?://", s, re.I):
+        return ""
+    if link and s.strip() == str(link).strip():
+        return ""
+    return trim_words(s, 240)
+
+
 # CHUNK: company news from yfinance, the reliable backbone source. Parsed defensively for both the
 # old flat format and the newer nested 'content' format, so a widely covered name like Apple always
-# has company specific news instead of falling through to a general feed. Newest first.
+# has company specific news instead of falling through to a general feed. Newest first, time stamped.
 def yf_company_news(ticker_obj):
     out = []
     try:
@@ -861,26 +898,20 @@ def yf_company_news(ticker_obj):
                 link = ((c.get("canonicalUrl") or {}).get("url")
                         or (c.get("clickThroughUrl") or {}).get("url") or "")
                 summary = c.get("summary") or c.get("description") or ""
-                ts = 0
-                pd = c.get("pubDate") or c.get("displayTime")
-                if pd:
-                    try:
-                        ts = int(datetime.fromisoformat(str(pd).replace("Z", "+00:00")).timestamp())
-                    except Exception:
-                        ts = 0
+                ts = _news_ts(c.get("pubDate") or c.get("displayTime") or c.get("providerPublishTime"))
             else:
                 title = item.get("title")
                 prov = item.get("publisher") or "News"
                 link = item.get("link") or ""
                 summary = item.get("summary") or ""
-                ts = item.get("providerPublishTime") or 0
+                ts = _news_ts(item.get("providerPublishTime"))
             if title:
                 out.append({
                     "headline": clean_text(title),
                     "source": clean_text(prov),
-                    "summary": trim_words(clean_text(summary), 240),
+                    "summary": _clean_summary(summary, link),
                     "url": link or "",
-                    "ts": ts or 0,
+                    "ts": ts,
                 })
         except Exception:
             continue
@@ -1173,7 +1204,7 @@ def compute_full_report(symbol):
                     arts = [n for n in r.json() if n.get("headline")]
                     arts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
                     for n in arts[:6]:
-                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": trim_words(clean_text(n.get("summary", "")), 240), "url": n.get("url", ""), "ts": n.get("datetime", 0)})
+                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
             except Exception as e:
                 logger.error("finnhub company-news error %s: %s" % (symbol, e))
 
@@ -1194,7 +1225,7 @@ def compute_full_report(symbol):
                     garts = [n for n in r2.json() if n.get("headline")]
                     garts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
                     for n in garts[:4]:
-                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": trim_words(clean_text(n.get("summary", "")), 240), "url": n.get("url", ""), "ts": n.get("datetime", 0)})
+                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
             except Exception as e:
                 logger.error("finnhub general-news error: %s" % e)
 
