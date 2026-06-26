@@ -468,6 +468,12 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 #alertBanner{background:var(--rbg);color:var(--red);border:1px solid var(--red);border-radius:14px;margin:0 26px 16px;padding:13px 18px;font-size:14px;font-weight:700;cursor:pointer;line-height:1.45;box-shadow:var(--shadow-sm);transition:transform .15s ease,box-shadow .15s ease;}
 #alertBanner:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
 @media(max-width:600px){#alertBanner{margin:0 16px 14px;}}
+.vchgBanner{border-radius:14px;padding:11px 16px;margin-bottom:16px;font-size:13.5px;font-weight:800;line-height:1.45;}
+.vchgUp{background:var(--gbg);color:var(--green);border:1px solid var(--green);}
+.vchgDn{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.vchgNeu{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
+.vchgBadge{display:inline-flex;align-items:center;justify-content:center;margin-left:8px;background:var(--accent);color:#fff;border:none;border-radius:999px;min-width:18px;height:18px;padding:0 5px;font-size:11px;font-weight:800;cursor:pointer;line-height:1;vertical-align:middle;box-shadow:0 1px 4px rgba(var(--accent-rgb),.4);}
+.alertFlipHead{font-size:13px;font-weight:800;margin-top:7px;}
 </style>
 </head>
 <body>
@@ -522,6 +528,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div class="extRow" id="extRow" style="display:none"></div>
       <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button><button class="shareBtn" id="addPortBtn">&#43; Portfolio</button></div>
       <div class="addPortForm" id="addPortForm" style="display:none"><input class="cmpInp" id="addPortShares" type="number" step="any" min="0" placeholder="Shares" autocomplete="off"><input class="cmpInp" id="addPortCost" type="number" step="any" min="0" placeholder="Avg cost" autocomplete="off"><button class="cmpBtn" id="addPortSubmit">Add</button></div>
+      <div id="verdictChangeBanner" style="display:none"></div>
       <div class="vb watch" id="vbox">
         <div class="vtop">
           <div class="vbdg watch" id="vbdg">&#9889; READY</div>
@@ -1253,6 +1260,8 @@ function renderETFReport(d){
   document.getElementById("spx").textContent = "$" + (d.price || 0).toLocaleString();
   var _er = document.getElementById("extRow");
   if(_er){ _er.style.display = "none"; _er.innerHTML = ""; }
+  var _vcb = document.getElementById("verdictChangeBanner");
+  if(_vcb){ _vcb.style.display = "none"; _vcb.innerHTML = ""; }
   var chg = d.change_pct || 0;
   var sign = chg >= 0 ? "+" : "";
   var schg = document.getElementById("schg");
@@ -1541,6 +1550,19 @@ function run(){
       }
     }
 
+    var vcBanner = document.getElementById("verdictChangeBanner");
+    if(vcBanner){
+      if(d.verdict_changed){
+        var vcCls = d.verdict === "APPROVE" ? "vchgUp" : (d.verdict === "PASS" ? "vchgDn" : "vchgNeu");
+        vcBanner.className = "vchgBanner " + vcCls;
+        vcBanner.innerHTML = "&#8599; MOVED FROM " + esc(d.previous_verdict || "") + " TO " + esc(d.verdict) + " &middot; " + esc(d.verdict_change_reason || "");
+        vcBanner.style.display = "block";
+      } else {
+        vcBanner.style.display = "none";
+        vcBanner.innerHTML = "";
+      }
+    }
+
     var chg = d.change_pct || 0;
     var sign = chg >= 0 ? "+" : "";
     document.getElementById("schg").textContent = sign + chg + "% today";
@@ -1790,6 +1812,14 @@ document.addEventListener("click", function(e){
   if(congBack){ e.stopPropagation(); showCongressList(); return; }
   var polEl = e.target.closest("[data-pol]");
   if(polEl){ e.stopPropagation(); showCongressDetail(polEl.getAttribute("data-pol")); return; }
+  var vchg = e.target.closest("[data-vchg]");
+  if(vchg){
+    e.stopPropagation();
+    var vsym = vchg.getAttribute("data-vchg");
+    var vf = _verdictFlips[vsym];
+    if(vf){ showToast(vsym + " moved from " + vf.previous + " to " + vf.verdict + ". " + vf.reason + "."); }
+    return;
+  }
   var symEl = e.target.closest("[data-sym]");
   if(symEl){ go(symEl.getAttribute("data-sym")); return; }
   if(e.target.id === "analyzeBtn"){ run(); return; }
@@ -1846,6 +1876,7 @@ loadHomeContext();
 var currentUser = null;
 var authMode = "login";
 var watchSymbols = [];
+var _verdictFlips = {};
 var currentSymbol = null;
 var currentName = "";
 
@@ -1974,7 +2005,24 @@ function fillWatchCard(it){
   }).catch(function(){
     var i = document.getElementById("wi_" + sid);
     if(i) i.textContent = "Tap to open report";
-  });
+  }).then(function(){ applyWatchFlipBadges(); });
+}
+
+function applyWatchFlipBadges(){
+  // Adds a small arrow badge to saved cards whose verdict has flipped since last visit, keeping it in
+  // sync with the alerts data. Idempotent, so it survives card refreshes and out of order loads.
+  var panel = document.getElementById("watchPanel");
+  if(!panel){ return; }
+  var cards = panel.querySelectorAll(".watchCard");
+  for(var i=0;i<cards.length;i++){
+    var sym = cards[i].getAttribute("data-sym");
+    var info = cards[i].querySelector(".sgi");
+    if(!info){ continue; }
+    var ex = info.querySelector(".vchgBadge");
+    if(_verdictFlips[sym]){
+      if(!ex){ info.insertAdjacentHTML("beforeend", " <button class=\"vchgBadge\" data-vchg=\"" + esc(sym) + "\" title=\"Verdict changed\">&#8599;</button>"); }
+    } else if(ex){ ex.remove(); }
+  }
 }
 
 function loadWatchlist(){
@@ -2748,8 +2796,9 @@ for(var _ac=0; _ac<_askChips.length; _ac++){
   _askChips[_ac].addEventListener("click", function(){ document.getElementById("askQ").value = this.getAttribute("data-q"); sendAsk(); });
 }
 
-function setAlertCount(n){
-  // Saved tab badge: a small red count that sits on the tab icon, hidden when there is nothing to flag.
+function setAlertCount(n, flips){
+  flips = flips || 0;
+  // Saved tab badge: a small red count of all alerts that sits on the tab icon, hidden when zero.
   var tab = document.querySelector('.tab[data-view="watch"]');
   if(tab){
     tab.style.position = "relative";
@@ -2760,10 +2809,13 @@ function setAlertCount(n){
       b.style.display = "flex";
     } else if(b){ b.style.display = "none"; }
   }
-  // Home banner: only visible while the home view is active, since it lives inside that view.
+  // Home banner: verdict changes lead the message when present, otherwise the generic attention note.
   var banner = document.getElementById("alertBanner");
   if(banner){
-    if(n > 0){
+    if(flips > 0){
+      banner.innerHTML = "&#9888;&#65039; " + flips + (flips === 1 ? " verdict change" : " verdict changes") + " detected on your saved stocks. Tap to see why.";
+      banner.style.display = "block";
+    } else if(n > 0){
       banner.innerHTML = "&#9888;&#65039; " + n + " of your saved stocks need attention. Tap to see why.";
       banner.style.display = "block";
     } else {
@@ -2776,13 +2828,26 @@ function loadAlerts(){
   var feed = document.getElementById("alertsFeed");
   fetch(API + "/alerts").then(function(r){ return r.json(); }).then(function(d){
     var st = d && d.status;
-    if(st === "logged_out"){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">Log in and save a few stocks, and alerts on them will show up here.</div>"; } setAlertCount(0); return; }
-    if(st === "empty"){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">No saved stocks yet. Open any report and tap Save to Watchlist, and it will be watched here.</div>"; } setAlertCount(0); return; }
+    if(st === "logged_out"){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">Log in and save a few stocks, and alerts on them will show up here.</div>"; } _verdictFlips = {}; applyWatchFlipBadges(); setAlertCount(0, 0); return; }
+    if(st === "empty"){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">No saved stocks yet. Open any report and tap Save to Watchlist, and it will be watched here.</div>"; } _verdictFlips = {}; applyWatchFlipBadges(); setAlertCount(0, 0); return; }
     var a = (d && d.alerts) ? d.alerts : [];
-    if(!a.length){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">All quiet. None of your saved stocks need attention right now.</div>"; } setAlertCount(0); return; }
-    setAlertCount(a.length);
+    // Rebuild the symbol to flip map used by the watchlist arrow badges.
+    _verdictFlips = {};
+    a.forEach(function(it){ if(it.flip){ _verdictFlips[it.symbol] = {previous: it.previous_verdict, verdict: it.verdict, reason: it.reason}; } });
+    applyWatchFlipBadges();
+    var flips = (typeof d.verdict_changes === "number") ? d.verdict_changes : a.filter(function(x){ return x.flip; }).length;
+    if(!a.length){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">All quiet. None of your saved stocks need attention right now.</div>"; } setAlertCount(0, 0); return; }
+    setAlertCount(a.length, flips);
     if(!feed){ return; }
     feed.innerHTML = a.map(function(it){
+      if(it.flip){
+        var fk = it.verdict === "APPROVE" ? "alertPositive" : "alertCaution";
+        return "<div class=\"alertRow " + fk + " alertFlip\" data-sym=\"" + esc(it.symbol) + "\">"
+          + "<div class=\"alertTop\"><span class=\"alertSym\">" + esc(it.symbol) + "</span><span class=\"alertTag\">VERDICT CHANGE</span></div>"
+          + "<div class=\"alertFlipHead\">&#8599; MOVED FROM " + esc(it.previous_verdict || "") + " TO " + esc(it.verdict) + "</div>"
+          + "<div class=\"alertReason\">" + esc(it.reason || "") + "</div>"
+          + "</div>";
+      }
       var k = it.kind === "caution" ? "alertCaution" : "alertPositive";
       var tag = it.kind === "caution" ? "WORTH A LOOK" : "POSITIVE";
       return "<div class=\"alertRow " + k + "\" data-sym=\"" + esc(it.symbol) + "\">"
@@ -2790,7 +2855,7 @@ function loadAlerts(){
         + "<div class=\"alertReason\">" + esc(it.reason || "") + "</div>"
         + "</div>";
     }).join("");
-  }).catch(function(){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">Could not load alerts right now.</div>"; } setAlertCount(0); });
+  }).catch(function(){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">Could not load alerts right now.</div>"; } _verdictFlips = {}; applyWatchFlipBadges(); setAlertCount(0, 0); });
 }
 
 function showView(name){
