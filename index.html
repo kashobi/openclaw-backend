@@ -111,11 +111,21 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .vb.approve{background:linear-gradient(135deg,#b8f0cc,#88e0aa);border:2px solid var(--green);}
 .vb.pass{background:linear-gradient(135deg,#ffc0c0,#ff9090);border:2px solid var(--red);}
 .vb.watch{background:linear-gradient(135deg,#ffd888,#ffbb44);border:2px solid var(--yellow);}
+.vb.etf{background:linear-gradient(135deg,#dde7f5,#c3d4ec);border:2px solid #4a6fa5;}
 .vtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
 .vbdg{font-size:20px;font-weight:900;font-family:'JetBrains Mono',monospace;letter-spacing:4px;padding:12px 28px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.2);}
 .vbdg.approve{background:var(--green);color:#fff;}
 .vbdg.pass{background:var(--red);color:#fff;}
 .vbdg.watch{background:var(--yellow);color:#fff;}
+.vbdg.etf{background:#4a6fa5;color:#fff;letter-spacing:2px;}
+.etfHoldRow{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);font-size:14px;}
+.etfHoldRow:last-child{border-bottom:none;}
+.etfHoldL{display:flex;align-items:baseline;min-width:0;}
+.etfHoldSym{font-weight:800;color:var(--text);font-family:'JetBrains Mono',monospace;}
+.etfHoldName{color:var(--muted);font-size:12px;margin-left:8px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.etfHoldWt{font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;flex-shrink:0;margin-left:10px;}
+.etfSecRow{margin-bottom:12px;}
+.etfSecTop{display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px;}
 .vsco{font-size:13px;font-family:'JetBrains Mono',monospace;color:var(--text);font-weight:800;background:rgba(255,255,255,.85);padding:8px 16px;border-radius:20px;}
 .vconf{font-size:15.5px;color:var(--text);margin-bottom:14px;line-height:1.8;font-weight:500;background:rgba(255,255,255,.7);padding:16px 18px;border-radius:10px;}
 .vmean{background:rgba(255,255,255,.85);border-radius:10px;padding:14px 16px;margin-bottom:14px;border-left:4px solid var(--accent);}
@@ -452,6 +462,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div class="wguide" id="wguide"></div>
         <div class="vrlist" id="vrl"></div>
       </div>
+      <div id="stockSections">
       <div class="mets">
         <div class="met"><div class="ml2">Current Price</div><div class="mv2 neu" id="mp">--</div></div>
         <div class="met"><div class="ml2">Change Today</div><div class="mv2" id="mc">--</div></div>
@@ -472,6 +483,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128188; Insider Activity</div>
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
+      </div>
+      <div id="etfSections" style="display:none"></div>
       <div class="stitle">&#128240; Live News</div>
       <div id="news"><div class="ic"><div class="ih"><div class="it">News Feed</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128218; Apex Q Classroom</div>
@@ -1051,6 +1064,113 @@ function closeNewsModal(){
   document.getElementById("newsModalOverlay").classList.remove("on");
 }
 
+function prettySector(k){
+  var map = {
+    realestate: "Real Estate", real_estate: "Real Estate",
+    financial_services: "Financial Services", financial: "Financial Services",
+    consumer_cyclical: "Consumer Cyclical", consumer_defensive: "Consumer Defensive",
+    communication_services: "Communication Services", basic_materials: "Basic Materials",
+    healthcare: "Healthcare", technology: "Technology", energy: "Energy",
+    industrials: "Industrials", utilities: "Utilities"
+  };
+  if(map[k]) return map[k];
+  return String(k).replace(/_/g, " ").replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+}
+
+function renderETFReport(d){
+  // Header shell, shared with the stock report
+  document.getElementById("sym").textContent = d.symbol || "";
+  document.getElementById("sfull").textContent = d.name || "";
+  document.getElementById("ssect").textContent = (d.category && d.category !== "N/A") ? d.category : "Exchange Traded Fund";
+  document.getElementById("spx").textContent = "$" + (d.price || 0).toLocaleString();
+  var chg = d.change_pct || 0;
+  var sign = chg >= 0 ? "+" : "";
+  var schg = document.getElementById("schg");
+  schg.textContent = sign + chg + "% today";
+  schg.className = "sc " + (chg >= 0 ? "up" : "dn");
+
+  // Verdict box becomes a neutral ETF banner
+  document.getElementById("vbox").className = "vb etf";
+  var vbdg = document.getElementById("vbdg");
+  vbdg.className = "vbdg etf";
+  vbdg.innerHTML = "&#128202; ETF Report";
+  document.getElementById("vsco").textContent = "Exchange Traded Fund";
+  document.getElementById("vconf").innerHTML = esc(d.name || d.symbol) + " is an exchange traded fund, a single ticker that holds a basket of many investments at once. Apex Q does not run a fund through the stock engine, because a fund is judged on what it costs to own, how widely it spreads risk, and what it actually holds. The cards below break that down in plain English. Educational only, never advice.";
+  document.getElementById("vconfidence").style.display = "none";
+  document.getElementById("vflags").style.display = "none";
+  document.getElementById("vmean").style.display = "none";
+  document.getElementById("moatWrap").style.display = "none";
+  document.getElementById("wguide").innerHTML = "";
+  document.getElementById("vrl").innerHTML = "";
+
+  // Hide every stock section, show the ETF block
+  document.getElementById("stockSections").style.display = "none";
+  var box = document.getElementById("etfSections");
+  box.style.display = "block";
+
+  var html = "";
+
+  // a. ETF metrics grid
+  var erVal = d.expense_ratio;
+  var er = (erVal !== null && erVal !== undefined && erVal !== "N/A") ? (erVal + "%") : "N/A";
+  var erCls = "neu";
+  if(typeof erVal === "number"){ erCls = erVal <= 0.2 ? "pos" : (erVal <= 0.5 ? "neu" : "neg"); }
+  var aum = fmt(d.total_assets);
+  var yVal = d.yield;
+  var dy = (yVal !== null && yVal !== undefined && yVal !== "N/A") ? (yVal + "%") : "N/A";
+  var cat = (d.category && d.category !== "N/A") ? d.category : "N/A";
+  var fam = (d.fund_family && d.fund_family !== "N/A") ? d.fund_family : "N/A";
+  var lo = d.fifty_two_week_low, hi = d.fifty_two_week_high;
+  var range = (typeof lo === "number" && typeof hi === "number") ? ("$" + lo.toLocaleString() + " to $" + hi.toLocaleString()) : "N/A";
+  html += "<div class=\"mets\">"
+    + "<div class=\"met\"><div class=\"ml2\">Expense Ratio (annual cost)</div><div class=\"mv2 " + erCls + "\">" + er + "</div></div>"
+    + "<div class=\"met\"><div class=\"ml2\">Total Assets</div><div class=\"mv2 neu\">" + aum + "</div></div>"
+    + "<div class=\"met\"><div class=\"ml2\">Dividend Yield</div><div class=\"mv2 neu\">" + dy + "</div></div>"
+    + "<div class=\"met\"><div class=\"ml2\">Category</div><div class=\"mv2 neu\">" + esc(cat) + "</div></div>"
+    + "<div class=\"met\"><div class=\"ml2\">Fund Family</div><div class=\"mv2 neu\">" + esc(fam) + "</div></div>"
+    + "<div class=\"met\"><div class=\"ml2\">52 Week Range</div><div class=\"mv2 neu\">" + range + "</div></div>"
+    + "</div>";
+
+  // b. Top Holdings
+  html += "<div class=\"stitle\">&#128202; Top Holdings</div>";
+  var holds = d.holdings || [];
+  if(holds.length){
+    var hrows = holds.map(function(h){
+      var w = (h.weight !== null && h.weight !== undefined) ? (h.weight + "%") : "";
+      var nm = h.name ? ("<span class=\"etfHoldName\">" + esc(h.name) + "</span>") : "";
+      return "<div class=\"etfHoldRow\"><span class=\"etfHoldL\"><span class=\"etfHoldSym\">" + esc(h.symbol || "") + "</span>" + nm + "</span><span class=\"etfHoldWt\">" + w + "</span></div>";
+    }).join("");
+    html += "<div class=\"ic\">" + hrows + "</div>";
+  } else {
+    html += "<div class=\"ic\"><div class=\"itxt\">Holdings data not available for this fund right now.</div></div>";
+  }
+
+  // c. Sector Breakdown (hidden when there is no data)
+  var sw = d.sector_weights || {};
+  var keys = Object.keys(sw);
+  if(keys.length){
+    html += "<div class=\"stitle\">&#129518; Sector Breakdown</div>";
+    keys.sort(function(a, b){ return sw[b] - sw[a]; });
+    var srows = keys.map(function(k){
+      var pct = sw[k];
+      var width = Math.max(2, Math.min(100, pct));
+      return "<div class=\"etfSecRow\"><div class=\"etfSecTop\"><span>" + esc(prettySector(k)) + "</span><span>" + (Math.round(pct * 10) / 10) + "%</span></div><div class=\"target-gauge\"><div class=\"fill\" style=\"width:" + width + "%;background:var(--accent)\"></div></div></div>";
+    }).join("");
+    html += "<div class=\"ic\">" + srows + "</div>";
+  }
+
+  box.innerHTML = html;
+
+  // e. Classroom lesson (shared container)
+  var classroom = document.getElementById("classroom");
+  if(classroom){
+    classroom.innerHTML = "<div class=\"ic classCard\"><div class=\"ih\"><div class=\"it\">Why ETF Costs Matter</div></div><div class=\"itxt\">Expense ratios may look small, but they compound over time. A 0.10% fee versus 0.50% on a $100,000 holding is $400 more every year. Over decades, that difference can be tens of thousands of dollars. Always check what you pay before you buy.</div></div>";
+  }
+
+  // News, identical pipeline and tappable modal as the stock report
+  renderNews(d.news || []);
+}
+
 function loadTicker(sym){
   return fetch(API + "/analyze?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
     if(d.price){
@@ -1193,6 +1313,14 @@ function run(){
     currentName = d.name || "";
     updateSaveBtn();
     updateAskChips(d.suggested_questions);
+
+    if(d.verdict === "ETF" || d.quoteType === "ETF"){
+      renderETFReport(d);
+      return;
+    }
+    document.getElementById("stockSections").style.display = "";
+    document.getElementById("etfSections").style.display = "none";
+
     document.getElementById("sym").textContent = d.symbol || val;
     document.getElementById("sfull").textContent = d.name || val;
     document.getElementById("ssect").textContent = d.sector || "";
