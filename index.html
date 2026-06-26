@@ -1554,9 +1554,21 @@ function run(){
     if(vcBanner){
       if(d.verdict_changed){
         var vcCls = d.verdict === "APPROVE" ? "vchgUp" : (d.verdict === "PASS" ? "vchgDn" : "vchgNeu");
+        var vcReason = d.verdict_reason || "";
+        if(vcReason){ vcReason = vcReason.charAt(0).toUpperCase() + vcReason.slice(1); }
         vcBanner.className = "vchgBanner " + vcCls;
-        vcBanner.innerHTML = "&#8599; MOVED FROM " + esc(d.previous_verdict || "") + " TO " + esc(d.verdict) + " &middot; " + esc(d.verdict_change_reason || "");
+        vcBanner.innerHTML = "&#8599; Verdict changed from " + esc(d.previous_verdict || "") + ". " + esc(vcReason) + ".";
         vcBanner.style.display = "block";
+        // Mark this change seen so it stops alerting. Fire and forget, failures are harmless.
+        if(d.symbol){
+          fetch("/acknowledge-verdict", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({symbol: d.symbol})
+          }).then(function(){
+            if(_verdictFlips[d.symbol]){ delete _verdictFlips[d.symbol]; applyWatchFlipBadges(); }
+          }).catch(function(){});
+        }
       } else {
         vcBanner.style.display = "none";
         vcBanner.innerHTML = "";
@@ -2833,7 +2845,7 @@ function loadAlerts(){
     var a = (d && d.alerts) ? d.alerts : [];
     // Rebuild the symbol to flip map used by the watchlist arrow badges.
     _verdictFlips = {};
-    a.forEach(function(it){ if(it.flip){ _verdictFlips[it.symbol] = {previous: it.previous_verdict, verdict: it.verdict, reason: it.reason}; } });
+    a.forEach(function(it){ if(it.flip){ _verdictFlips[it.symbol] = {previous: it.previous_verdict, verdict: (it.new_verdict || it.verdict), reason: it.reason}; } });
     applyWatchFlipBadges();
     var flips = (typeof d.verdict_changes === "number") ? d.verdict_changes : a.filter(function(x){ return x.flip; }).length;
     if(!a.length){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">All quiet. None of your saved stocks need attention right now.</div>"; } setAlertCount(0, 0); return; }
@@ -2841,10 +2853,11 @@ function loadAlerts(){
     if(!feed){ return; }
     feed.innerHTML = a.map(function(it){
       if(it.flip){
-        var fk = it.verdict === "APPROVE" ? "alertPositive" : "alertCaution";
+        var nv = it.new_verdict || it.verdict;
+        var fk = nv === "APPROVE" ? "alertPositive" : "alertCaution";
         return "<div class=\"alertRow " + fk + " alertFlip\" data-sym=\"" + esc(it.symbol) + "\">"
           + "<div class=\"alertTop\"><span class=\"alertSym\">" + esc(it.symbol) + "</span><span class=\"alertTag\">VERDICT CHANGE</span></div>"
-          + "<div class=\"alertFlipHead\">&#8599; MOVED FROM " + esc(it.previous_verdict || "") + " TO " + esc(it.verdict) + "</div>"
+          + "<div class=\"alertFlipHead\">&#8599; MOVED FROM " + esc(it.previous_verdict || "") + " TO " + esc(nv) + "</div>"
           + "<div class=\"alertReason\">" + esc(it.reason || "") + "</div>"
           + "</div>";
       }
