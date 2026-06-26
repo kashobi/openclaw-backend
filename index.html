@@ -89,6 +89,25 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .ptbl tr.dim td{opacity:.5;}
 .portEmpty{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 18px;text-align:center;color:var(--muted);font-size:14px;line-height:1.5;}
 .portEmpty a{color:var(--accent);font-weight:700;cursor:pointer;text-decoration:none;}
+.ptbl td.pos{color:var(--green);font-weight:700;}
+.ptbl td.neg{color:var(--red);font-weight:700;}
+.ptbl .ped{color:var(--accent);cursor:pointer;font-weight:800;border:none;background:none;font-size:15px;line-height:1;padding:0 5px;}
+.ptbl td.pactions{white-space:nowrap;}
+.portEditInp{width:76px;padding:5px 6px;border:1px solid var(--accent);border-radius:6px;font-size:13px;text-align:right;font-family:'JetBrains Mono',monospace;box-sizing:border-box;}
+.portSummary{margin-bottom:16px;}
+.psumTop{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:13px;}
+.psumLabel{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:800;}
+.psumValue{font-size:30px;font-weight:900;color:var(--text);font-family:'Space Grotesk',sans-serif;line-height:1;}
+.psumRow{display:flex;gap:22px;}
+.psumStat{flex:1;}
+.psumStatLabel{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700;margin-bottom:3px;}
+.psumStatVal{font-size:16px;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.psumStatVal.pos{color:var(--green);}
+.psumStatVal.neg{color:var(--red);}
+.portWarn{border-left:4px solid var(--yellow);margin-bottom:16px;}
+.addPortForm{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+.addPortForm .cmpInp{flex:1 1 90px;padding:11px 12px;font-size:14px;}
+.addPortForm .cmpBtn{flex:1 1 70px;padding:11px;font-size:14px;}
 .qrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .qp{background:var(--bg);border:2px solid var(--border);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--text);cursor:pointer;font-family:'JetBrains Mono',monospace;font-weight:700;}
 .qp:hover{border-color:var(--accent);color:var(--accent);}
@@ -226,6 +245,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .va{background:var(--gbg);color:var(--green);border:2px solid var(--green);}
 .vp{background:var(--rbg);color:var(--red);border:2px solid var(--red);}
 .vw{background:var(--ybg);color:var(--yellow);border:2px solid var(--yellow);}
+.vetf{background:#dde7f5;color:#2c4a7a;border:2px solid #4a6fa5;}
 .sgi{font-size:12.5px;font-family:'JetBrains Mono',monospace;color:var(--muted);font-weight:600;}
 .foot{background:var(--navy);padding:22px 24px;text-align:center;font-size:11px;color:#5a80aa;font-family:'JetBrains Mono',monospace;line-height:2;}
 .discband{background:var(--surface);border-bottom:2px solid var(--border);padding:18px 24px;}
@@ -399,7 +419,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .askVerdict{display:inline-block;margin-bottom:10px;}
 .askA{font-size:14px;line-height:1.65;}
 @keyframes micpulse{0%,100%{opacity:1;}50%{opacity:.62;}}
-.saveRow{display:flex;gap:9px;}
+.saveRow{display:flex;gap:9px;flex-wrap:wrap;}
 .saveRow .saveBtn{width:auto;flex:1;}
 .shareBtn{background:var(--s2);color:var(--accent);border:2px solid var(--accent);border-radius:11px;padding:12px 16px;font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
 .shareBtn:hover{background:#fff;}
@@ -448,7 +468,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div><div class="sn" id="sym">APEX Q</div><div class="sf" id="sfull">Search a stock above to begin</div><div class="ss" id="ssect"></div></div>
         <div class="pb"><div class="sp" id="spx">--</div><div class="sc up" id="schg">--</div></div>
       </div>
-      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button></div>
+      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button><button class="shareBtn" id="addPortBtn">&#43; Portfolio</button></div>
+      <div class="addPortForm" id="addPortForm" style="display:none"><input class="cmpInp" id="addPortShares" type="number" step="any" min="0" placeholder="Shares" autocomplete="off"><input class="cmpInp" id="addPortCost" type="number" step="any" min="0" placeholder="Avg cost" autocomplete="off"><button class="cmpBtn" id="addPortSubmit">Add</button></div>
       <div class="vb watch" id="vbox">
         <div class="vtop">
           <div class="vbdg watch" id="vbdg">&#9889; READY</div>
@@ -585,6 +606,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div class="vhead-t">Portfolio</div>
     <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math. Educational only, never advice.</div>
   </div>
+  <div id="portSummary" style="display:none"></div>
+  <div id="portConcentration" style="display:none"></div>
   <div class="portAdd">
     <input class="cmpInp portSym" id="portSym" type="text" placeholder="Ticker, like AAPL" autocomplete="off"/>
     <input class="cmpInp portNum" id="portShares" type="number" step="any" min="0" placeholder="Shares" autocomplete="off"/>
@@ -1562,6 +1585,10 @@ document.addEventListener("click", function(e){
   if(rem){ e.stopPropagation(); removeFromWatch(rem.getAttribute("data-remove")); return; }
   var remp = e.target.closest("[data-remove-port]");
   if(remp){ e.stopPropagation(); removeHolding(remp.getAttribute("data-remove-port")); return; }
+  var edp = e.target.closest("[data-edit-port]");
+  if(edp){ e.stopPropagation(); _portEditSym = edp.getAttribute("data-edit-port"); renderPortfolio(_portData); return; }
+  var svp = e.target.closest("[data-save-port]");
+  if(svp){ e.stopPropagation(); savePortfolioEdit(svp.getAttribute("data-save-port")); return; }
   if(e.target.id === "portLogin"){ openAuth("login"); return; }
   var themeEl = e.target.closest("[data-theme]");
   if(themeEl){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
@@ -1701,7 +1728,7 @@ function updateSaveBtn(){
   var btn = document.getElementById("saveBtn");
   if(!btn || !row) return;
   if(!currentSymbol){ row.style.display = "none"; return; }
-  row.style.display = "block";
+  row.style.display = "flex";
   var saved = watchSymbols.indexOf(currentSymbol) >= 0;
   if(saved){ btn.className = "saveBtn saved"; btn.innerHTML = "&#11088; Saved to Watchlist"; }
   else { btn.className = "saveBtn"; btn.innerHTML = "&#9734; Save to Watchlist"; }
@@ -1841,12 +1868,19 @@ function portShareStr(v){
   return (n % 1 === 0) ? String(n) : n.toFixed(4);
 }
 
+var _portData = null;
+var _portEditSym = null;
+
 function loadPortfolio(){
   var wrap = document.getElementById("portTable");
   var load = document.getElementById("portLoad");
+  var summary = document.getElementById("portSummary");
+  var conc = document.getElementById("portConcentration");
   if(!wrap) return;
+  function hideExtras(){ if(summary) summary.style.display = "none"; if(conc) conc.style.display = "none"; }
   if(!currentUser){
     if(load) load.style.display = "none";
+    hideExtras();
     wrap.innerHTML = "<div class=\"portEmpty\">Log in to track your portfolio. <a id=\"portLogin\">Log in</a></div>";
     return;
   }
@@ -1854,51 +1888,133 @@ function loadPortfolio(){
   fetch(API + "/portfolio", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
     if(load) load.style.display = "none";
     if(d && d.error === "not_logged_in"){
+      hideExtras();
       wrap.innerHTML = "<div class=\"portEmpty\">Log in to track your portfolio. <a id=\"portLogin\">Log in</a></div>";
       return;
     }
-    var hs = (d && d.holdings) ? d.holdings : [];
-    if(!hs.length){
-      wrap.innerHTML = "<div class=\"portEmpty\">No holdings yet. Add your first stock above.</div>";
-      return;
-    }
-    var t = (d && d.totals) ? d.totals : {};
-    var rows = hs.map(function(h){
-      var dim = (h.price === null || h.price === undefined) ? " class=\"dim\"" : "";
-      var dayCls = (typeof h.day_change === "number" && h.day_change < 0) ? "neg" : "pos";
-      var glCls = (typeof h.gain_loss === "number" && h.gain_loss < 0) ? "neg" : "pos";
-      var priceStr = (h.price === null || h.price === undefined) ? "N/A" : portMoney(h.price);
-      var dayStr = (h.day_change === "N/A") ? "N/A" : portMoney(h.day_change);
-      var glStr = (h.gain_loss === "N/A") ? "N/A" : portMoney(h.gain_loss);
-      var glpStr = (h.gain_loss_pct === "N/A") ? "" : (" (" + portPct(h.gain_loss_pct) + ")");
-      var mvStr = (h.market_value === "N/A") ? "N/A" : portMoney(h.market_value);
-      return "<tr" + dim + ">"
-        + "<td class=\"lft\"><span class=\"psym\" data-sym=\"" + esc(h.symbol) + "\">" + esc(h.symbol) + "</span></td>"
-        + "<td>" + portShareStr(h.shares) + "</td>"
-        + "<td>" + portMoney(h.avg_cost) + "</td>"
-        + "<td>" + priceStr + "</td>"
-        + "<td class=\"" + dayCls + "\">" + dayStr + "</td>"
-        + "<td>" + mvStr + "</td>"
-        + "<td class=\"" + glCls + "\">" + glStr + glpStr + "</td>"
-        + "<td><button class=\"prm\" data-remove-port=\"" + esc(h.symbol) + "\" title=\"Remove\">&times;</button></td>"
-        + "</tr>";
-    }).join("");
-    var totDayCls = (typeof t.day_change === "number" && t.day_change < 0) ? "neg" : "pos";
-    var totGlCls = (typeof t.gain_loss === "number" && t.gain_loss < 0) ? "neg" : "pos";
-    var foot = "<tr>"
-      + "<td class=\"lft\">Total</td><td></td><td></td><td></td>"
-      + "<td class=\"" + totDayCls + "\">" + portMoney(t.day_change) + "</td>"
-      + "<td>" + portMoney(t.market_value) + "</td>"
-      + "<td class=\"" + totGlCls + "\">" + portMoney(t.gain_loss) + " (" + portPct(t.gain_loss_pct) + ")</td>"
-      + "<td></td></tr>";
-    wrap.innerHTML = "<div class=\"ptblWrap\"><table class=\"ptbl\">"
-      + "<thead><tr><th class=\"lft\">Symbol</th><th>Shares</th><th>Avg Cost</th><th>Price</th><th>Day</th><th>Value</th><th>Gain/Loss</th><th></th></tr></thead>"
-      + "<tbody>" + rows + "</tbody>"
-      + "<tfoot>" + foot + "</tfoot></table></div>";
+    _portData = d;
+    _portEditSym = null;
+    renderPortfolio(d);
   }).catch(function(){
     if(load) load.style.display = "none";
+    hideExtras();
     wrap.innerHTML = "<div class=\"portEmpty\">Could not load your portfolio. Try again.</div>";
   });
+}
+
+function renderPortfolio(d){
+  var wrap = document.getElementById("portTable");
+  var summary = document.getElementById("portSummary");
+  var conc = document.getElementById("portConcentration");
+  if(!wrap) return;
+  var hs = (d && d.holdings) ? d.holdings : [];
+  if(!hs.length){
+    if(summary) summary.style.display = "none";
+    if(conc) conc.style.display = "none";
+    wrap.innerHTML = "<div class=\"portEmpty\">Your portfolio is empty. Search a stock, run the report, and tap Add to Portfolio to start tracking. Or enter a ticker above.</div>";
+    return;
+  }
+  var t = (d && d.totals) ? d.totals : {};
+  var isNum = function(x){ return typeof x === "number"; };
+
+  if(summary){
+    var tmv = isNum(t.market_value) ? t.market_value : 0;
+    var tday = isNum(t.day_change) ? t.day_change : 0;
+    var prev = tmv - tday;
+    var dayPct = prev > 0 ? (tday / prev * 100) : 0;
+    var tgl = isNum(t.gain_loss) ? t.gain_loss : 0;
+    var tglp = isNum(t.gain_loss_pct) ? t.gain_loss_pct : 0;
+    summary.className = "ic portSummary";
+    summary.style.display = "block";
+    summary.style.background = tday >= 0 ? "var(--gbg)" : "var(--rbg)";
+    summary.innerHTML = "<div class=\"psumTop\"><div class=\"psumLabel\">Total Portfolio Value</div><div class=\"psumValue\">" + portMoney(tmv) + "</div></div>"
+      + "<div class=\"psumRow\">"
+      + "<div class=\"psumStat\"><div class=\"psumStatLabel\">Today</div><div class=\"psumStatVal " + (tday >= 0 ? "pos" : "neg") + "\">" + portMoney(tday) + " (" + portPct(dayPct) + ")</div></div>"
+      + "<div class=\"psumStat\"><div class=\"psumStatLabel\">All Time</div><div class=\"psumStatVal " + (tgl >= 0 ? "pos" : "neg") + "\">" + portMoney(tgl) + " (" + portPct(tglp) + ")</div></div>"
+      + "</div>";
+  }
+
+  if(conc){
+    var top = null;
+    hs.forEach(function(h){
+      if(isNum(h.allocation_pct) && h.allocation_pct > 40 && (!top || h.allocation_pct > top.allocation_pct)){ top = h; }
+    });
+    if(top){
+      conc.className = "ic portWarn";
+      conc.style.display = "block";
+      conc.innerHTML = "<div class=\"itxt\">&#9888;&#65039; " + esc(top.symbol) + " makes up " + top.allocation_pct + "% of your portfolio. Diversification spreads risk across more names. This is educational, not advice.</div>";
+    } else {
+      conc.style.display = "none";
+    }
+  }
+
+  var rows = hs.map(function(h){
+    var dim = (h.price === null || h.price === undefined) ? " class=\"dim\"" : "";
+    var dayCls = isNum(h.day_change) ? (h.day_change < 0 ? "neg" : "pos") : "";
+    var glCls = isNum(h.gain_loss) ? (h.gain_loss < 0 ? "neg" : "pos") : "";
+    var glTint = isNum(h.gain_loss) ? (h.gain_loss < 0 ? "background:rgba(139,0,0,.09);" : "background:rgba(0,77,34,.09);") : "";
+    var priceStr = (h.price === null || h.price === undefined) ? "N/A" : portMoney(h.price);
+    var dayStr = (h.day_change === "N/A") ? "N/A" : portMoney(h.day_change);
+    var glStr = (h.gain_loss === "N/A") ? "N/A" : portMoney(h.gain_loss);
+    var glpStr = (h.gain_loss_pct === "N/A") ? "" : (" (" + portPct(h.gain_loss_pct) + ")");
+    var mvStr = (h.market_value === "N/A") ? "N/A" : portMoney(h.market_value);
+    var allocStr = (h.market_value === "N/A") ? "N/A" : ((isNum(h.allocation_pct) ? h.allocation_pct : 0) + "%");
+    var editing = (_portEditSym === h.symbol);
+    var sharesCell = editing
+      ? "<td><input class=\"portEditInp\" type=\"number\" step=\"any\" min=\"0\" id=\"portEditShares\" value=\"" + h.shares + "\"></td>"
+      : "<td>" + portShareStr(h.shares) + "</td>";
+    var costCell = editing
+      ? "<td><input class=\"portEditInp\" type=\"number\" step=\"any\" min=\"0\" id=\"portEditCost\" value=\"" + h.avg_cost + "\"></td>"
+      : "<td>" + portMoney(h.avg_cost) + "</td>";
+    var actBtn = editing
+      ? "<button class=\"ped\" data-save-port=\"" + esc(h.symbol) + "\" title=\"Save\">&#10003;</button>"
+      : "<button class=\"ped\" data-edit-port=\"" + esc(h.symbol) + "\" title=\"Edit\">&#9998;</button>";
+    return "<tr" + dim + ">"
+      + "<td class=\"lft\"><span class=\"psym\" data-sym=\"" + esc(h.symbol) + "\">" + esc(h.symbol) + "</span></td>"
+      + sharesCell
+      + costCell
+      + "<td>" + priceStr + "</td>"
+      + "<td class=\"" + dayCls + "\">" + dayStr + "</td>"
+      + "<td>" + mvStr + "</td>"
+      + "<td class=\"" + glCls + "\" style=\"" + glTint + "\">" + glStr + glpStr + "</td>"
+      + "<td>" + allocStr + "</td>"
+      + "<td class=\"pactions\">" + actBtn + "<button class=\"prm\" data-remove-port=\"" + esc(h.symbol) + "\" title=\"Remove\">&times;</button></td>"
+      + "</tr>";
+  }).join("");
+
+  var totDayCls = isNum(t.day_change) ? (t.day_change < 0 ? "neg" : "pos") : "";
+  var totGlCls = isNum(t.gain_loss) ? (t.gain_loss < 0 ? "neg" : "pos") : "";
+  var foot = "<tr>"
+    + "<td class=\"lft\">Total</td><td></td><td></td><td></td>"
+    + "<td class=\"" + totDayCls + "\">" + portMoney(t.day_change) + "</td>"
+    + "<td>" + portMoney(t.market_value) + "</td>"
+    + "<td class=\"" + totGlCls + "\">" + portMoney(t.gain_loss) + " (" + portPct(t.gain_loss_pct) + ")</td>"
+    + "<td>100%</td>"
+    + "<td></td></tr>";
+  wrap.innerHTML = "<div class=\"ptblWrap\"><table class=\"ptbl\">"
+    + "<thead><tr><th class=\"lft\">Symbol</th><th>Shares</th><th>Avg Cost</th><th>Price</th><th>Day</th><th>Value</th><th>Gain/Loss</th><th>Allocation</th><th></th></tr></thead>"
+    + "<tbody>" + rows + "</tbody>"
+    + "<tfoot>" + foot + "</tfoot></table></div>";
+}
+
+function savePortfolioEdit(sym){
+  var shEl = document.getElementById("portEditShares");
+  var coEl = document.getElementById("portEditCost");
+  if(!shEl || !coEl){ return; }
+  var shares = parseFloat(shEl.value);
+  var cost = parseFloat(coEl.value);
+  if(!(shares > 0)){ showToast("Enter how many shares you own"); return; }
+  if(!(cost >= 0)){ showToast("Enter your average cost per share"); return; }
+  fetch(API + "/portfolio/add", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({symbol: sym, shares: shares, avg_cost: cost})
+  }).then(function(r){ return r.json(); }).then(function(res){
+    if(res && res.ok){ _portEditSym = null; loadPortfolio(); }
+    else if(res && res.error === "not_logged_in"){ openAuth("login"); }
+    else { showToast((res && (res.message || res.error)) ? (res.message || res.error) : "Could not save"); }
+  }).catch(function(){ showToast("Connection issue. Try again."); });
 }
 
 function addHolding(){
@@ -1948,6 +2064,61 @@ function removeHolding(sym){
 
 var _portAddBtn = document.getElementById("portAddBtn");
 if(_portAddBtn){ _portAddBtn.addEventListener("click", addHolding); }
+
+var _addPortBtn = document.getElementById("addPortBtn");
+if(_addPortBtn){
+  _addPortBtn.addEventListener("click", function(){
+    if(!currentUser){ openAuth("login"); return; }
+    var form = document.getElementById("addPortForm");
+    if(!form){ return; }
+    if(form.style.display === "flex"){ form.style.display = "none"; return; }
+    form.style.display = "flex";
+    var shEl = document.getElementById("addPortShares");
+    var coEl = document.getElementById("addPortCost");
+    if(shEl) shEl.value = "";
+    if(coEl) coEl.value = "";
+    if(currentSymbol){
+      fetch(API + "/portfolio", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+        if(d && d.holdings){
+          var ex = d.holdings.filter(function(h){ return h.symbol === currentSymbol; })[0];
+          if(ex){ if(shEl) shEl.value = ex.shares; if(coEl) coEl.value = ex.avg_cost; }
+        }
+      }).catch(function(){});
+    }
+    if(shEl) shEl.focus();
+  });
+}
+
+var _addPortSubmit = document.getElementById("addPortSubmit");
+if(_addPortSubmit){
+  _addPortSubmit.addEventListener("click", function(){
+    if(!currentSymbol){ showToast("Run a report first"); return; }
+    if(!currentUser){ openAuth("login"); return; }
+    var shares = parseFloat(document.getElementById("addPortShares").value);
+    var cost = parseFloat(document.getElementById("addPortCost").value);
+    if(!(shares > 0)){ showToast("Enter how many shares you own"); return; }
+    if(!(cost >= 0)){ showToast("Enter your average cost per share"); return; }
+    fetch(API + "/portfolio/add", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      credentials: "same-origin",
+      body: JSON.stringify({symbol: currentSymbol, shares: shares, avg_cost: cost})
+    }).then(function(r){ return r.json(); }).then(function(res){
+      if(res && res.ok){
+        showToast("Added to portfolio");
+        var form = document.getElementById("addPortForm");
+        if(form) form.style.display = "none";
+        if(typeof _portData !== "undefined"){ _portData = null; }
+      } else if(res && res.error === "free_limit"){
+        showToast(res.message || "Free accounts can track up to 5 holdings");
+      } else if(res && res.error === "not_logged_in"){
+        openAuth("login");
+      } else {
+        showToast((res && res.error) ? res.error : "Could not add that holding");
+      }
+    }).catch(function(){ showToast("Connection issue. Try again."); });
+  });
+}
 
 document.getElementById("acctBtn").addEventListener("click", function(){
   if(currentUser){
@@ -2033,23 +2204,31 @@ function runCompare(){
     if(!items.length){ verd.innerHTML = "<div class=\"scanEmpty\">Could not read those tickers. Check the symbols and try again.</div>"; return; }
     if(d.reason){ verd.innerHTML = "<div class=\"cmpV\"><div class=\"cmpVh\">Which looks strongest</div><div class=\"cmpVt\">" + esc(d.reason) + "</div></div>"; }
     res.innerHTML = items.map(function(it){
+      var isEtf = (it.verdict === "ETF");
       var v = it.verdict || "WATCH";
-      var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
+      var vc = isEtf ? "vetf" : (v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw"));
       var best = (it.symbol === d.strongest);
       var c = (it.change_pct >= 0 ? "+" : "") + it.change_pct + "%";
       var cc = it.change_pct >= 0 ? "pos" : "neg";
-      var pe = (it.pe_ratio && it.pe_ratio !== "N/A") ? it.pe_ratio : "n/a";
-      var up = (it.upside !== null && it.upside !== undefined) ? (it.upside + "%") : "n/a";
+      var cells;
+      if(isEtf){
+        cells = "<div><div class=\"cmpL\">Price</div><div class=\"cmpVal\">$" + (it.price || 0).toLocaleString() + "</div></div>"
+          + "<div><div class=\"cmpL\">Today</div><div class=\"cmpVal " + cc + "\">" + c + "</div></div>"
+          + "<div><div class=\"cmpL\">Assets</div><div class=\"cmpVal\">" + fmt(it.market_cap) + "</div></div>"
+          + "<div><div class=\"cmpL\">Type</div><div class=\"cmpVal\">ETF</div></div>";
+      } else {
+        var pe = (it.pe_ratio && it.pe_ratio !== "N/A") ? it.pe_ratio : "n/a";
+        var up = (it.upside !== null && it.upside !== undefined) ? (it.upside + "%") : "n/a";
+        cells = "<div><div class=\"cmpL\">Price</div><div class=\"cmpVal\">$" + (it.price || 0).toLocaleString() + "</div></div>"
+          + "<div><div class=\"cmpL\">Today</div><div class=\"cmpVal " + cc + "\">" + c + "</div></div>"
+          + "<div><div class=\"cmpL\">Upside</div><div class=\"cmpVal\">" + up + "</div></div>"
+          + "<div><div class=\"cmpL\">PE</div><div class=\"cmpVal\">" + pe + "</div></div>";
+      }
       return "<div class=\"cmpCard" + (best ? " cmpBest" : "") + "\" data-sym=\"" + esc(it.symbol) + "\">"
         + (best ? "<div class=\"cmpFlag\">Strongest here</div>" : "")
         + "<div class=\"cmpTop\"><div class=\"cmpSym\">" + esc(it.symbol) + "</div><div class=\"scanV " + vc + "\">" + v + "</div></div>"
         + "<div class=\"cmpName\">" + esc(it.name || "") + "</div>"
-        + "<div class=\"cmpGrid\">"
-          + "<div><div class=\"cmpL\">Price</div><div class=\"cmpVal\">$" + (it.price || 0).toLocaleString() + "</div></div>"
-          + "<div><div class=\"cmpL\">Today</div><div class=\"cmpVal " + cc + "\">" + c + "</div></div>"
-          + "<div><div class=\"cmpL\">Upside</div><div class=\"cmpVal\">" + up + "</div></div>"
-          + "<div><div class=\"cmpL\">PE</div><div class=\"cmpVal\">" + pe + "</div></div>"
-        + "</div></div>";
+        + "<div class=\"cmpGrid\">" + cells + "</div></div>";
     }).join("");
   }).catch(function(){ if(load){ load.classList.remove("on"); } verd.innerHTML = "<div class=\"scanEmpty\">Could not run the compare. Try again.</div>"; });
 }
