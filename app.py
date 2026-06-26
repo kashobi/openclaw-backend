@@ -434,21 +434,17 @@ def watchlist_remove():
 
 
 # CHUNK: Portfolio Tracker — manual holdings with live value and gain or loss. Educational only.
-@app.route("/portfolio", methods=["GET"])
-def portfolio_get():
-    u = current_user()
-    if not u:
-        return jsonify({"error": "not_logged_in"}), 401
-    uid = u["id"]
+def compute_portfolio(uid):
     # 60 second cache so rapid refreshes do not re-run the whole aggregation. The underlying
     # prices come from light_score, which carries its own cache, so this never hammers Yahoo.
+    # Returns the payload dict, not a response, so both /portfolio and /dashboard can reuse it.
     ckey = "portfolio_" + str(uid)
     entry = CACHE.get(ckey)
     if entry and (time.time() - entry[1]) < 60:
-        return jsonify(entry[0])
+        return entry[0]
     conn = get_db()
     if conn is None:
-        return jsonify({"error": "Database not available."}), 500
+        return {"error": "Database not available."}
     try:
         cur = conn.cursor()
         cur.execute("SELECT symbol, shares, avg_cost FROM holdings WHERE user_id = %s ORDER BY added_at ASC", (uid,))
@@ -456,7 +452,7 @@ def portfolio_get():
         cur.close()
     except Exception as e:
         logger.error("portfolio get error: %s" % e)
-        return jsonify({"error": "Could not load your portfolio."}), 500
+        return {"error": "Could not load your portfolio."}
     finally:
         conn.close()
 
@@ -516,7 +512,18 @@ def portfolio_get():
         "data_timestamp": int(time.time()),
     }
     set_cache(ckey, payload)
-    return jsonify(payload)
+    return payload
+
+
+@app.route("/portfolio", methods=["GET"])
+def portfolio_get():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    result = compute_portfolio(u["id"])
+    if isinstance(result, dict) and result.get("error"):
+        return jsonify(result), 500
+    return jsonify(result)
 
 
 @app.route("/portfolio/add", methods=["POST"])
@@ -2755,34 +2762,36 @@ def movers():
     return jsonify(out)
 
 
-@app.route("/alerts")
-def alerts():
-    # Reads the logged in user's saved stocks, scores each one, and surfaces only the names
-    # that warrant a look right now. This is the in app feed. A push to the phone is the next layer.
-    u = current_user()
-    if not u:
-        return jsonify({"status": "logged_out", "alerts": []})
+def _alert_order(a):
+    if a.get("flip"):
+        return 0
+    return 1 if a["kind"] == "caution" else 2
+
+
+def build_alerts(uid):
+    # Shared by /alerts and /dashboard. Scores each saved stock with the full report so the verdict
+    # and its reason match the report view exactly, detects unacknowledged verdict flips read only,
+    # and returns the same payload shape /alerts has always returned. Cached per symbol, and
+    # watchlists are small, so the overlap with the dashboard pass stays cheap after the first warm.
     conn = get_db()
     if conn is None:
-        return jsonify({"status": "error", "alerts": []})
+        return {"status": "error", "alerts": []}
     try:
         cur = conn.cursor()
-        cur.execute("SELECT symbol, name FROM watchlist WHERE user_id = %s ORDER BY added_at DESC", (u["id"],))
+        cur.execute("SELECT symbol, name FROM watchlist WHERE user_id = %s ORDER BY added_at DESC", (uid,))
         rows = cur.fetchall()
         cur.close()
     except Exception as e:
         logger.error("alerts list error: %s" % e)
-        return jsonify({"status": "error", "alerts": []})
+        return {"status": "error", "alerts": []}
     finally:
         conn.close()
 
     if not rows:
-        return jsonify({"status": "empty", "alerts": []})
+        return {"status": "empty", "alerts": [], "total_saved": 0, "verdict_changes": 0}
 
     out = []
     for sym, nm in rows:
-        # Use the full report so the verdict and its reason match exactly what the report view shows,
-        # which keeps the flip baseline consistent and avoids false flips. Cached, and watchlists are small.
         r = compute_full_report(sym)
         if not r:
             continue
@@ -2792,9 +2801,9 @@ def alerts():
         # Verdict flip takes priority. This is read only for an existing baseline, so a flip keeps
         # showing in the feed until the user opens that stock's report and the frontend acknowledges
         # it. First sight establishes the baseline silently with no flip.
-        prev = read_verdict(u["id"], sym)
+        prev = read_verdict(uid, sym)
         if prev is None:
-            set_verdict(u["id"], sym, v)
+            set_verdict(uid, sym, v)
             changed = False
         else:
             changed = (v != "ETF" and prev != v)
@@ -2824,13 +2833,101 @@ def alerts():
             alert.update({"symbol": sym, "name": name, "change_pct": chg, "verdict": v})
             out.append(alert)
 
-    def _alert_order(a):
-        if a.get("flip"):
-            return 0
-        return 1 if a["kind"] == "caution" else 2
     out.sort(key=_alert_order)
     flips = sum(1 for a in out if a.get("flip"))
-    return jsonify({"status": "ok", "alerts": out, "total_saved": len(rows), "verdict_changes": flips})
+    return {"status": "ok", "alerts": out, "total_saved": len(rows), "verdict_changes": flips}
+
+
+@app.route("/alerts")
+def alerts():
+    # Reads the logged in user's saved stocks, scores each one, and surfaces only the names
+    # that warrant a look right now. This is the in app feed. A push to the phone is the next layer.
+    u = current_user()
+    if not u:
+        return jsonify({"status": "logged_out", "alerts": []})
+    return jsonify(build_alerts(u["id"]))
+
+
+@app.route("/dashboard")
+def dashboard():
+    # One aggregated payload for the home dashboard. Market data is returned for everyone. The
+    # personal sections are added only when logged in. This leans on existing caches and never
+    # makes a brand new external integration: movers, congress, and context are pure cache reads,
+    # so if they are cold they come back empty and their own endpoints warm them. Indices and the
+    # watchlist use light_score, which carries its own 15 minute cache, and portfolio reuses the
+    # 60 second portfolio cache. So the 60 second poll from the page stays cheap after the first load.
+    u = current_user()
+    data = {"logged_in": bool(u)}
+
+    INDEX_SET = [("^GSPC", "S&P 500"), ("^IXIC", "NASDAQ"), ("^DJI", "DOW JONES"), ("^VIX", "VIX")]
+    indices = []
+    for sym, label in INDEX_SET:
+        r = light_score(sym)
+        if r and isinstance(r.get("price"), (int, float)):
+            indices.append({"symbol": sym, "label": label, "price": r.get("price"), "change_pct": r.get("change_pct")})
+        else:
+            indices.append({"symbol": sym, "label": label, "price": None, "change_pct": None})
+    data["market_indices"] = indices
+
+    # Live market context: read the cached value only, never call the model from here.
+    data["market_context"] = get_cache("ctx_^GSPC")
+
+    # Top movers: read the existing movers cache only, top 3 each side.
+    movers = {"gainers": [], "losers": []}
+    if _MOVERS.get("data"):
+        movers = {
+            "gainers": (_MOVERS["data"].get("gainers") or [])[:3],
+            "losers": (_MOVERS["data"].get("losers") or [])[:3],
+        }
+    data["movers"] = movers
+
+    # Congress: read the cached insights only, top 3 most active.
+    congress = []
+    ci = CACHE.get("congress_insights")
+    if ci and isinstance(ci[0], dict):
+        congress = (ci[0].get("politicians") or [])[:3]
+    data["congress"] = congress
+
+    if not u:
+        return jsonify(data)
+
+    uid = u["id"]
+
+    wl = []
+    conn = get_db()
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT symbol, name FROM watchlist WHERE user_id = %s ORDER BY added_at DESC", (uid,))
+            wrows = cur.fetchall()
+            cur.close()
+        except Exception as e:
+            logger.error("dashboard watchlist error: %s" % e)
+            wrows = []
+        finally:
+            conn.close()
+        for sym, nm in wrows:
+            r = light_score(sym)
+            if r:
+                wl.append({
+                    "symbol": sym,
+                    "name": r.get("name") or nm or sym,
+                    "price": r.get("price"),
+                    "change_pct": r.get("change_pct"),
+                    "verdict": r.get("verdict"),
+                })
+            else:
+                wl.append({"symbol": sym, "name": nm or sym, "price": None, "change_pct": None, "verdict": None})
+    data["watchlist"] = wl
+
+    port = compute_portfolio(uid)
+    data["portfolio"] = port.get("totals") if isinstance(port, dict) else None
+
+    ab = build_alerts(uid)
+    data["alerts"] = (ab.get("alerts") or [])[:3]
+    data["verdict_changes"] = ab.get("verdict_changes", 0)
+
+    return jsonify(data)
 
 
 def fmt_money_py(v):
