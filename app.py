@@ -934,6 +934,179 @@ def yf_company_news(ticker_obj):
 
 
 # CHUNK: shared full-report engine so Ask and the report use the same verdict
+def build_news(symbol, ticker):
+    # Company news, shared by the stock and ETF reports. Finnhub first when a key is present, then
+    # yfinance as a reliable backbone so a covered name never shows "no company news", then a general
+    # market feed as a last resort. Newest first, time stamped, with full text for the read-more modal.
+    news = []
+    if FINNHUB_KEY:
+        try:
+            today = datetime.now().strftime("%Y-%m-%d")
+            from_date = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+            fcu = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={from_date}&to={today}&token={FINNHUB_KEY}"
+            r = requests.get(fcu, timeout=8)
+            cnt = len(r.json()) if r.status_code == 200 else 0
+            logger.info("finnhub company-news %s status %s count %s" % (symbol, r.status_code, cnt))
+            if r.status_code == 200:
+                arts = [n for n in r.json() if n.get("headline")]
+                arts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
+                for n in arts[:6]:
+                    news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "summary_long": _full_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
+        except Exception as e:
+            logger.error("finnhub company-news error %s: %s" % (symbol, e))
+
+    if not news:
+        try:
+            yn = yf_company_news(ticker)
+            logger.info("yfinance news %s count %s" % (symbol, len(yn)))
+            if yn:
+                news = yn[:6]
+        except Exception as e:
+            logger.error("yfinance news error %s: %s" % (symbol, e))
+
+    if not news and FINNHUB_KEY:
+        try:
+            gu = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
+            r2 = requests.get(gu, timeout=8)
+            if r2.status_code == 200:
+                garts = [n for n in r2.json() if n.get("headline")]
+                garts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
+                for n in garts[:4]:
+                    news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "summary_long": _full_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
+        except Exception as e:
+            logger.error("finnhub general-news error: %s" % e)
+    return news
+
+
+def build_etf_report(symbol, ticker, info, hist, cur, chg):
+    # ETFs are judged on cost, diversification, and what they hold, not the stock scoring engine. This
+    # builds a tailored educational payload and reuses the exact same news pipeline as the stock report.
+    def to_pct(v):
+        if not isinstance(v, (int, float)):
+            return None
+        return round(v * 100, 2) if abs(v) < 1 else round(v, 2)
+
+    news = build_news(symbol, ticker)
+    market_cap = info.get("marketCap", "N/A")
+    volume = int(hist["Volume"].iloc[-1]) if not hist.empty else 0
+    beta = fmt_price(info.get("beta"))
+    confidence, flags = run_referee(cur, chg, "N/A", "N/A", "HOLD", market_cap, volume, beta, hist, news, [], [])
+
+    earn = earnings_flag(info)
+    ext = extended_hours(info, cur)
+    ext_note = ""
+    if ext:
+        direction = "up" if ext["change_pct"] >= 0 else "down"
+        ext_note = "%s is %s %s percent in %s trading, at about $%s. The figures below are based on the regular session close, not this move." % (
+            symbol, direction, abs(ext["change_pct"]), ext["session"], ext["price"])
+
+    er_raw = info.get("expenseRatio")
+    if er_raw is None:
+        er_raw = info.get("annualReportExpenseRatio")
+    expense_ratio = to_pct(er_raw)
+    if expense_ratio is None:
+        expense_ratio = "N/A"
+
+    y_raw = info.get("yield")
+    if y_raw is None:
+        y_raw = info.get("dividendYield")
+    etf_yield = to_pct(y_raw)
+    if etf_yield is None:
+        etf_yield = "N/A"
+
+    total_assets = info.get("totalAssets")
+    if not isinstance(total_assets, (int, float)):
+        total_assets = "N/A"
+
+    # Top holdings: try .info first, then the funds_data feed where current yfinance keeps fund data.
+    holdings = []
+    raw_h = info.get("holdings")
+    if isinstance(raw_h, list):
+        for h in raw_h[:10]:
+            if isinstance(h, dict):
+                holdings.append({"symbol": h.get("symbol") or h.get("holdingName") or "", "name": h.get("holdingName") or "", "weight": to_pct(h.get("holdingPercent"))})
+    if not holdings:
+        try:
+            th = ticker.funds_data.top_holdings
+            if th is not None and hasattr(th, "iterrows"):
+                cols = list(th.columns)
+                wcol = "Holding Percent" if "Holding Percent" in cols else ("holdingPercent" if "holdingPercent" in cols else None)
+                ncol = "Name" if "Name" in cols else None
+                for sym_idx, row in th.head(10).iterrows():
+                    holdings.append({
+                        "symbol": str(sym_idx),
+                        "name": str(row[ncol]) if ncol else "",
+                        "weight": to_pct(row[wcol]) if wcol else None,
+                    })
+        except Exception:
+            pass
+
+    # Sector weightings: normalize a dict or a list of single key dicts, then fall back to funds_data.
+    sector_weights = {}
+    sw_raw = info.get("sectorWeightings")
+    if isinstance(sw_raw, dict):
+        for k, v in sw_raw.items():
+            p = to_pct(v)
+            if p is not None:
+                sector_weights[k] = p
+    elif isinstance(sw_raw, list):
+        for item in sw_raw:
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    p = to_pct(v)
+                    if p is not None:
+                        sector_weights[k] = p
+    if not sector_weights:
+        try:
+            sw2 = ticker.funds_data.sector_weightings
+            if isinstance(sw2, dict):
+                for k, v in sw2.items():
+                    p = to_pct(v)
+                    if p is not None:
+                        sector_weights[k] = p
+        except Exception:
+            pass
+
+    fw_high = info.get("fiftyTwoWeekHigh")
+    fw_low = info.get("fiftyTwoWeekLow")
+
+    result = {
+        "symbol": symbol,
+        "name": info.get("longName", symbol),
+        "sector": info.get("category", "") or "",
+        "price": cur,
+        "change_pct": chg,
+        "market_cap": market_cap,
+        "volume": volume,
+        "beta": beta,
+        "confidence": confidence,
+        "flags": flags,
+        "verdict": "ETF",
+        "quoteType": "ETF",
+        "expense_ratio": expense_ratio,
+        "total_assets": total_assets,
+        "category": info.get("category") or "N/A",
+        "fund_family": info.get("fundFamily") or "N/A",
+        "yield": etf_yield,
+        "holdings": holdings,
+        "sector_weights": sector_weights,
+        "fifty_two_week_high": fw_high if isinstance(fw_high, (int, float)) else "N/A",
+        "fifty_two_week_low": fw_low if isinstance(fw_low, (int, float)) else "N/A",
+        "news": news,
+        "extended": ext,
+        "earnings": earn,
+        "extended_note": ext_note,
+        "suggested_questions": [
+            "What is the expense ratio and why does it matter?",
+            "What are the top holdings?",
+            "How diversified is this ETF?",
+            "Explain this ETF report in plain English",
+        ],
+        "data_timestamp": int(time.time()),
+    }
+    return result
+
+
 def compute_full_report(symbol):
     cached = get_cache(f"full_{symbol}")
     if cached:
@@ -957,6 +1130,13 @@ def compute_full_report(symbol):
         rec = info.get("recommendationKey", "hold").upper()
         # CHUNK: know early if earnings just landed, so a likely stale target gets reduced weight below.
         earn = earnings_flag(info)
+
+        # CHUNK: ETF branch. A fund is judged on cost and holdings, not the stock engine, so build a
+        # tailored report and return before any stock scoring runs. The stock path below is untouched.
+        if str(info.get("quoteType", "")).upper() == "ETF":
+            etf_result = build_etf_report(symbol, ticker, info, hist, cur, chg)
+            set_cache(f"full_{symbol}", etf_result)
+            return etf_result
 
         score = 0
         sharp_drop = chg <= -8
@@ -1202,46 +1382,8 @@ def compute_full_report(symbol):
             if alert is None:
                 alert = "insider_selling"
 
-        # News. Finnhub company news first when a key is present, then yfinance company news as a
-        # reliable backbone source so a covered name never shows "no company news", and only then a
-        # general market feed as a last resort. All sorted newest first and time stamped.
-        news = []
-        if FINNHUB_KEY:
-            try:
-                today = datetime.now().strftime("%Y-%m-%d")
-                from_date = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-                fcu = f"https://finnhub.io/api/v1/company-news?symbol={symbol}&from={from_date}&to={today}&token={FINNHUB_KEY}"
-                r = requests.get(fcu, timeout=8)
-                cnt = len(r.json()) if r.status_code == 200 else 0
-                logger.info("finnhub company-news %s status %s count %s" % (symbol, r.status_code, cnt))
-                if r.status_code == 200:
-                    arts = [n for n in r.json() if n.get("headline")]
-                    arts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
-                    for n in arts[:6]:
-                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "News")), "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "summary_long": _full_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
-            except Exception as e:
-                logger.error("finnhub company-news error %s: %s" % (symbol, e))
-
-        if not news:
-            try:
-                yn = yf_company_news(ticker)
-                logger.info("yfinance news %s count %s" % (symbol, len(yn)))
-                if yn:
-                    news = yn[:6]
-            except Exception as e:
-                logger.error("yfinance news error %s: %s" % (symbol, e))
-
-        if not news and FINNHUB_KEY:
-            try:
-                gu = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
-                r2 = requests.get(gu, timeout=8)
-                if r2.status_code == 200:
-                    garts = [n for n in r2.json() if n.get("headline")]
-                    garts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
-                    for n in garts[:4]:
-                        news.append({"headline": clean_text(n["headline"]), "source": clean_text(n.get("source", "Market News")) + " (General)", "summary": _clean_summary(n.get("summary", ""), n.get("url", "")), "summary_long": _full_summary(n.get("summary", ""), n.get("url", "")), "url": n.get("url", ""), "ts": _news_ts(n.get("datetime", 0))})
-            except Exception as e:
-                logger.error("finnhub general-news error: %s" % e)
+        # News, shared with the ETF report through one helper so both paths stay identical.
+        news = build_news(symbol, ticker)
 
         market_cap = info.get("marketCap", "N/A")
         volume = int(hist["Volume"].iloc[-1]) if not hist.empty else 0
@@ -1668,6 +1810,25 @@ def light_score(symbol):
         tgt_raw = info.get("targetMeanPrice")
         tgt = round(float(tgt_raw), 2) if tgt_raw else "N/A"
         rec = info.get("recommendationKey", "hold").upper()
+        if str(info.get("quoteType", "")).upper() == "ETF":
+            res = {
+                "symbol": symbol,
+                "name": info.get("longName", symbol),
+                "sector": info.get("category", "") or "ETF",
+                "price": cur,
+                "change_pct": chg,
+                "pe_ratio": "N/A",
+                "analyst_target": "N/A",
+                "upside": None,
+                "div_yield": None,
+                "near_high": None,
+                "market_cap": info.get("totalAssets", "N/A"),
+                "conviction": "N/A",
+                "score": 0,
+                "verdict": "ETF",
+            }
+            set_cache("disc_" + symbol, res)
+            return res
         score = 0
         if chg > 2:
             score += 2
