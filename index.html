@@ -218,6 +218,11 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .acLegend{display:flex;gap:16px;font-size:12px;color:var(--muted);font-weight:700;margin-bottom:4px;flex-wrap:wrap;}
 .acLegend .acDot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle;}
 .acActionsTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:13px 0 2px;}
+.contextCard{background:var(--surface);border:2px solid var(--border);border-radius:14px;padding:18px 20px;margin:0 24px 16px;box-shadow:0 2px 12px rgba(0,0,0,.04);}
+.contextCardTitle{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);margin-bottom:10px;font-family:'JetBrains Mono',monospace;}
+.contextCardBody{font-size:15px;color:var(--text);line-height:1.7;font-weight:500;}
+.contextCardLesson{font-size:13px;color:var(--muted);line-height:1.6;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-style:italic;}
+@media(max-width:600px){.contextCard{margin:0 14px 14px;}}
 .ni{padding:11px 0;border-bottom:1px solid var(--border);}
 .ni:last-child{border-bottom:none;}
 .ns{font-size:11px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:800;margin-bottom:5px;}
@@ -463,6 +468,13 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   <div class="qlabel" id="qlabel" style="display:none">Trending Today</div>
   <div class="qrow" id="qrow"></div>
 </div>
+<div class="contextCard" id="homeContext" style="display:none">
+  <div class="contextCardInner">
+    <div class="contextCardTitle">&#128225; Live Market Context</div>
+    <div class="contextCardBody" id="homeContextBody">Loading...</div>
+    <div class="contextCardLesson" id="homeContextLesson"></div>
+  </div>
+</div>
 <div class="main">
 
   <div>
@@ -570,6 +582,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <button class="lens" data-lens="growth">Most Upside</button>
     <button class="lens" data-lens="value">Value Leaning</button>
     <button class="lens" data-lens="dividend">Dividend</button>
+    <button class="lens" data-lens="insiders">Insiders Buying</button>
   </div>
   <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names, and an insiders buying lens, are coming as we expand the universe. Educational only, never advice.</div>
   <div class="loading" id="scanLoad">Scanning the market...</div>
@@ -1245,6 +1258,17 @@ function renderETFReport(d){
     + "<div class=\"met\"><div class=\"ml2\">52 Week Range</div><div class=\"mv2 neu\">" + range + "</div></div>"
     + "</div>";
 
+  // Quality Snapshot card, a transparent read on cost, size, and diversification
+  var q = d.etf_quality;
+  if(q && q.label){
+    var qcls = q.score >= 6 ? "bg" : (q.score >= 4 ? "by" : "br");
+    var qer = (q.expense_ratio !== null && q.expense_ratio !== undefined && q.expense_ratio !== "N/A") ? (q.expense_ratio + "%") : "N/A";
+    var qaum = fmt(q.total_assets);
+    html += "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Quality Snapshot</div><div class=\"ibdg " + qcls + "\">" + esc(q.label) + "</div></div>"
+      + "<div class=\"itxt\">Expense ratio " + qer + " | Assets " + qaum + " | Holdings " + (q.num_holdings || 0)
+      + "<div class=\"iwhy\">A quick read on cost, size, and how spread out the fund is. Lower cost, larger size, and more holdings generally point to a steadier, cheaper fund. Educational only, never advice.</div></div></div>";
+  }
+
   // b. Top Holdings
   html += "<div class=\"stitle\">&#128202; Top Holdings</div>";
   var holds = d.holdings || [];
@@ -1403,6 +1427,23 @@ function loadLiveContext(symbol){
     var html = buildCard(card, "live0", true);
     vrl.insertAdjacentHTML("afterbegin", html);
   }).catch(function(){});
+}
+
+function loadHomeContext(){
+  var card = document.getElementById("homeContext");
+  if(!card){ return; }
+  var symbol = currentSymbol || "^GSPC";
+  fetch(API + "/context?symbol=" + encodeURIComponent(symbol)).then(function(r){ return r.json(); }).then(function(res){
+    if(!res || !res.live){ card.style.display = "none"; return; }
+    var L = res.live;
+    var body = esc(L.current_context || "") + (L.why_it_matters ? (" " + esc(L.why_it_matters)) : "");
+    if(!body.trim()){ card.style.display = "none"; return; }
+    document.getElementById("homeContextBody").innerHTML = body;
+    var lessonEl = document.getElementById("homeContextLesson");
+    if(L.simple_lesson){ lessonEl.innerHTML = "&#128218; " + esc(L.simple_lesson); lessonEl.style.display = "block"; }
+    else { lessonEl.innerHTML = ""; lessonEl.style.display = "none"; }
+    card.style.display = "block";
+  }).catch(function(){ card.style.display = "none"; });
 }
 
 function run(){
@@ -1661,6 +1702,7 @@ function run(){
 
     // Fire the live context request AFTER the report is on screen. It can only add, never block.
     loadLiveContext(d.symbol || val);
+    loadHomeContext();
 
   }).catch(function(){
     document.getElementById("sym").textContent = "ERROR";
@@ -1736,6 +1778,7 @@ attachAc("cmp0", "acCmp");
 
 buildTicker();
 loadMarket();
+loadHomeContext();
 
 var currentUser = null;
 var authMode = "login";
@@ -2547,6 +2590,7 @@ function showView(name){
     var asb = document.getElementById("askSym");
     if(asb && !asb.value.trim() && !askHistory.length && currentSymbol){ asb.value = currentSymbol; }
   }
+  if(name === "home"){ loadHomeContext(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
