@@ -814,10 +814,30 @@ def analyze():
     result = compute_full_report(symbol)
     if result is None:
         return jsonify({"error": f"Could not pull data for {symbol}."}), 404
-    # Opening the report is the moment a verdict flip is acknowledged, so the baseline advances here
-    # and only here. Ask and context call the engine without acknowledging anything.
+    # Read only: flag a verdict flip against the stored baseline without acknowledging it. The
+    # baseline advances only when the frontend calls /acknowledge-verdict, so the change keeps
+    # surfacing in alerts and on the badge until the user has actually opened and seen it.
     result = _attach_verdict_change(result, symbol)
     return jsonify(result)
+
+
+@app.route("/acknowledge-verdict", methods=["POST"])
+def acknowledge_verdict():
+    # Marks a verdict change as seen for this user and symbol by advancing the stored baseline to
+    # the current verdict. The frontend calls this silently once it has shown the change banner on
+    # the report, so the same flip will not alert again.
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    data = request.get_json(silent=True) or {}
+    raw = (data.get("symbol") or "").strip()
+    if not raw:
+        return jsonify({"error": "no_symbol"}), 400
+    symbol = resolve_ticker(raw)
+    report = compute_full_report(symbol)
+    if report and report.get("verdict"):
+        set_verdict(u["id"], symbol, report.get("verdict"))
+    return jsonify({"ok": True})
 
 
 # CHUNK: pre-market and post-market move, computed from the live quote against the regular close
@@ -1191,41 +1211,47 @@ def _pretty_rating(key):
     return " ".join(w.capitalize() for w in k.replace("-", " ").replace("_", " ").split())
 
 
-def diff_verdict(user_id, symbol, new_verdict, update):
-    # Compares the freshly computed verdict to the one stored for this user and symbol.
-    # First sight establishes a baseline silently. A real flip is only flagged when a prior
-    # verdict existed. When update is true (a report view), the baseline advances so the flip
-    # is acknowledged. Alerts read without advancing, so a flip keeps showing until the stock
-    # is opened. Returns (changed, previous_verdict). ETFs and blanks never count as a change.
-    if not new_verdict or new_verdict == "ETF":
-        return (False, None)
+def read_verdict(user_id, symbol):
+    # Pure read. Returns the last verdict stored for this user and symbol, or None if there is
+    # no baseline yet. Never writes, so it is safe to call from a report view without
+    # acknowledging anything.
     conn = get_db()
     if conn is None:
-        return (False, None)
+        return None
     try:
         cur = conn.cursor()
         cur.execute("SELECT last_verdict FROM verdict_history WHERE user_id=%s AND symbol=%s", (user_id, symbol))
         row = cur.fetchone()
-        prev = row[0] if row else None
-        changed = (prev is not None and prev != new_verdict)
-        if prev is None:
-            cur.execute(
-                "INSERT INTO verdict_history (user_id, symbol, last_verdict) VALUES (%s,%s,%s) "
-                "ON CONFLICT (user_id, symbol) DO NOTHING",
-                (user_id, symbol, new_verdict),
-            )
-            conn.commit()
-        elif update and changed:
-            cur.execute(
-                "UPDATE verdict_history SET last_verdict=%s, last_checked=NOW() WHERE user_id=%s AND symbol=%s",
-                (new_verdict, user_id, symbol),
-            )
-            conn.commit()
         cur.close()
-        return (changed, prev)
+        return row[0] if row else None
     except Exception as e:
-        logger.error("diff_verdict %s %s: %s" % (user_id, symbol, e))
-        return (False, None)
+        logger.error("read_verdict %s %s: %s" % (user_id, symbol, e))
+        return None
+    finally:
+        conn.close()
+
+
+def set_verdict(user_id, symbol, verdict):
+    # Upsert the baseline for this user and symbol to the given verdict. This is the only place
+    # the stored verdict advances, so a change stays unacknowledged until this runs (the
+    # acknowledge endpoint, or the alerts pass establishing a first baseline). Blanks and ETFs
+    # are never stored, so they never produce a flip.
+    if not verdict or verdict == "ETF":
+        return
+    conn = get_db()
+    if conn is None:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO verdict_history (user_id, symbol, last_verdict, last_checked) VALUES (%s,%s,%s,NOW()) "
+            "ON CONFLICT (user_id, symbol) DO UPDATE SET last_verdict=EXCLUDED.last_verdict, last_checked=NOW()",
+            (user_id, symbol, verdict),
+        )
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("set_verdict %s %s: %s" % (user_id, symbol, e))
     finally:
         conn.close()
 
@@ -1266,8 +1292,10 @@ def verdict_signal_reason(verdict, ins_buys, ins_sells, exec_sell_value, cong_bu
 
 
 def _attach_verdict_change(base, symbol):
-    # Per user verdict flip, layered onto the shared cached report without mutating it. Opening a
-    # report acknowledges the flip by advancing the stored baseline.
+    # Per user verdict flip, layered onto the shared cached report without mutating it. This is a
+    # pure read: it compares the current verdict to the stored baseline and flags a change, but it
+    # does NOT advance the baseline. Acknowledgement happens only when the frontend calls
+    # /acknowledge-verdict, so the flip keeps surfacing until the user has actually seen it.
     if not isinstance(base, dict):
         return base
     v = base.get("verdict")
@@ -1276,13 +1304,13 @@ def _attach_verdict_change(base, symbol):
     u = current_user()
     if not u:
         return base
-    changed, previous = diff_verdict(u["id"], symbol, v, True)
-    if not changed:
+    prev = read_verdict(u["id"], symbol)
+    if not prev or prev == v:
         return base
     out = dict(base)
     out["verdict_changed"] = True
-    out["previous_verdict"] = previous
-    out["verdict_change_reason"] = base.get("verdict_signal_reason") or "the balance of signals shifted"
+    out["previous_verdict"] = prev
+    out["verdict_reason"] = base.get("verdict_signal_reason") or "the balance of signals shifted"
     return out
 
 
@@ -2761,14 +2789,21 @@ def alerts():
         chg = r.get("change_pct")
         v = r.get("verdict")
         name = r.get("name") or nm or sym
-        # Verdict flip takes priority. Read only here, so a flip keeps showing in the feed until the
-        # user opens that stock's report, which acknowledges it. First sight just sets the baseline.
-        changed, prev = diff_verdict(u["id"], sym, v, False)
+        # Verdict flip takes priority. This is read only for an existing baseline, so a flip keeps
+        # showing in the feed until the user opens that stock's report and the frontend acknowledges
+        # it. First sight establishes the baseline silently with no flip.
+        prev = read_verdict(u["id"], sym)
+        if prev is None:
+            set_verdict(u["id"], sym, v)
+            changed = False
+        else:
+            changed = (v != "ETF" and prev != v)
         if changed:
             out.append({
                 "kind": "positive" if v == "APPROVE" else "caution",
                 "flip": True,
                 "previous_verdict": prev,
+                "new_verdict": v,
                 "verdict": v,
                 "reason": r.get("verdict_signal_reason") or "the balance of signals shifted",
                 "symbol": sym,
