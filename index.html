@@ -531,6 +531,9 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 @media(max-width:560px){
   #dashGrid{grid-template-columns:1fr;gap:11px;}
 }
+.qaWrap{display:flex;flex-direction:column;gap:8px;}
+.qaBtn{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;font-size:14px;font-weight:700;color:var(--text);cursor:pointer;transition:background .15s,transform .15s;font-family:inherit;}
+.qaBtn:hover{background:rgba(var(--accent-rgb),0.08);transform:translateY(-1px);}
 </style>
 </head>
 <body>
@@ -566,9 +569,13 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 </div>
 <div id="alertBanner" style="display:none"></div>
 <div id="dashGrid">
-  <div class="dcard" id="dashIdxCard">
-    <div class="dcardTitle">&#128202; Market Snapshot</div>
-    <div id="dashIndices"><div class="dEmpty">Loading market...</div></div>
+  <div class="dcard" id="dashQuickCard">
+    <div class="dcardTitle">&#9889; Quick Actions</div>
+    <div class="qaWrap">
+      <button class="qaBtn" data-quick="search">&#128269; Search a stock</button>
+      <button class="qaBtn" data-goview="watch">&#11088; View watchlist</button>
+      <button class="qaBtn" data-goview="portfolio">&#128188; Open portfolio</button>
+    </div>
   </div>
   <div class="dcard" id="dashWatchCard">
     <div class="dcardTitle">&#11088; Your Watchlist <span class="dcardLink" data-goview="watch">View all</span></div>
@@ -1915,6 +1922,15 @@ document.addEventListener("click", function(e){
     if(vf){ showToast(vsym + " moved from " + vf.previous + " to " + vf.verdict + ". " + vf.reason + "."); }
     return;
   }
+  var qk = e.target.closest("[data-quick]");
+  if(qk){
+    e.stopPropagation();
+    if(qk.getAttribute("data-quick") === "search"){
+      var siq = document.getElementById("si");
+      if(siq){ window.scrollTo({top: 0, behavior: "smooth"}); siq.focus(); }
+    }
+    return;
+  }
   var gov = e.target.closest("[data-goview]");
   if(gov){ e.stopPropagation(); showView(gov.getAttribute("data-goview")); return; }
   var symEl = e.target.closest("[data-sym]");
@@ -1991,19 +2007,6 @@ function verdictBadgeCls(v){
   return "watch";
 }
 
-function renderDashIndices(list){
-  var el = document.getElementById("dashIndices");
-  if(!el) return;
-  if(!list || !list.length){ el.innerHTML = "<div class=\"dEmpty\">Market data unavailable right now.</div>"; return; }
-  el.innerHTML = list.map(function(ix){
-    var has = typeof ix.price === "number";
-    var right = has
-      ? "<span class=\"idxPx\">" + Number(ix.price).toLocaleString(undefined,{maximumFractionDigits:2}) + "</span><span class=\"idxChg " + chgCls(ix.change_pct) + "\">" + fmtChg(ix.change_pct) + "</span>"
-      : "<span class=\"idxChg\">N/A</span>";
-    return "<div class=\"idxRow\"><span class=\"idxName\">" + esc(ix.label) + "</span><span class=\"idxRight\">" + right + "</span></div>";
-  }).join("");
-}
-
 function renderDashWatch(list, loggedIn){
   var el = document.getElementById("dashWatch");
   if(!el) return;
@@ -2073,7 +2076,6 @@ function renderDashAlerts(list, loggedIn){
 function applyDashboard(d, isPoll){
   if(!d) return;
   var loggedIn = !!d.logged_in;
-  renderDashIndices(d.market_indices);
   renderDashWatch(d.watchlist, loggedIn);
   renderDashPort(d.portfolio, loggedIn);
   // A poll only refreshes the price driven cards above. The rest stay put so scroll and taps are not disturbed.
