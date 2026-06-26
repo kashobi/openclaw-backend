@@ -487,6 +487,12 @@ def portfolio_get():
         tot_cb += cost_basis
         tot_day += day_change
 
+    # Allocation percent per holding, now that the total market value is known. A holding with an
+    # N/A market value, or a portfolio whose whole value is zero, gets 0 so the math stays clean.
+    for h in holdings:
+        mv = h.get("market_value")
+        h["allocation_pct"] = round((mv / tot_mv) * 100, 2) if (tot_mv > 0 and isinstance(mv, (int, float))) else 0
+
     tot_gl = round(tot_mv - tot_cb, 2)
     tot_gl_pct = round((tot_mv / tot_cb - 1) * 100, 2) if tot_cb > 0 else 0
     payload = {
@@ -2053,9 +2059,17 @@ def compare():
     strongest = None
     reason = ""
     if items:
-        best = max(items, key=lambda r: (r.get("score", 0), r.get("upside") or 0, r.get("change_pct") or 0))
-        strongest = best["symbol"]
-        reason = compare_reason(best, items)
+        stock_items = [r for r in items if r.get("verdict") != "ETF"]
+        etf_count = len(items) - len(stock_items)
+        if stock_items:
+            best = max(stock_items, key=lambda r: (r.get("score", 0), r.get("upside") or 0, r.get("change_pct") or 0))
+            strongest = best["symbol"]
+            reason = compare_reason(best, stock_items)
+            if etf_count:
+                reason += " The ETFs here are shown for context but are not ranked by the stock engine, since a fund is judged on what it costs to own and what it holds, not these signals."
+        else:
+            reason = ("These are all exchange traded funds. Apex Q does not rank funds with the stock engine, because a fund is judged on what it costs to own and what it holds. "
+                      "Open each one for its expense ratio, top holdings, and sector mix. Educational only, never advice.")
     return jsonify({"items": items, "strongest": strongest, "reason": reason, "warnings": warnings})
 
 
@@ -2074,7 +2088,11 @@ def peers():
         return jsonify({"peers": cached})
     sector = None
     try:
-        sector = (yf.Ticker(symbol).info or {}).get("sector") or (yf.Ticker(symbol).info or {}).get("industry")
+        _info = yf.Ticker(symbol).info or {}
+        if str(_info.get("quoteType", "")).upper() == "ETF":
+            set_cache("peers_" + symbol, [])
+            return jsonify({"peers": []})
+        sector = _info.get("sector") or _info.get("industry")
     except Exception as e:
         logger.error("peers sector lookup %s: %s" % (symbol, e))
     out = []
@@ -2250,17 +2268,35 @@ def insider_brief(symbol, price):
         return {"selling": False, "clevel_sells": 0, "sell_value": 0}
 
 
-def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None, history=None):
-    try:
+def build_ask_facts(d, ins, extra_news=None, extra_insider=None):
+    # Shared, ETF aware fact sheet for the Ask answer. For a fund it states the cost and holdings
+    # framing instead of a stock verdict, so the AI never tries to score an ETF like a stock.
+    if d.get("verdict") == "ETF":
+        hold = d.get("holdings") or []
+        top = ", ".join([h.get("symbol", "") for h in hold[:5] if h.get("symbol")])
+        facts = ("This is an exchange traded fund, a basket of many holdings, not a single stock. "
+                 "Expense ratio: %s percent. Total assets under management: %s. Category: %s. Fund family: %s. "
+                 "Dividend yield: %s percent. Price: %s. Change today: %s percent."
+                 % (d.get("expense_ratio"), d.get("total_assets"), d.get("category"),
+                    d.get("fund_family"), d.get("yield"), d.get("price"), d.get("change_pct")))
+        if top:
+            facts += " Largest holdings: " + top + "."
+    else:
         facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
                  % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
         ins_src = extra_insider if extra_insider is not None else ins
         if ins_src is not None:
             facts += " Insider picture: about %s recent C level sales." % ins_src.get("clevel_sells")
-        if extra_news:
-            heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
-            if heads:
-                facts += " Recent headlines: " + heads + "."
+    if extra_news:
+        heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
+        if heads:
+            facts += " Recent headlines: " + heads + "."
+    return facts
+
+
+def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None, history=None):
+    try:
+        facts = build_ask_facts(d, ins, extra_news, extra_insider)
         # CHUNK: multi-turn chat. Gemini stays on a single text prompt, so the facts lead every turn,
         # then the conversation so far, then the new question. Repeating the facts keeps it grounded.
         if history:
@@ -2310,15 +2346,7 @@ def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None, history=N
 # CHUNK: DeepSeek AI provider, same grounding rules as Gemini
 def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None, history=None):
     try:
-        facts = ("Current verdict: %s. Conviction: %s. Price: %s. Change today: %s percent. PE ratio: %s. Analyst upside to average target: %s percent."
-                 % (d.get("verdict"), d.get("conviction"), d.get("price"), d.get("change_pct"), d.get("pe_ratio"), d.get("upside")))
-        ins_src = extra_insider if extra_insider is not None else ins
-        if ins_src is not None:
-            facts += " Insider picture: about %s recent C level sales." % ins_src.get("clevel_sells")
-        if extra_news:
-            heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
-            if heads:
-                facts += " Recent headlines: " + heads + "."
+        facts = build_ask_facts(d, ins, extra_news, extra_insider)
         # CHUNK: multi-turn chat. With history we send a real system message carrying the live facts,
         # then the prior turns, then the new question. The facts are rebuilt and sent every turn so
         # the model stays grounded and cannot drift into invented facts, even on adversarial questions.
@@ -2376,6 +2404,17 @@ def ask_fallback(symbol, q, d, ins, extra_news=None, extra_insider=None):
         heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
         if heads:
             return "Here are the most recent headlines for " + symbol + ". " + heads + ". Read the full articles in the News Feed section of the report. Educational only, never advice."
+    # CHUNK: ETFs are funds, not stocks, so answer on cost and holdings rather than a stock verdict.
+    if v == "ETF":
+        ans = symbol + " is an exchange traded fund, a single ticker that holds a basket of many investments. "
+        er = d.get("expense_ratio")
+        cat = d.get("category")
+        if er not in (None, "N/A"):
+            ans += "Its expense ratio, the yearly cost to own it, is about " + str(er) + " percent. "
+        if cat not in (None, "N/A"):
+            ans += "Its category is " + str(cat) + ". "
+        ans += "Open the full report for its top holdings and sector mix. A fund is judged on what it costs and what it holds, not a stock style verdict. Educational only, never advice."
+        return ans
     # CHUNK: answer 'why did it move' questions with available signals
     if any(p in ql for p in ["why did it drop", "why is it down", "why did it fall", "why is it falling", "why did it rise", "why is it up", "why did it jump", "why is it rising", "why did it move", "what happened", "what caused", "what changed", "what's new", "whats new", "what is new", "any news", "news today"]):
         move_bits = []
@@ -2713,6 +2752,10 @@ def ask():
         d["verdict"] = full.get("verdict")
         if full.get("conviction"):
             d["conviction"] = full.get("conviction")
+        if full.get("verdict") == "ETF":
+            for _k in ("expense_ratio", "total_assets", "category", "fund_family", "yield", "holdings"):
+                if _k in full:
+                    d[_k] = full[_k]
     # CHUNK: pull the specific data the question is about, so the answer is grounded in real facts.
     # The full report and its news are already in hand from the verdict step above, so reuse it.
     extra_news = None
