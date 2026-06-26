@@ -134,6 +134,15 @@ def ensure_db():
             "added_at TIMESTAMP DEFAULT NOW(),"
             "UNIQUE (user_id, symbol))"
         )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS verdict_history ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "symbol TEXT NOT NULL,"
+            "last_verdict TEXT,"
+            "last_checked TIMESTAMP DEFAULT NOW(),"
+            "UNIQUE (user_id, symbol))"
+        )
         conn.commit()
         cur.close()
         logger.info("ensure_db: tables ready")
@@ -805,6 +814,9 @@ def analyze():
     result = compute_full_report(symbol)
     if result is None:
         return jsonify({"error": f"Could not pull data for {symbol}."}), 404
+    # Opening the report is the moment a verdict flip is acknowledged, so the baseline advances here
+    # and only here. Ask and context call the engine without acknowledging anything.
+    result = _attach_verdict_change(result, symbol)
     return jsonify(result)
 
 
@@ -1179,6 +1191,101 @@ def _pretty_rating(key):
     return " ".join(w.capitalize() for w in k.replace("-", " ").replace("_", " ").split())
 
 
+def diff_verdict(user_id, symbol, new_verdict, update):
+    # Compares the freshly computed verdict to the one stored for this user and symbol.
+    # First sight establishes a baseline silently. A real flip is only flagged when a prior
+    # verdict existed. When update is true (a report view), the baseline advances so the flip
+    # is acknowledged. Alerts read without advancing, so a flip keeps showing until the stock
+    # is opened. Returns (changed, previous_verdict). ETFs and blanks never count as a change.
+    if not new_verdict or new_verdict == "ETF":
+        return (False, None)
+    conn = get_db()
+    if conn is None:
+        return (False, None)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT last_verdict FROM verdict_history WHERE user_id=%s AND symbol=%s", (user_id, symbol))
+        row = cur.fetchone()
+        prev = row[0] if row else None
+        changed = (prev is not None and prev != new_verdict)
+        if prev is None:
+            cur.execute(
+                "INSERT INTO verdict_history (user_id, symbol, last_verdict) VALUES (%s,%s,%s) "
+                "ON CONFLICT (user_id, symbol) DO NOTHING",
+                (user_id, symbol, new_verdict),
+            )
+            conn.commit()
+        elif update and changed:
+            cur.execute(
+                "UPDATE verdict_history SET last_verdict=%s, last_checked=NOW() WHERE user_id=%s AND symbol=%s",
+                (new_verdict, user_id, symbol),
+            )
+            conn.commit()
+        cur.close()
+        return (changed, prev)
+    except Exception as e:
+        logger.error("diff_verdict %s %s: %s" % (user_id, symbol, e))
+        return (False, None)
+    finally:
+        conn.close()
+
+
+def verdict_signal_reason(verdict, ins_buys, ins_sells, exec_sell_value, cong_buys, cong_sells, sharp_drop, eff_chg, rec, up, heavy_insider_selling):
+    # Plain English for the single signal most responsible for the current verdict. Derived only
+    # from the live signals in this report, so it is honest about what is driving the call now.
+    chg_up = isinstance(eff_chg, (int, float)) and eff_chg > 2
+    chg_dn = isinstance(eff_chg, (int, float)) and eff_chg < -3
+    up_big = isinstance(up, (int, float)) and up > 10
+    if verdict == "APPROVE":
+        if ins_buys >= 1:
+            return "insider buying detected"
+        if cong_buys >= 2:
+            return "lawmakers have been buying"
+        if rec in ("BUY", "STRONG_BUY"):
+            return "analysts turned more positive"
+        if chg_up:
+            return "price momentum improved"
+        if up_big:
+            return "analyst upside expanded"
+        return "the positive signals now outweigh the negatives"
+    if verdict == "PASS":
+        if sharp_drop:
+            return "a sharp price drop"
+        if heavy_insider_selling or (isinstance(exec_sell_value, (int, float)) and exec_sell_value >= 20000000):
+            return "heavy insider selling"
+        if rec in ("SELL", "STRONG_SELL"):
+            return "analysts turned more negative"
+        if chg_dn:
+            return "price weakness"
+        return "the negative signals now outweigh the positives"
+    if sharp_drop:
+        return "a sharp move that needs to settle"
+    if heavy_insider_selling:
+        return "insider selling worth watching"
+    return "the signals are now mixed"
+
+
+def _attach_verdict_change(base, symbol):
+    # Per user verdict flip, layered onto the shared cached report without mutating it. Opening a
+    # report acknowledges the flip by advancing the stored baseline.
+    if not isinstance(base, dict):
+        return base
+    v = base.get("verdict")
+    if not v or v == "ETF":
+        return base
+    u = current_user()
+    if not u:
+        return base
+    changed, previous = diff_verdict(u["id"], symbol, v, True)
+    if not changed:
+        return base
+    out = dict(base)
+    out["verdict_changed"] = True
+    out["previous_verdict"] = previous
+    out["verdict_change_reason"] = base.get("verdict_signal_reason") or "the balance of signals shifted"
+    return out
+
+
 def compute_full_report(symbol):
     cached = get_cache(f"full_{symbol}")
     if cached:
@@ -1460,6 +1567,16 @@ def compute_full_report(symbol):
             if alert is None:
                 alert = "insider_selling"
 
+        # The single live signal most responsible for this verdict, in plain words. Cache safe and
+        # user neutral, so it is stored on the report and reused when a per user flip is detected.
+        up_for_reason = None
+        try:
+            if isinstance(tgt, (int, float)) and eff_px:
+                up_for_reason = ((float(tgt) - eff_px) / eff_px) * 100
+        except Exception:
+            up_for_reason = None
+        verdict_reason = verdict_signal_reason(verdict, ins_buys, ins_sells, exec_sell_value, cong_buys, cong_sells, sharp_drop, eff_chg, rec, up_for_reason, heavy_insider_selling)
+
         # News, shared with the ETF report through one helper so both paths stay identical.
         news = build_news(symbol, ticker)
 
@@ -1702,6 +1819,7 @@ def compute_full_report(symbol):
             "recommendation": rec,
             "verdict": verdict,
             "alert": alert,
+            "verdict_signal_reason": verdict_reason,
             "conviction": conviction,
             "score": score,
             "pe_ratio": pe,
@@ -2635,12 +2753,29 @@ def alerts():
 
     out = []
     for sym, nm in rows:
-        r = light_score(sym)
+        # Use the full report so the verdict and its reason match exactly what the report view shows,
+        # which keeps the flip baseline consistent and avoids false flips. Cached, and watchlists are small.
+        r = compute_full_report(sym)
         if not r:
             continue
         chg = r.get("change_pct")
         v = r.get("verdict")
         name = r.get("name") or nm or sym
+        # Verdict flip takes priority. Read only here, so a flip keeps showing in the feed until the
+        # user opens that stock's report, which acknowledges it. First sight just sets the baseline.
+        changed, prev = diff_verdict(u["id"], sym, v, False)
+        if changed:
+            out.append({
+                "kind": "positive" if v == "APPROVE" else "caution",
+                "flip": True,
+                "previous_verdict": prev,
+                "verdict": v,
+                "reason": r.get("verdict_signal_reason") or "the balance of signals shifted",
+                "symbol": sym,
+                "name": name,
+                "change_pct": chg,
+            })
+            continue
         alert = None
         if isinstance(chg, (int, float)) and chg <= -5:
             alert = {"kind": "caution", "reason": "Down %s%% today, a sharp move worth checking." % abs(chg)}
@@ -2653,8 +2788,14 @@ def alerts():
         if alert:
             alert.update({"symbol": sym, "name": name, "change_pct": chg, "verdict": v})
             out.append(alert)
-    out.sort(key=lambda a: 0 if a["kind"] == "caution" else 1)
-    return jsonify({"status": "ok", "alerts": out, "total_saved": len(rows)})
+
+    def _alert_order(a):
+        if a.get("flip"):
+            return 0
+        return 1 if a["kind"] == "caution" else 2
+    out.sort(key=_alert_order)
+    flips = sum(1 for a in out if a.get("flip"))
+    return jsonify({"status": "ok", "alerts": out, "total_saved": len(rows), "verdict_changes": flips})
 
 
 def fmt_money_py(v):
