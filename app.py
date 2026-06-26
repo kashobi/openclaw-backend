@@ -1009,6 +1009,10 @@ def build_etf_report(symbol, ticker, info, hist, cur, chg):
     er_raw = info.get("expenseRatio")
     if er_raw is None:
         er_raw = info.get("annualReportExpenseRatio")
+    if er_raw is None:
+        er_raw = info.get("netExpenseRatio")
+    if er_raw is None:
+        er_raw = info.get("operatingExpense")
     expense_ratio = to_pct(er_raw)
     if expense_ratio is None:
         expense_ratio = "N/A"
@@ -1076,6 +1080,49 @@ def build_etf_report(symbol, ticker, info, hist, cur, chg):
     fw_high = info.get("fiftyTwoWeekHigh")
     fw_low = info.get("fiftyTwoWeekLow")
 
+    # CHUNK: ETF quality snapshot. A simple, transparent score from cost, size, and diversification,
+    # turned into a plain label. Educational shorthand, never a recommendation.
+    etf_quality = None
+    try:
+        er_val = float(expense_ratio) if expense_ratio != "N/A" else None
+        aum_val = float(total_assets) if total_assets != "N/A" else None
+        num_holdings = len(holdings)
+        score = 0
+        if er_val is not None:
+            if er_val <= 0.10:
+                score += 3
+            elif er_val <= 0.30:
+                score += 2
+            elif er_val <= 0.60:
+                score += 1
+        if aum_val is not None:
+            if aum_val >= 10e9:
+                score += 2
+            elif aum_val >= 1e9:
+                score += 1
+        if num_holdings >= 500:
+            score += 2
+        elif num_holdings >= 100:
+            score += 1
+        if score >= 6:
+            quality_label = "Low Cost, Well Diversified"
+        elif score >= 4:
+            quality_label = "Moderate Cost, Adequately Diversified"
+        elif score >= 2:
+            quality_label = "Higher Cost or Concentrated"
+        else:
+            quality_label = "Costly or Narrow"
+        etf_quality = {
+            "score": score,
+            "label": quality_label,
+            "expense_ratio": expense_ratio,
+            "total_assets": total_assets,
+            "num_holdings": num_holdings,
+        }
+    except Exception as e:
+        logger.error("ETF quality score error for %s: %s" % (symbol, e))
+        etf_quality = None
+
     result = {
         "symbol": symbol,
         "name": info.get("longName", symbol),
@@ -1096,6 +1143,7 @@ def build_etf_report(symbol, ticker, info, hist, cur, chg):
         "yield": etf_yield,
         "holdings": holdings,
         "sector_weights": sector_weights,
+        "etf_quality": etf_quality,
         "fifty_two_week_high": fw_high if isinstance(fw_high, (int, float)) else "N/A",
         "fifty_two_week_low": fw_low if isinstance(fw_low, (int, float)) else "N/A",
         "news": news,
@@ -2027,6 +2075,48 @@ def scan_universe():
     return rows
 
 
+def scan_insiders():
+    # Names where two or more C level insiders made open market buys recently, a cluster signal.
+    # Cached for half an hour. Reuses each name's light_score, so it shares warmup with the scan.
+    cached = CACHE.get("scan_insiders")
+    if cached and (time.time() - cached[1]) < 1800:
+        return cached[0]
+
+    def pick(row, *names):
+        for n in names:
+            if n in row and row.get(n) is not None:
+                return row.get(n)
+        return None
+
+    results = []
+    for symbol in SCAN_UNIVERSE:
+        r = light_score(symbol)
+        if not r:
+            continue
+        buy_count = 0
+        try:
+            it = yf.Ticker(symbol).insider_transactions
+            if it is not None and hasattr(it, "empty") and not it.empty:
+                for _, rrow in it.head(20).iterrows():
+                    row = rrow.to_dict()
+                    pos = pick(row, "Position", "Title", "Relation") or ""
+                    desc = pick(row, "Transaction", "Text") or ""
+                    basis = str(desc) if str(desc).strip() else " ".join(str(v) for v in row.values())
+                    kind = classify_insider_kind(basis)
+                    action = "D" if kind == "sell" else ("A" if kind == "buy" else "")
+                    is_cl = any(c in str(pos).upper() for c in INSIDER_CLEVEL)
+                    if is_cl and action == "A" and kind != "grant" and kind != "option":
+                        buy_count += 1
+        except Exception as e:
+            logger.error("scan_insiders %s: %s" % (symbol, e))
+            continue
+        if buy_count >= 2:
+            results.append(dict(r, reason="%d C level insiders bought shares recently, a cluster signal worth noting." % buy_count, insider_buys=buy_count))
+    results.sort(key=lambda x: (x.get("insider_buys", 0), x.get("change_pct") or 0), reverse=True)
+    set_cache("scan_insiders", results)
+    return results
+
+
 @app.route("/scan")
 def scan():
     lens = (request.args.get("lens") or "strong").lower()
@@ -2063,6 +2153,8 @@ def scan():
         cand.sort(key=lambda r: r["div_yield"], reverse=True)
         for r in cand[:12]:
             out.append(dict(r, reason="Pays about a %s%% dividend yield, toward the higher end of the group." % r["div_yield"]))
+    elif lens == "insiders":
+        out = scan_insiders()[:12]
     else:
         lens = "strong"
         cand = [r for r in rows if num(r.get("change_pct")) and r["change_pct"] > 0]
