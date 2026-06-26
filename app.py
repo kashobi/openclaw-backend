@@ -1113,6 +1113,24 @@ def build_etf_report(symbol, ticker, info, hist, cur, chg):
     return result
 
 
+def _pretty_rating(key):
+    # yfinance recommendationKey to a clean label, e.g. moderate_buy becomes Moderate Buy.
+    if not key or not isinstance(key, str):
+        return None
+    k = key.strip().lower()
+    if k in ("none", "", "n/a"):
+        return None
+    mapping = {
+        "strong_buy": "Strong Buy", "buy": "Buy", "moderate_buy": "Moderate Buy",
+        "outperform": "Outperform", "overweight": "Overweight", "hold": "Hold",
+        "neutral": "Hold", "underperform": "Underperform", "underweight": "Underweight",
+        "moderate_sell": "Moderate Sell", "sell": "Sell", "strong_sell": "Strong Sell",
+    }
+    if k in mapping:
+        return mapping[k]
+    return " ".join(w.capitalize() for w in k.replace("-", " ").replace("_", " ").split())
+
+
 def compute_full_report(symbol):
     cached = get_cache(f"full_{symbol}")
     if cached:
@@ -1410,8 +1428,9 @@ def compute_full_report(symbol):
                     new = g.get("newGrade") or g.get("grade") or ""
                     action = str(g.get("action") or "").lower()
                     gdate = str(g.get("date") or g.get("publishedDate") or "")[:10]
+                    gtarget = g.get("priceTarget") or g.get("newPriceTarget") or ""
                     if firm or new:
-                        fmp["grades"].append({"firm": str(firm), "prev": str(prev), "new": str(new), "action": action, "date": gdate})
+                        fmp["grades"].append({"firm": str(firm), "prev": str(prev), "new": str(new), "action": action, "date": gdate, "target": gtarget})
             st = fmp_get("/api/v4/insider-trading/statistics?symbol=%s" % symbol)
             if isinstance(st, list) and st:
                 s0 = st[0] or {}
@@ -1567,6 +1586,59 @@ def compute_full_report(symbol):
         sector_name = info.get("sector", "")
         sector_guide = SECTOR_GUIDE.get(sector_name, "Different industries use different metrics. Compare this stock to its peers in the same sector for the clearest picture.")
 
+        # CHUNK: Analyst Consensus card. One educational object holding the consensus rating and count,
+        # the target range, the Buy/Hold/Sell distribution, and the most recent rating actions. Every
+        # piece is optional so a name with thin analyst coverage degrades to N/A instead of breaking.
+        try:
+            num_analysts = int(info.get("numberOfAnalystOpinions", 0) or 0)
+        except (TypeError, ValueError):
+            num_analysts = 0
+        consensus_rating = _pretty_rating(info.get("recommendationKey")) or "N/A"
+        th_raw = info.get("targetHighPrice")
+        tl_raw = info.get("targetLowPrice")
+        target_high = round(float(th_raw), 2) if isinstance(th_raw, (int, float)) else "N/A"
+        target_low = round(float(tl_raw), 2) if isinstance(tl_raw, (int, float)) else "N/A"
+        rating_distribution = None
+        rt = info.get("recommendationTrend")
+        if isinstance(rt, dict):
+            rd0 = {k: int(rt.get(k, 0) or 0) for k in ("strongBuy", "buy", "hold", "sell", "strongSell")}
+            if sum(rd0.values()) > 0:
+                rating_distribution = rd0
+        if rating_distribution is None:
+            try:
+                recdf = ticker.recommendations
+                if recdf is not None and hasattr(recdf, "empty") and not recdf.empty:
+                    row = recdf.iloc[0]
+                    rcols = list(recdf.columns)
+                    def _gi(c):
+                        try:
+                            return int(row[c]) if c in rcols else 0
+                        except Exception:
+                            return 0
+                    rd1 = {"strongBuy": _gi("strongBuy"), "buy": _gi("buy"), "hold": _gi("hold"), "sell": _gi("sell"), "strongSell": _gi("strongSell")}
+                    if sum(rd1.values()) > 0:
+                        rating_distribution = rd1
+            except Exception as e:
+                logger.error("recommendations distribution %s: %s" % (symbol, e))
+        recent_actions = []
+        for g in fmp.get("grades", [])[:5]:
+            recent_actions.append({
+                "firm": g.get("firm", ""),
+                "action": g.get("action", ""),
+                "rating": g.get("new", ""),
+                "target": g.get("target") or "N/A",
+                "date": g.get("date", ""),
+            })
+        analyst_consensus = {
+            "number_of_analysts": num_analysts,
+            "consensus_rating": consensus_rating,
+            "target_high": target_high,
+            "target_low": target_low,
+            "target_mean": tgt,
+            "rating_distribution": rating_distribution,
+            "recent_actions": recent_actions,
+        }
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -1600,6 +1672,7 @@ def compute_full_report(symbol):
             "roe": roe_field,
             "fcf_yield": fcf_yield,
             "sector_guide": sector_guide,
+            "analyst_consensus": analyst_consensus,
             "extended": ext,
             "earnings": earn,
             "extended_note": ext_note,
