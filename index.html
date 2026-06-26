@@ -464,6 +464,10 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .shareBtn:hover{background:#fff;}
 .toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(20px);background:var(--navy);color:#fff;padding:13px 19px;border-radius:14px;font-size:13px;font-weight:600;z-index:600;opacity:0;pointer-events:none;transition:opacity .25s ease, transform .25s ease;max-width:90%;text-align:center;box-shadow:0 12px 34px rgba(10,14,30,.35);}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+.tabBadge{position:absolute;top:1px;left:calc(50% + 4px);min-width:16px;height:16px;padding:0 4px;background:var(--red);color:#fff;border-radius:999px;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;line-height:1;font-family:'JetBrains Mono',monospace;box-shadow:0 1px 5px rgba(192,57,43,.5);}
+#alertBanner{background:var(--rbg);color:var(--red);border:1px solid var(--red);border-radius:14px;margin:0 26px 16px;padding:13px 18px;font-size:14px;font-weight:700;cursor:pointer;line-height:1.45;box-shadow:var(--shadow-sm);transition:transform .15s ease,box-shadow .15s ease;}
+#alertBanner:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
+@media(max-width:600px){#alertBanner{margin:0 16px 14px;}}
 </style>
 </head>
 <body>
@@ -497,6 +501,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   <div class="qlabel" id="qlabel" style="display:none">Trending Today</div>
   <div class="qrow" id="qrow"></div>
 </div>
+<div id="alertBanner" style="display:none"></div>
 <div class="contextCard" id="homeContext" style="display:none">
   <div class="contextCardInner">
     <div class="contextCardTitle">&#128225; Live Market Context</div>
@@ -1914,6 +1919,7 @@ function refreshMe(){
     if(currentUser){ b.textContent = currentUser.username; b.classList.add("loggedin"); }
     else { b.textContent = "Log In"; b.classList.remove("loggedin"); }
     loadWatchlist();
+    loadAlerts();
   }).catch(function(){});
 }
 
@@ -2742,15 +2748,40 @@ for(var _ac=0; _ac<_askChips.length; _ac++){
   _askChips[_ac].addEventListener("click", function(){ document.getElementById("askQ").value = this.getAttribute("data-q"); sendAsk(); });
 }
 
+function setAlertCount(n){
+  // Saved tab badge: a small red count that sits on the tab icon, hidden when there is nothing to flag.
+  var tab = document.querySelector('.tab[data-view="watch"]');
+  if(tab){
+    tab.style.position = "relative";
+    var b = document.getElementById("savedAlertBadge");
+    if(n > 0){
+      if(!b){ b = document.createElement("span"); b.id = "savedAlertBadge"; b.className = "tabBadge"; tab.appendChild(b); }
+      b.textContent = n > 9 ? "9+" : String(n);
+      b.style.display = "flex";
+    } else if(b){ b.style.display = "none"; }
+  }
+  // Home banner: only visible while the home view is active, since it lives inside that view.
+  var banner = document.getElementById("alertBanner");
+  if(banner){
+    if(n > 0){
+      banner.innerHTML = "&#9888;&#65039; " + n + " of your saved stocks need attention. Tap to see why.";
+      banner.style.display = "block";
+    } else {
+      banner.style.display = "none";
+    }
+  }
+}
+
 function loadAlerts(){
   var feed = document.getElementById("alertsFeed");
-  if(!feed){ return; }
   fetch(API + "/alerts").then(function(r){ return r.json(); }).then(function(d){
     var st = d && d.status;
-    if(st === "logged_out"){ feed.innerHTML = "<div class=\"alertEmpty\">Log in and save a few stocks, and alerts on them will show up here.</div>"; return; }
-    if(st === "empty"){ feed.innerHTML = "<div class=\"alertEmpty\">No saved stocks yet. Open any report and tap Save to Watchlist, and it will be watched here.</div>"; return; }
+    if(st === "logged_out"){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">Log in and save a few stocks, and alerts on them will show up here.</div>"; } setAlertCount(0); return; }
+    if(st === "empty"){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">No saved stocks yet. Open any report and tap Save to Watchlist, and it will be watched here.</div>"; } setAlertCount(0); return; }
     var a = (d && d.alerts) ? d.alerts : [];
-    if(!a.length){ feed.innerHTML = "<div class=\"alertEmpty\">All quiet. None of your saved stocks need attention right now.</div>"; return; }
+    if(!a.length){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">All quiet. None of your saved stocks need attention right now.</div>"; } setAlertCount(0); return; }
+    setAlertCount(a.length);
+    if(!feed){ return; }
     feed.innerHTML = a.map(function(it){
       var k = it.kind === "caution" ? "alertCaution" : "alertPositive";
       var tag = it.kind === "caution" ? "WORTH A LOOK" : "POSITIVE";
@@ -2759,7 +2790,7 @@ function loadAlerts(){
         + "<div class=\"alertReason\">" + esc(it.reason || "") + "</div>"
         + "</div>";
     }).join("");
-  }).catch(function(){ feed.innerHTML = "<div class=\"alertEmpty\">Could not load alerts right now.</div>"; });
+  }).catch(function(){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">Could not load alerts right now.</div>"; } setAlertCount(0); });
 }
 
 function showView(name){
@@ -2788,6 +2819,8 @@ var _tabs = document.querySelectorAll(".tab");
 for(var _t=0; _t<_tabs.length; _t++){
   _tabs[_t].addEventListener("click", function(){ showView(this.getAttribute("data-view")); });
 }
+var _alertBannerEl = document.getElementById("alertBanner");
+if(_alertBannerEl){ _alertBannerEl.addEventListener("click", function(){ showView("watch"); }); }
 
 refreshMe();
 loadTrending();
