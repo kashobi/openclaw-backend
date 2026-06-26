@@ -213,6 +213,11 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .buy{color:var(--green);font-weight:800;font-family:'JetBrains Mono',monospace;}
 .sell{color:var(--red);font-weight:800;font-family:'JetBrains Mono',monospace;}
 .gray{color:var(--muted);font-size:12.5px;font-weight:500;}
+.acBar{display:flex;height:22px;border-radius:7px;overflow:hidden;margin:12px 0 7px;border:1px solid var(--border);}
+.acBar>div{height:100%;}
+.acLegend{display:flex;gap:16px;font-size:12px;color:var(--muted);font-weight:700;margin-bottom:4px;flex-wrap:wrap;}
+.acLegend .acDot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+.acActionsTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:13px 0 2px;}
 .ni{padding:11px 0;border-bottom:1px solid var(--border);}
 .ni:last-child{border-bottom:none;}
 .ns{font-size:11px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:800;margin-bottom:5px;}
@@ -493,6 +498,8 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div class="met"><div class="ml2">Market Cap</div><div class="mv2 neu" id="mm">--</div></div>
       </div>
       <div id="mtGauge" class="gaugeWrap"></div>
+      <div class="stitle" id="acTitle">&#128202; Analyst Consensus</div>
+      <div id="analystConsensus"><div class="ic"><div class="ih"><div class="it">Analyst Consensus</div><div class="ibdg by">WAITING</div></div><div class="itxt">Loads after analysis.</div></div></div>
       <div class="stitle">&#128269; Deep Fundamentals</div>
       <div class="mets" id="deepFund"></div>
       <div class="ic sectorCard" id="sectorCard" style="display:none"></div>
@@ -939,6 +946,90 @@ function buildReasons(d){
   }
 
   return reasons;
+}
+
+function acAction(action){
+  var a = (action || "").toLowerCase();
+  if(a.indexOf("up") >= 0) return {cls: "buy", lab: "UPGRADE"};
+  if(a.indexOf("down") >= 0) return {cls: "sell", lab: "DOWNGRADE"};
+  if(a.indexOf("boost") >= 0 || a.indexOf("raise") >= 0) return {cls: "buy", lab: "RAISED TARGET"};
+  if(a.indexOf("lower") >= 0 || a.indexOf("cut") >= 0 || a.indexOf("reduc") >= 0) return {cls: "sell", lab: "LOWERED TARGET"};
+  if(a.indexOf("init") >= 0) return {cls: "gray", lab: "INITIATED"};
+  if(a.indexOf("maintain") >= 0 || a.indexOf("reiterat") >= 0) return {cls: "gray", lab: "MAINTAINED"};
+  if(!a) return {cls: "gray", lab: "RATING"};
+  return {cls: "gray", lab: a.toUpperCase()};
+}
+
+function renderAnalystConsensus(d){
+  var title = document.getElementById("acTitle");
+  var box = document.getElementById("analystConsensus");
+  if(!box){ return; }
+  var ac = d.analyst_consensus;
+  if(!ac || !ac.consensus_rating || ac.consensus_rating === "N/A"){
+    if(title){ title.style.display = "none"; }
+    box.style.display = "none";
+    return;
+  }
+  if(title){ title.style.display = ""; }
+  box.style.display = "block";
+
+  var nA = ac.number_of_analysts || 0;
+  var html = "<div class=\"ic\">";
+  html += "<div class=\"ih\"><div class=\"it\">Consensus: " + esc(ac.consensus_rating) + " (" + nA + " analyst" + (nA === 1 ? "" : "s") + ")</div></div>";
+
+  var lo = ac.target_low, hi = ac.target_high, mean = ac.target_mean;
+  var price = d.price;
+  var rng = "";
+  if(lo !== "N/A" && hi !== "N/A" && lo !== null && hi !== null && lo !== undefined && hi !== undefined){
+    rng = "Target range $" + Number(lo).toLocaleString() + " to $" + Number(hi).toLocaleString() + ". ";
+  }
+  var avg = "";
+  if(mean && mean !== "N/A"){
+    avg = "Average $" + Number(mean).toLocaleString();
+    if(typeof price === "number" && price > 0){
+      var ups = Math.round(((Number(mean) - price) / price) * 1000) / 10;
+      avg += " (" + (ups >= 0 ? (ups + "% upside") : (Math.abs(ups) + "% downside")) + ")";
+    }
+    avg += ".";
+  }
+  if(rng || avg){ html += "<div class=\"itxt\">" + rng + avg + "</div>"; }
+
+  if(ac.rating_distribution){
+    var rd = ac.rating_distribution;
+    var buys = (rd.strongBuy || 0) + (rd.buy || 0);
+    var holds = (rd.hold || 0);
+    var sells = (rd.sell || 0) + (rd.strongSell || 0);
+    var total = buys + holds + sells;
+    if(total > 0){
+      var seg = function(count, color){
+        if(!count){ return ""; }
+        return "<div style=\"width:" + (count / total * 100) + "%;background:" + color + "\"></div>";
+      };
+      html += "<div class=\"acBar\">" + seg(buys, "var(--green)") + seg(holds, "var(--yellow)") + seg(sells, "var(--red)") + "</div>";
+      html += "<div class=\"acLegend\">"
+        + "<span><span class=\"acDot\" style=\"background:var(--green)\"></span>Buy " + buys + "</span>"
+        + "<span><span class=\"acDot\" style=\"background:var(--yellow)\"></span>Hold " + holds + "</span>"
+        + "<span><span class=\"acDot\" style=\"background:var(--red)\"></span>Sell " + sells + "</span>"
+        + "</div>";
+    }
+  }
+
+  var ra = ac.recent_actions || [];
+  if(ra.length){
+    var raRows = ra.map(function(a){
+      var ai = acAction(a.action);
+      var tgt = (a.target && a.target !== "N/A") ? ("<span class=\"gray\">$" + Number(a.target).toLocaleString() + "</span>") : "";
+      var rating = a.rating ? ("<span class=\"gray\">" + esc(a.rating) + "</span>") : "";
+      return "<div class=\"tr\"><span class=\"" + ai.cls + "\">" + ai.lab + "</span><span>" + esc(a.firm || "") + "</span>" + rating + tgt + "<span class=\"gray\">" + esc(usDate(a.date)) + "</span></div>";
+    }).join("");
+    html += "<div class=\"acActionsTitle\">Recent analyst actions</div><div class=\"itxt\">" + raRows + "</div>";
+  } else {
+    html += "<div class=\"itxt\">No recent rating changes on record.</div>";
+  }
+
+  html += "<div class=\"iwhy\">Why it matters: the consensus and the spread between the high and low target show where the pros stand and how much they actually agree. A target is just a number, so the direction of recent moves is the live signal. Educational only, never advice.</div>";
+  html += "</div>";
+  box.innerHTML = html;
 }
 
 function renderGrades(fmp){
@@ -1392,6 +1483,8 @@ function run(){
       }
     }
 
+    renderAnalystConsensus(d);
+
     // CHUNK: Feature 4: Deep Fundamentals three card stack
     var deep = document.getElementById("deepFund");
     if(deep){
@@ -1553,7 +1646,7 @@ function run(){
     renderCong(d.congressional || []);
     renderIns(d.insider || [], d.insider_sell_value || 0, d.insider_big_block || false);
     renderNews(d.news || []);
-    renderGrades(d.fmp || {});
+    // Recent analyst moves are now part of the Analyst Consensus card above, so the old standalone section is not rendered.
 
     var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
     var panel = document.getElementById("panel");
