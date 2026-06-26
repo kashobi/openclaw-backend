@@ -2189,24 +2189,55 @@ _CONGRESS_HIST = {}  # ticker -> {"ts", "pairs": [(date, close)], "last": float|
 
 
 def get_all_congress_trades():
+    # The bulk Quiver endpoint returns nothing on this plan, so build the same list by looping the
+    # per-symbol endpoint that already powers the stock reports. This scopes the leaderboard to the
+    # names Apex Q tracks rather than all of Congress, but every record is real Quiver data. Cached
+    # for two hours. Same cache key and return type, so the leaderboard and detail routes are untouched.
     cached = CACHE.get("congress_all_trades")
     if cached and (time.time() - cached[1]) < 7200:
         return cached[0]
     trades = []
     if QUIVER_KEY:
-        try:
-            url = "https://api.quiverquant.com/beta/historical/congresstrading"
-            h = {"Authorization": "Token " + QUIVER_KEY, "Accept": "application/json"}
-            r = requests.get(url, headers=h, timeout=20)
-            if r.status_code == 200:
+        seen = set()
+        h = {"Authorization": "Token " + QUIVER_KEY, "Accept": "application/json"}
+        for symbol in SCAN_UNIVERSE:
+            try:
+                url = "https://api.quiverquant.com/beta/historical/congresstrading/" + symbol
+                r = requests.get(url, headers=h, timeout=8)
+                if r.status_code != 200:
+                    logger.error("congress per-symbol %s status %s" % (symbol, r.status_code))
+                    continue
                 data = r.json()
-                if isinstance(data, list):
-                    trades = data
-            else:
-                logger.error("congress all trades status %s" % r.status_code)
-        except Exception as e:
-            logger.error("congress all trades error: %s" % e)
-    set_cache("congress_all_trades", trades)
+                if not isinstance(data, list):
+                    continue
+                for t in data:
+                    if not isinstance(t, dict):
+                        continue
+                    # The per-symbol endpoint omits the ticker since the query implies it, so stamp it
+                    # on every record. Grouping, top tickers, and the returns math all read Ticker.
+                    if not (t.get("Ticker") or t.get("ticker")):
+                        t["Ticker"] = symbol
+                    # Dedupe on a real id when present, otherwise a composite signature of the trade.
+                    uid = t.get("id") or t.get("ID") or t.get("_id")
+                    if uid is None:
+                        uid = "|".join([
+                            str(t.get("Ticker") or symbol),
+                            str(t.get("Representative") or t.get("Name") or ""),
+                            str(t.get("Transaction") or t.get("Action") or ""),
+                            str(t.get("TransactionDate") or t.get("Date") or ""),
+                            str(t.get("Range") or t.get("Amount") or ""),
+                        ])
+                    if uid in seen:
+                        continue
+                    seen.add(uid)
+                    trades.append(t)
+            except Exception as e:
+                logger.error("congress per-symbol %s error: %s" % (symbol, e))
+                continue
+        logger.info("congress aggregated %s trades across %s symbols" % (len(trades), len(SCAN_UNIVERSE)))
+    # Only cache a real result, so a transient Quiver miss does not freeze an empty board for 2 hours.
+    if trades:
+        set_cache("congress_all_trades", trades)
     return trades
 
 
