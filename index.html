@@ -474,6 +474,63 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .vchgNeu{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
 .vchgBadge{display:inline-flex;align-items:center;justify-content:center;margin-left:8px;background:var(--accent);color:#fff;border:none;border-radius:999px;min-width:18px;height:18px;padding:0 5px;font-size:11px;font-weight:800;cursor:pointer;line-height:1;vertical-align:middle;box-shadow:0 1px 4px rgba(var(--accent-rgb),.4);}
 .alertFlipHead{font-size:13px;font-weight:800;margin-top:7px;}
+/* Home dashboard grid */
+#dashGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px;margin:6px 0 18px;}
+#dashGrid .dcard{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:16px 16px 14px;box-shadow:var(--shadow-sm);min-width:0;}
+#dashGrid .dcard.wide{grid-column:1 / -1;}
+.dcardTitle{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:11px;display:flex;align-items:center;gap:6px;}
+.dcardTitle .dcardLink{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:0;text-transform:none;color:var(--accent);cursor:pointer;}
+.dEmpty{font-size:13px;color:var(--muted);line-height:1.45;}
+.dLoginCta{font-size:13px;color:var(--muted);line-height:1.5;}
+.dLoginCta b{color:var(--text);}
+.idxRow{display:flex;align-items:baseline;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);}
+.idxRow:last-child{border-bottom:none;}
+.idxName{font-size:13px;font-weight:700;color:var(--text);}
+.idxRight{text-align:right;white-space:nowrap;}
+.idxPx{font-size:14px;font-weight:700;color:var(--text);}
+.idxChg{font-size:12px;font-weight:700;margin-left:8px;}
+.idxChg.up{color:var(--green);} .idxChg.dn{color:var(--red);}
+.dwRow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer;}
+.dwRow:last-child{border-bottom:none;}
+.dwSym{font-size:14px;font-weight:800;color:var(--text);min-width:58px;}
+.dwName{font-size:12px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dwRight{display:flex;align-items:center;gap:9px;white-space:nowrap;}
+.dwPx{font-size:13px;font-weight:700;color:var(--text);}
+.dwChg{font-size:12px;font-weight:700;min-width:54px;text-align:right;}
+.dwChg.up{color:var(--green);} .dwChg.dn{color:var(--red);}
+.dwBadge{font-size:10px;font-weight:800;letter-spacing:.04em;padding:3px 7px;border-radius:999px;text-transform:uppercase;}
+.dwBadge.approve{background:var(--gbg);color:var(--green);}
+.dwBadge.pass{background:var(--rbg);color:var(--red);}
+.dwBadge.watch{background:var(--ybg);color:#9a6a00;}
+.dwBadge.etf{background:rgba(var(--accent-rgb),0.1);color:var(--accent);}
+.dpMain{font-size:26px;font-weight:800;color:var(--text);letter-spacing:-.01em;}
+.dpSub{display:flex;gap:20px;margin-top:9px;flex-wrap:wrap;}
+.dpItem{font-size:12px;color:var(--muted);}
+.dpItem b{display:block;font-size:14px;margin-top:2px;color:var(--text);}
+.dpItem b.up{color:var(--green);} .dpItem b.dn{color:var(--red);}
+.dmCols{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.dmHd{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px;}
+.dmHd.up{color:var(--green);} .dmHd.dn{color:var(--red);}
+.dmRow{display:flex;justify-content:space-between;gap:8px;padding:5px 0;cursor:pointer;font-size:13px;}
+.dmRow .dmSym{font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dmRow .dmChg{font-weight:700;white-space:nowrap;}
+.dmRow .dmChg.up{color:var(--green);} .dmRow .dmChg.dn{color:var(--red);}
+.dcgRow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer;}
+.dcgRow:last-child{border-bottom:none;}
+.dcgAv{width:34px;height:34px;border-radius:50%;background:rgba(var(--accent-rgb),0.12);color:var(--accent);font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.dcgName{font-size:13px;font-weight:700;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dcgMeta{font-size:11px;color:var(--muted);}
+.dcgRet{font-size:13px;font-weight:800;text-align:right;white-space:nowrap;}
+.dcgRet.up{color:var(--green);} .dcgRet.dn{color:var(--red);}
+.daRow{padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer;}
+.daRow:last-child{border-bottom:none;}
+.daTop{display:flex;align-items:center;gap:8px;}
+.daSym{font-size:13px;font-weight:800;color:var(--text);}
+.daFlip{font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--accent);text-transform:uppercase;}
+.daReason{font-size:12px;color:var(--muted);line-height:1.4;margin-top:3px;}
+@media(max-width:560px){
+  #dashGrid{grid-template-columns:1fr;gap:11px;}
+}
 </style>
 </head>
 <body>
@@ -508,14 +565,38 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
   <div class="qrow" id="qrow"></div>
 </div>
 <div id="alertBanner" style="display:none"></div>
-<div class="contextCard" id="homeContext" style="display:none">
-  <div class="contextCardInner">
-    <div class="contextCardTitle">&#128225; Live Market Context</div>
+<div id="dashGrid">
+  <div class="dcard" id="dashIdxCard">
+    <div class="dcardTitle">&#128202; Market Snapshot</div>
+    <div id="dashIndices"><div class="dEmpty">Loading market...</div></div>
+  </div>
+  <div class="dcard" id="dashWatchCard">
+    <div class="dcardTitle">&#11088; Your Watchlist <span class="dcardLink" data-goview="watch">View all</span></div>
+    <div id="dashWatch"><div class="dEmpty">Loading...</div></div>
+  </div>
+  <div class="dcard wide" id="dashPortCard">
+    <div class="dcardTitle">&#128188; Portfolio <span class="dcardLink" data-goview="portfolio">Open</span></div>
+    <div id="dashPort"><div class="dEmpty">Loading...</div></div>
+  </div>
+  <div class="dcard wide" id="homeContext" style="display:none">
+    <div class="dcardTitle">&#128225; What's Happening</div>
     <div class="contextCardBody" id="homeContextBody">Loading...</div>
     <div class="contextCardLesson" id="homeContextLesson"></div>
   </div>
+  <div class="dcard wide" id="dashMoversCard">
+    <div class="dcardTitle">&#128293; Top Movers <span class="dcardLink" data-goview="discover">More</span></div>
+    <div id="dashMovers"><div class="dEmpty">Loading...</div></div>
+  </div>
+  <div class="dcard" id="dashCongressCard">
+    <div class="dcardTitle">&#127963; Congress <span class="dcardLink" data-goview="insights">More</span></div>
+    <div id="dashCongress"><div class="dEmpty">Loading...</div></div>
+  </div>
+  <div class="dcard" id="dashAlertsCard">
+    <div class="dcardTitle">&#128276; Recent Alerts <span class="dcardLink" data-goview="watch">View all</span></div>
+    <div id="dashAlerts"><div class="dEmpty">Loading...</div></div>
+  </div>
 </div>
-<div class="main">
+<div class="main" id="reportArea" style="display:none">
 
   <div>
     <div class="stitle">Full Intelligence Report</div>
@@ -1501,6 +1582,8 @@ function loadHomeContext(){
 function run(){
   var val = document.getElementById("si").value.trim();
   if(!val) return;
+  var ra = document.getElementById("reportArea");
+  if(ra){ ra.style.display = ""; }
   document.getElementById("ac").style.display = "none";
   document.getElementById("lb").classList.add("on");
   document.getElementById("rpt").style.opacity = "0.3";
@@ -1832,6 +1915,8 @@ document.addEventListener("click", function(e){
     if(vf){ showToast(vsym + " moved from " + vf.previous + " to " + vf.verdict + ". " + vf.reason + "."); }
     return;
   }
+  var gov = e.target.closest("[data-goview]");
+  if(gov){ e.stopPropagation(); showView(gov.getAttribute("data-goview")); return; }
   var symEl = e.target.closest("[data-sym]");
   if(symEl){ go(symEl.getAttribute("data-sym")); return; }
   if(e.target.id === "analyzeBtn"){ run(); return; }
@@ -1881,9 +1966,149 @@ function attachAc(inputId, dropId){
 attachAc("askSym", "acAsk");
 attachAc("cmp0", "acCmp");
 
+// ===== Home dashboard =====
+var _dashCache = null;
+var _dashTimer = null;
+var DASH_TTL = 60000;
+
+function fmtPx(v){
+  if(v === null || v === undefined || isNaN(v)) return "N/A";
+  return "$" + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2});
+}
+function fmtChg(v){
+  if(v === null || v === undefined || isNaN(v)) return "";
+  return (v >= 0 ? "+" : "") + Number(v).toFixed(2) + "%";
+}
+function fmtMoneySigned(v){
+  if(typeof v !== "number" || isNaN(v)) return "N/A";
+  return (v < 0 ? "-$" : "+$") + Math.abs(v).toLocaleString(undefined, {maximumFractionDigits: 2});
+}
+function chgCls(v){ return (typeof v === "number" && v < 0) ? "dn" : "up"; }
+function verdictBadgeCls(v){
+  if(v === "APPROVE") return "approve";
+  if(v === "PASS") return "pass";
+  if(v === "ETF") return "etf";
+  return "watch";
+}
+
+function renderDashIndices(list){
+  var el = document.getElementById("dashIndices");
+  if(!el) return;
+  if(!list || !list.length){ el.innerHTML = "<div class=\"dEmpty\">Market data unavailable right now.</div>"; return; }
+  el.innerHTML = list.map(function(ix){
+    var has = typeof ix.price === "number";
+    var right = has
+      ? "<span class=\"idxPx\">" + Number(ix.price).toLocaleString(undefined,{maximumFractionDigits:2}) + "</span><span class=\"idxChg " + chgCls(ix.change_pct) + "\">" + fmtChg(ix.change_pct) + "</span>"
+      : "<span class=\"idxChg\">N/A</span>";
+    return "<div class=\"idxRow\"><span class=\"idxName\">" + esc(ix.label) + "</span><span class=\"idxRight\">" + right + "</span></div>";
+  }).join("");
+}
+
+function renderDashWatch(list, loggedIn){
+  var el = document.getElementById("dashWatch");
+  if(!el) return;
+  if(!loggedIn){ el.innerHTML = "<div class=\"dLoginCta\"><b>Log in</b> to see your watchlist here.</div>"; return; }
+  if(!list || !list.length){ el.innerHTML = "<div class=\"dEmpty\">No saved stocks yet. Search a stock and tap the star to track it.</div>"; return; }
+  el.innerHTML = list.map(function(s){
+    var badge = s.verdict ? "<span class=\"dwBadge " + verdictBadgeCls(s.verdict) + "\">" + esc(s.verdict) + "</span>" : "";
+    var chg = (typeof s.change_pct === "number") ? "<span class=\"dwChg " + chgCls(s.change_pct) + "\">" + fmtChg(s.change_pct) + "</span>" : "";
+    var px = (typeof s.price === "number") ? "<span class=\"dwPx\">" + fmtPx(s.price) + "</span>" : "";
+    return "<div class=\"dwRow\" data-sym=\"" + esc(s.symbol) + "\"><span class=\"dwSym\">" + esc(s.symbol) + "</span><span class=\"dwName\">" + esc(s.name || "") + "</span><span class=\"dwRight\">" + px + chg + badge + "</span></div>";
+  }).join("");
+}
+
+function renderDashPort(totals, loggedIn){
+  var el = document.getElementById("dashPort");
+  if(!el) return;
+  if(!loggedIn){ el.innerHTML = "<div class=\"dLoginCta\"><b>Log in</b> to track your portfolio value and gains.</div>"; return; }
+  if(!totals || typeof totals.market_value !== "number"){ el.innerHTML = "<div class=\"dEmpty\">Your portfolio is empty. Open a report and tap Portfolio to add a holding.</div>"; return; }
+  el.innerHTML =
+    "<div class=\"dpMain\">" + fmtPx(totals.market_value) + "</div>"
+    + "<div class=\"dpSub\">"
+    + "<div class=\"dpItem\">Today<b class=\"" + chgCls(totals.day_change) + "\">" + fmtMoneySigned(totals.day_change) + "</b></div>"
+    + "<div class=\"dpItem\">All time<b class=\"" + chgCls(totals.gain_loss) + "\">" + fmtMoneySigned(totals.gain_loss) + " (" + fmtChg(totals.gain_loss_pct) + ")</b></div>"
+    + "</div>";
+}
+
+function moverList(arr){
+  if(!arr || !arr.length) return "<div class=\"dEmpty\">None.</div>";
+  return arr.map(function(m){
+    return "<div class=\"dmRow\" data-sym=\"" + esc(m.symbol) + "\"><span class=\"dmSym\">" + esc(m.symbol) + "</span><span class=\"dmChg " + chgCls(m.change_pct) + "\">" + fmtChg(m.change_pct) + "</span></div>";
+  }).join("");
+}
+function renderDashMovers(movers){
+  var el = document.getElementById("dashMovers");
+  if(!el) return;
+  var g = movers && movers.gainers, l = movers && movers.losers;
+  if((!g || !g.length) && (!l || !l.length)){ el.innerHTML = "<div class=\"dEmpty\">Movers load on the Discover tab.</div>"; return; }
+  el.innerHTML = "<div class=\"dmCols\"><div><div class=\"dmHd up\">Gainers</div>" + moverList(g) + "</div><div><div class=\"dmHd dn\">Losers</div>" + moverList(l) + "</div></div>";
+}
+
+function renderDashCongress(list){
+  var el = document.getElementById("dashCongress");
+  if(!el) return;
+  if(!list || !list.length){ el.innerHTML = "<div class=\"dEmpty\">Congress data loads on the Insights tab.</div>"; return; }
+  el.innerHTML = list.map(function(p){
+    var initials = (p.name || "?").split(" ").map(function(w){ return w.charAt(0); }).slice(0,2).join("").toUpperCase();
+    var ret = (typeof p.returns === "number") ? "<span class=\"dcgRet " + chgCls(p.returns) + "\">" + fmtChg(p.returns) + "</span>" : "<span class=\"dcgRet\">N/A</span>";
+    var meta = [p.party, p.state].filter(Boolean).join(" &middot; ") + (p.trade_count ? (" &middot; " + p.trade_count + " trades") : "");
+    return "<div class=\"dcgRow\" data-goview=\"insights\"><span class=\"dcgAv\">" + esc(initials) + "</span><div class=\"dcgName\">" + esc(p.name) + "<div class=\"dcgMeta\">" + meta + "</div></div>" + ret + "</div>";
+  }).join("");
+}
+
+function renderDashAlerts(list, loggedIn){
+  var el = document.getElementById("dashAlerts");
+  if(!el) return;
+  if(!loggedIn){ el.innerHTML = "<div class=\"dLoginCta\"><b>Log in</b> to get alerts on your saved stocks.</div>"; return; }
+  if(!list || !list.length){ el.innerHTML = "<div class=\"dEmpty\">No alerts right now. You are all caught up.</div>"; return; }
+  el.innerHTML = list.map(function(a){
+    var flip = a.flip ? "<span class=\"daFlip\">&#8599; Verdict change</span>" : "";
+    var reason = a.flip
+      ? ("Moved from " + esc(a.previous_verdict || "") + " to " + esc(a.new_verdict || a.verdict || "") + ". " + esc(a.reason || ""))
+      : esc(a.reason || "");
+    return "<div class=\"daRow\" data-sym=\"" + esc(a.symbol) + "\"><div class=\"daTop\"><span class=\"daSym\">" + esc(a.symbol) + "</span>" + flip + "</div><div class=\"daReason\">" + reason + "</div></div>";
+  }).join("");
+}
+
+function applyDashboard(d, isPoll){
+  if(!d) return;
+  var loggedIn = !!d.logged_in;
+  renderDashIndices(d.market_indices);
+  renderDashWatch(d.watchlist, loggedIn);
+  renderDashPort(d.portfolio, loggedIn);
+  // A poll only refreshes the price driven cards above. The rest stay put so scroll and taps are not disturbed.
+  if(isPoll) return;
+  renderDashMovers(d.movers);
+  renderDashCongress(d.congress);
+  renderDashAlerts(d.alerts, loggedIn);
+}
+
+function loadDashboard(isPoll){
+  if(!isPoll && _dashCache && (Date.now() - _dashCache.ts) < DASH_TTL){
+    applyDashboard(_dashCache.data, false);
+    return;
+  }
+  fetch(API + "/dashboard", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(!d || d.error) return;
+    _dashCache = {data: d, ts: Date.now()};
+    applyDashboard(d, isPoll);
+  }).catch(function(){});
+}
+
+function startDashPoll(){
+  if(_dashTimer) return;
+  _dashTimer = setInterval(function(){
+    var home = document.getElementById("view-home");
+    if(home && home.classList.contains("active")){ loadDashboard(true); }
+  }, DASH_TTL);
+}
+
+
 buildTicker();
 loadMarket();
 loadHomeContext();
+loadDashboard();
+startDashPoll();
 
 var currentUser = null;
 var authMode = "login";
@@ -1963,6 +2188,8 @@ function refreshMe(){
     else { b.textContent = "Log In"; b.classList.remove("loggedin"); }
     loadWatchlist();
     loadAlerts();
+    _dashCache = null;
+    loadDashboard();
   }).catch(function(){});
 }
 
@@ -2890,7 +3117,7 @@ function showView(name){
     var asb = document.getElementById("askSym");
     if(asb && !asb.value.trim() && !askHistory.length && currentSymbol){ asb.value = currentSymbol; }
   }
-  if(name === "home"){ loadHomeContext(); }
+  if(name === "home"){ loadHomeContext(); loadDashboard(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
