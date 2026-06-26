@@ -223,6 +223,24 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .contextCardBody{font-size:15px;color:var(--text);line-height:1.7;font-weight:500;}
 .contextCardLesson{font-size:13px;color:var(--muted);line-height:1.6;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-style:italic;}
 @media(max-width:600px){.contextCard{margin:0 14px 14px;}}
+.congCard{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer;}
+.congCard:active{background:var(--s2);}
+.congLeft{flex:0 0 auto;}
+.congressPhoto{width:48px;height:48px;border-radius:50%;background:var(--s2);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--muted);object-fit:cover;font-size:15px;}
+.congMid{flex:1 1 auto;min-width:0;}
+.congName{font-weight:800;color:var(--text);font-size:15px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+.congSub{font-size:12px;color:var(--muted);margin-top:2px;}
+.congChips{margin-top:7px;display:flex;flex-wrap:wrap;gap:5px;}
+.congRight{flex:0 0 auto;text-align:right;}
+.congRetLbl{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);}
+.congRet{font-size:15px;font-weight:800;margin-top:2px;}
+.partyR{background:var(--red);color:#fff;border-radius:5px;padding:1px 7px;font-size:11px;font-weight:800;}
+.partyD{background:var(--accent);color:#fff;border-radius:5px;padding:1px 7px;font-size:11px;font-weight:800;}
+.partyI{background:var(--muted);color:#fff;border-radius:5px;padding:1px 7px;font-size:11px;font-weight:800;}
+.congHeader{display:flex;align-items:center;gap:13px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin:12px 0;}
+.congHeadMid{flex:1 1 auto;min-width:0;}
+.congBack{background:var(--s2);border:1px solid var(--border);color:var(--text);font-weight:700;border-radius:8px;padding:7px 14px;cursor:pointer;font-size:13px;font-family:inherit;margin-bottom:4px;}
+.congTip{font-size:12px;color:var(--muted);line-height:1.5;margin:4px 0 12px;font-style:italic;}
 .ni{padding:11px 0;border-bottom:1px solid var(--border);}
 .ni:last-child{border-bottom:none;}
 .ns{font-size:11px;color:var(--accent);font-family:'JetBrains Mono',monospace;text-transform:uppercase;font-weight:800;margin-bottom:5px;}
@@ -571,11 +589,17 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     </div>
   </div>
 </div>
-<div class="view" id="view-scans">
+<div class="view" id="view-insights">
   <div class="vhead">
-    <div class="vhead-t">Scans</div>
-    <div class="vhead-s">Point the engine at the whole market through plain lenses. Each one runs the same scoring you see in a full report. Tap a lens, then tap any name for the full breakdown.</div>
+    <div class="vhead-t">Insights</div>
+    <div class="vhead-s">See what members of Congress are trading, then point the engine at the whole market through plain lenses. Tap a politician or any name for the full breakdown.</div>
   </div>
+  <div class="stitle">&#127963;&#65039; Top Trading Members of Congress</div>
+  <div class="scanNote">Recent disclosures from US Senators and Representatives, ranked by how active they have been. The return figure is a rough estimate from prices since each purchase. Educational only, never advice, and never a suggestion to copy anyone.</div>
+  <div class="loading" id="congressLoad">Loading congressional data...</div>
+  <div id="congressList"></div>
+  <div id="congressDetail" style="display:none;"></div>
+  <div class="stitle" style="margin-top:26px;">&#128269; Market Lenses</div>
   <div class="lensrow" id="lensrow">
     <button class="lens active" data-lens="strong">Strong Today</button>
     <button class="lens" data-lens="highs">Near Highs</button>
@@ -584,7 +608,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <button class="lens" data-lens="dividend">Dividend</button>
     <button class="lens" data-lens="insiders">Insiders Buying</button>
   </div>
-  <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names, and an insiders buying lens, are coming as we expand the universe. Educational only, never advice.</div>
+  <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names are coming as we expand the universe. Educational only, never advice.</div>
   <div class="loading" id="scanLoad">Scanning the market...</div>
   <div id="scanResults"></div>
 </div>
@@ -689,7 +713,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 <nav class="tabbar" id="tabbar">
   <button class="tab active" data-view="home"><span class="tabi">&#128269;</span><span class="tabt">Home</span></button>
   <button class="tab" data-view="discover"><span class="tabi">&#129517;</span><span class="tabt">Discover</span></button>
-  <button class="tab" data-view="scans"><span class="tabi">&#128225;</span><span class="tabt">Scans</span></button>
+  <button class="tab" data-view="insights"><span class="tabi">&#127963;</span><span class="tabt">Insights</span></button>
   <button class="tab" data-view="compare"><span class="tabi">&#9878;&#65039;</span><span class="tabt">Compare</span></button>
   <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Saved</span></button>
   <button class="tab" data-view="portfolio"><span class="tabi">&#128200;</span><span class="tabt">Portfolio</span></button>
@@ -1727,6 +1751,10 @@ document.addEventListener("click", function(e){
   if(e.target.id === "portLogin"){ openAuth("login"); return; }
   var themeEl = e.target.closest("[data-theme]");
   if(themeEl){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
+  var congBack = e.target.closest("[data-cong-back]");
+  if(congBack){ e.stopPropagation(); showCongressList(); return; }
+  var polEl = e.target.closest("[data-pol]");
+  if(polEl){ e.stopPropagation(); showCongressDetail(polEl.getAttribute("data-pol")); return; }
   var symEl = e.target.closest("[data-sym]");
   if(symEl){ go(symEl.getAttribute("data-sym")); return; }
   if(e.target.id === "analyzeBtn"){ run(); return; }
@@ -2325,6 +2353,136 @@ for(var _l=0; _l<_lensBtns.length; _l++){
   _lensBtns[_l].addEventListener("click", function(){ loadScan(this.getAttribute("data-lens")); });
 }
 
+// ===== Congressional Insights =====
+var _congressData = null;
+
+function congInitials(name){
+  var parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if(!parts.length){ return "?"; }
+  if(parts.length === 1){ return parts[0].slice(0,2).toUpperCase(); }
+  return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+}
+function congPartyClass(p){
+  var s = (p || "").toUpperCase();
+  if(s.indexOf("R") === 0){ return "partyR"; }
+  if(s.indexOf("D") === 0){ return "partyD"; }
+  return "partyI";
+}
+function congPartyLabel(p){
+  var s = (p || "").toUpperCase();
+  if(s.indexOf("R") === 0){ return "R"; }
+  if(s.indexOf("D") === 0){ return "D"; }
+  if(s.indexOf("I") === 0){ return "I"; }
+  return "?";
+}
+function congPhotoHtml(p){
+  if(p.photo_url){ return "<img class=\"congressPhoto\" src=\"" + esc(p.photo_url) + "\" alt=\"\"/>"; }
+  return "<div class=\"congressPhoto\">" + esc(congInitials(p.name)) + "</div>";
+}
+function congReturnHtml(r){
+  if(r === null || r === undefined){ return "<span class=\"gray\">N/A</span>"; }
+  var cc = r >= 0 ? "pos" : "neg";
+  var sign = r >= 0 ? "+" : "";
+  return "<span class=\"" + cc + "\">" + sign + r.toFixed(1) + "%</span>";
+}
+
+function loadCongressInsights(){
+  var load = document.getElementById("congressLoad");
+  var list = document.getElementById("congressList");
+  var detail = document.getElementById("congressDetail");
+  if(detail){ detail.style.display = "none"; detail.innerHTML = ""; }
+  if(list){ list.style.display = "block"; }
+  if(_congressData){ renderCongressList(); return; }
+  if(load){ load.classList.add("on"); }
+  if(list){ list.innerHTML = ""; }
+  fetch(API + "/congress/insights").then(function(r){ return r.json(); }).then(function(d){
+    if(load){ load.classList.remove("on"); }
+    _congressData = (d && d.politicians) ? d.politicians : [];
+    renderCongressList();
+  }).catch(function(){
+    if(load){ load.classList.remove("on"); }
+    if(list){ list.innerHTML = "<div class=\"scanEmpty\">Could not load congressional data right now. Check your connection and try again.</div>"; }
+  });
+}
+
+function renderCongressList(){
+  var list = document.getElementById("congressList");
+  if(!list){ return; }
+  if(!_congressData || !_congressData.length){
+    list.innerHTML = "<div class=\"scanEmpty\">No congressional trading data is available right now. Check back later.</div>";
+    return;
+  }
+  list.innerHTML = _congressData.map(function(p){
+    var chips = (p.top_tickers || []).map(function(tk){ return "<span class=\"qp\">" + esc(tk) + "</span>"; }).join("");
+    var st = p.state ? (" &middot; " + esc(p.state)) : "";
+    return "<div class=\"congCard\" data-pol=\"" + esc(p.name) + "\">"
+      + "<div class=\"congLeft\">" + congPhotoHtml(p) + "</div>"
+      + "<div class=\"congMid\">"
+        + "<div class=\"congName\">" + esc(p.name) + " <span class=\"" + congPartyClass(p.party) + "\">" + congPartyLabel(p.party) + "</span></div>"
+        + "<div class=\"congSub\">" + (p.trade_count || 0) + " trades" + st + "</div>"
+        + "<div class=\"congChips\">" + chips + "</div>"
+      + "</div>"
+      + "<div class=\"congRight\"><div class=\"congRetLbl\">250 day</div><div class=\"congRet\">" + congReturnHtml(p.returns) + "</div></div>"
+      + "</div>";
+  }).join("");
+}
+
+function showCongressList(){
+  var list = document.getElementById("congressList");
+  var detail = document.getElementById("congressDetail");
+  if(detail){ detail.style.display = "none"; detail.innerHTML = ""; }
+  if(list){ list.style.display = "block"; }
+}
+
+function showCongressDetail(name){
+  var list = document.getElementById("congressList");
+  var detail = document.getElementById("congressDetail");
+  if(list){ list.style.display = "none"; }
+  if(!detail){ return; }
+  detail.style.display = "block";
+  detail.innerHTML = "<button class=\"congBack\" data-cong-back=\"1\">&#8592; Back</button><div class=\"loading on\">Loading portfolio...</div>";
+  fetch(API + "/congress/politician?name=" + encodeURIComponent(name)).then(function(r){ return r.json(); }).then(function(d){
+    var backBtn = "<button class=\"congBack\" data-cong-back=\"1\">&#8592; Back</button>";
+    if(!d || !d.politician){ detail.innerHTML = backBtn + "<div class=\"scanEmpty\">Could not load this member's portfolio.</div>"; return; }
+    var p = d.politician;
+    var port = d.portfolio || [];
+    var rows = port.map(function(it){
+      var v = it.verdict || "WATCH";
+      var vc = (v === "ETF") ? "vetf" : (v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw"));
+      var hasChg = (it.change_pct !== null && it.change_pct !== undefined);
+      var cc = (hasChg && it.change_pct >= 0) ? "pos" : "neg";
+      var c = hasChg ? ((it.change_pct >= 0 ? "+" : "") + it.change_pct + "%") : "N/A";
+      var tgt = (it.analyst_target === null || it.analyst_target === undefined || it.analyst_target === "N/A") ? "N/A" : ("$" + Number(it.analyst_target).toLocaleString());
+      var px = (it.price === null || it.price === undefined) ? "N/A" : ("$" + Number(it.price).toLocaleString());
+      return "<tr data-sym=\"" + esc(it.symbol) + "\">"
+        + "<td class=\"lft\"><span class=\"psym\">" + esc(it.symbol) + "</span></td>"
+        + "<td>" + esc(it.name || "") + "</td>"
+        + "<td>" + px + "</td>"
+        + "<td>" + fmt(it.market_cap) + "</td>"
+        + "<td>" + tgt + "</td>"
+        + "<td><span class=\"scanV " + vc + "\">" + v + "</span></td>"
+        + "<td class=\"" + cc + "\">" + c + "</td>"
+        + "<td>" + (it.trade_count || 0) + "</td>"
+        + "<td>" + esc(it.recent_action || "") + "</td>"
+        + "<td>" + esc(it.recent_date || "") + "</td>"
+        + "</tr>";
+    }).join("");
+    var table = port.length
+      ? ("<div class=\"ptblWrap\"><table class=\"ptbl\"><thead><tr><th class=\"lft\">Symbol</th><th>Company</th><th>Price</th><th>Market Cap</th><th>Analyst Target</th><th>Verdict</th><th>Today</th><th>Trades</th><th>Last Action</th><th>Last Date</th></tr></thead><tbody>" + rows + "</tbody></table></div>")
+      : "<div class=\"scanEmpty\">No holdings with readable market data right now.</div>";
+    detail.innerHTML = backBtn
+      + "<div class=\"congHeader\">" + congPhotoHtml(p)
+        + "<div class=\"congHeadMid\"><div class=\"congName\">" + esc(p.name) + " <span class=\"" + congPartyClass(p.party) + "\">" + congPartyLabel(p.party) + "</span></div>"
+        + "<div class=\"congSub\">" + (p.trade_count || 0) + " disclosed trades" + (p.state ? (" &middot; " + esc(p.state)) : "") + "</div></div>"
+        + "<div class=\"congRight\"><div class=\"congRetLbl\">250 day</div><div class=\"congRet\">" + congReturnHtml(p.returns) + "</div></div>"
+      + "</div>"
+      + "<div class=\"congTip\">Each row is a stock this member has disclosed trading. Tap any symbol for the full Apex Q report. Educational only, never advice.</div>"
+      + table;
+  }).catch(function(){
+    detail.innerHTML = "<button class=\"congBack\" data-cong-back=\"1\">&#8592; Back</button><div class=\"scanEmpty\">Could not load this member's portfolio. Try again.</div>";
+  });
+}
+
 function runCompare(){
   var syms = [];
   ["cmp0", "cmp1", "cmp2"].forEach(function(id){ var v = document.getElementById(id).value.trim(); if(v){ syms.push(v); } });
@@ -2582,7 +2740,10 @@ function showView(name){
   var ts = document.querySelectorAll(".tab");
   for(var j=0;j<ts.length;j++){ ts[j].classList.toggle("active", ts[j].getAttribute("data-view") === name); }
   stopPortfolioRefresh();
-  if(name === "scans" && !_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
+  if(name === "insights"){
+    loadCongressInsights();
+    if(!_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
+  }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
   if(name === "watch"){ loadAlerts(); }
   if(name === "portfolio"){ loadPortfolio(); _portTimer = setInterval(loadPortfolio, 60000); }
