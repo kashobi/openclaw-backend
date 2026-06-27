@@ -556,6 +556,16 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .footNote{font-size:11px;color:var(--muted);margin-top:7px;}
 .cmpBtn.dangerBtn{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
 .cmpBtn.dangerBtn:hover{background:var(--red);color:#fff;}
+.filingsAll{display:inline-block;color:var(--accent);font-weight:700;font-size:14px;text-decoration:none;margin-bottom:10px;}
+.filingsAll:hover{text-decoration:underline;}
+.filingsList{display:flex;flex-direction:column;gap:1px;}
+.filingRow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);text-decoration:none;}
+.filingRow:last-child{border-bottom:none;}
+.filingRowLink{cursor:pointer;}
+.filingRowLink:hover .filingType{color:var(--accent);}
+.filingType{font-size:13px;font-weight:700;color:var(--text);}
+.filingDate{font-size:12px;color:var(--muted);white-space:nowrap;}
+.filingLoad{font-size:13px;color:var(--muted);padding:6px 0;}
 </style>
 </head>
 <body>
@@ -656,6 +666,11 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <div class="ic" id="aboutCard" style="display:none">
         <div class="ih"><div class="it" id="aboutTitle">About</div></div>
         <div class="itxt" id="aboutBody"></div>
+      </div>
+      <div class="ic" id="filingsCard" style="display:none">
+        <div class="ih"><div class="it">&#128196; SEC Filings</div></div>
+        <a class="filingsAll" id="filingsAll" href="#" target="_blank" rel="noopener">View all SEC filings &#8594;</a>
+        <div class="filingsList" id="filingsList"></div>
       </div>
       <div class="mets">
         <div class="met"><div class="ml2">Current Price</div><div class="mv2 neu" id="mp">--</div></div>
@@ -1693,6 +1708,19 @@ function run(){
       }
     }
 
+    var filingsCard = document.getElementById("filingsCard");
+    if(filingsCard){
+      var fsym = (d.symbol || val || "").toUpperCase();
+      if(fsym && fsym.indexOf("^") < 0 && fsym.indexOf("=") < 0){
+        var allLink = document.getElementById("filingsAll");
+        if(allLink){ allLink.href = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=" + encodeURIComponent(fsym) + "&type=&dateb=&owner=include&count=40"; }
+        filingsCard.style.display = "";
+        loadFilings(fsym);
+      } else {
+        filingsCard.style.display = "none";
+      }
+    }
+
     var extRow = document.getElementById("extRow");
     if(extRow){
       if(d.extended && d.extended.price !== null && d.extended.price !== undefined){
@@ -2544,6 +2572,26 @@ function deleteAccount(){
     show("ok", "Your account has been deleted.");
     setTimeout(function(){ window.location.reload(); }, 900);
   }).catch(function(){ show("err", "Could not delete your account."); });
+}
+
+function loadFilings(sym){
+  var list = document.getElementById("filingsList");
+  if(!list) return;
+  list.style.display = "";
+  list.innerHTML = "<div class=\"filingLoad\">Loading recent filings...</div>";
+  fetch(API + "/filings/" + encodeURIComponent(sym), {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(arr){
+    if(!arr || !arr.length){ list.style.display = "none"; list.innerHTML = ""; return; }
+    list.style.display = "";
+    list.innerHTML = arr.map(function(f){
+      var t = esc(f.type || f.title || "Filing");
+      var dt = f.date ? esc(f.date) : "";
+      var href = f.link || "";
+      if(href){
+        return "<a class=\"filingRow filingRowLink\" href=\"" + esc(href) + "\" target=\"_blank\" rel=\"noopener\"><span class=\"filingType\">" + t + "</span><span class=\"filingDate\">" + dt + "</span></a>";
+      }
+      return "<div class=\"filingRow\"><span class=\"filingType\">" + t + "</span><span class=\"filingDate\">" + dt + "</span></div>";
+    }).join("");
+  }).catch(function(){ list.style.display = "none"; list.innerHTML = ""; });
 }
 
 function loadPortfolio(){
