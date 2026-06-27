@@ -534,6 +534,21 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .qaWrap{display:flex;flex-direction:column;gap:8px;}
 .qaBtn{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;font-size:14px;font-weight:700;color:var(--text);cursor:pointer;transition:background .15s,transform .15s;font-family:inherit;}
 .qaBtn:hover{background:rgba(var(--accent-rgb),0.08);transform:translateY(-1px);}
+#portSpark{margin-bottom:11px;}
+.sparkHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;}
+.sparkTitle{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
+.sparkChg{font-size:14px;font-weight:800;}
+.sparkChg.pos{color:var(--green);} .sparkChg.neg{color:var(--red);}
+.sparkSvg{width:100%;height:64px;display:block;}
+.sparkAxis{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:5px;}
+.subRow{display:flex;gap:8px;margin-top:4px;}
+.subEmail{flex:1;}
+.subPrefs{display:flex;gap:18px;margin-top:11px;flex-wrap:wrap;}
+.subPref{font-size:13px;color:var(--text);font-weight:600;display:flex;align-items:center;gap:7px;cursor:pointer;}
+.subPref input{width:16px;height:16px;accent-color:var(--accent);}
+.subStatus{font-size:13px;color:var(--green);font-weight:700;margin-bottom:9px;}
+.subMsg{font-size:13px;margin-top:9px;font-weight:600;}
+.subMsg.ok{color:var(--green);} .subMsg.err{color:var(--red);}
 </style>
 </head>
 <body>
@@ -754,6 +769,20 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div class="vsec-p">When a saved stock makes a notable move or the engine shifts on it, it shows up here so you do not miss it. A push to your phone is the next layer.</div>
     <div id="alertsFeed"><div class="alertEmpty">Loading your alerts...</div></div>
   </div>
+  <div class="vsec" id="emailAlertSec">
+    <div class="vsec-h">Get alerts by email</div>
+    <div class="vsec-p">A daily digest of the saved stocks that moved or flipped. There is no verification step yet, this simply saves your preference for when email sending goes live.</div>
+    <div id="subStatus" class="subStatus" style="display:none"></div>
+    <div class="subRow">
+      <input class="cmpInp subEmail" id="subEmail" type="email" placeholder="you@example.com" autocomplete="email"/>
+      <button class="cmpBtn" id="subBtn">Subscribe</button>
+    </div>
+    <div class="subPrefs">
+      <label class="subPref"><input type="checkbox" id="prefVerdict" checked/> Verdict changes</label>
+      <label class="subPref"><input type="checkbox" id="prefPrice" checked/> Price moves</label>
+    </div>
+    <div class="subMsg" id="subMsg" style="display:none"></div>
+  </div>
   <div class="stitle" id="watchTitle" style="display:none">&#11088; My Watchlist</div>
     <div id="watchPanel" style="display:none"></div>
     <div class="stitle">Live Signals</div>
@@ -766,6 +795,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     <div class="vhead-t">Portfolio</div>
     <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math. Educational only, never advice.</div>
   </div>
+  <div class="ic" id="portSpark" style="display:none"></div>
   <div id="portSummary" style="display:none"></div>
   <div id="portConcentration" style="display:none"></div>
   <div class="portAdd">
@@ -2377,13 +2407,97 @@ function portShareStr(v){
 var _portData = null;
 var _portEditSym = null;
 
+function renderSparkline(history){
+  var box = document.getElementById("portSpark");
+  if(!box) return;
+  var vals = (history || []).map(function(p){ return p && p.value; }).filter(function(v){ return typeof v === "number"; });
+  if(vals.length < 2){ box.style.display = "none"; box.innerHTML = ""; return; }
+  var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+  var first = vals[0], last = vals[vals.length - 1];
+  var up = last >= first;
+  var color = up ? "var(--green)" : "var(--red)";
+  var rgb = up ? "13,124,75" : "192,57,43";
+  var W = 300, H = 64, pad = 6, n = vals.length, span = (max - min) || 1;
+  var pts = vals.map(function(v, i){
+    var x = pad + (W - 2 * pad) * (i / (n - 1));
+    var y = pad + (H - 2 * pad) * (1 - (v - min) / span);
+    return x.toFixed(1) + "," + y.toFixed(1);
+  }).join(" ");
+  var area = pts + " " + (W - pad).toFixed(1) + "," + (H - pad).toFixed(1) + " " + pad.toFixed(1) + "," + (H - pad).toFixed(1);
+  var pct = first > 0 ? (last / first - 1) * 100 : 0;
+  var svg = "<svg viewBox=\"0 0 " + W + " " + H + "\" preserveAspectRatio=\"none\" class=\"sparkSvg\">"
+    + "<polygon points=\"" + area + "\" fill=\"rgba(" + rgb + ",0.10)\"/>"
+    + "<polyline points=\"" + pts + "\" fill=\"none\" stroke=\"" + color + "\" stroke-width=\"2\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/>"
+    + "</svg>";
+  box.style.display = "block";
+  box.innerHTML = "<div class=\"sparkHead\"><span class=\"sparkTitle\">7 Day Trend</span><span class=\"sparkChg " + (up ? "pos" : "neg") + "\">" + (up ? "&#8599; " : "&#8600; ") + portPct(pct) + "</span></div>"
+    + svg
+    + "<div class=\"sparkAxis\"><span>Low " + portMoney(min) + "</span><span>High " + portMoney(max) + "</span></div>";
+}
+
+function prefsFromChecks(){
+  var v = document.getElementById("prefVerdict");
+  var p = document.getElementById("prefPrice");
+  var vc = v ? v.checked : true;
+  var pc = p ? p.checked : true;
+  if(vc && pc) return "all";
+  if(vc) return "verdict_only";
+  if(pc) return "price_only";
+  return "all";
+}
+function applyPrefsToChecks(prefs){
+  var v = document.getElementById("prefVerdict");
+  var p = document.getElementById("prefPrice");
+  if(!v || !p) return;
+  if(prefs === "verdict_only"){ v.checked = true; p.checked = false; }
+  else if(prefs === "price_only"){ v.checked = false; p.checked = true; }
+  else { v.checked = true; p.checked = true; }
+}
+function loadSubscription(){
+  var status = document.getElementById("subStatus");
+  if(!currentUser){ if(status){ status.style.display = "none"; status.textContent = ""; } return; }
+  fetch(API + "/alerts/subscribe", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(!d || d.error) return;
+    var emailInp = document.getElementById("subEmail");
+    if(d.subscribed && d.email){
+      if(emailInp && !emailInp.value){ emailInp.value = d.email; }
+      if(status){ status.style.display = "block"; status.textContent = "Subscribed as " + d.email + "."; }
+      applyPrefsToChecks(d.alert_prefs || "all");
+    } else if(status){
+      status.style.display = "none";
+      status.textContent = "";
+    }
+  }).catch(function(){});
+}
+function subscribeEmail(){
+  var emailInp = document.getElementById("subEmail");
+  var msg = document.getElementById("subMsg");
+  var btn = document.getElementById("subBtn");
+  function show(cls, text){ if(msg){ msg.style.display = "block"; msg.className = "subMsg " + cls; msg.textContent = text; } }
+  if(!currentUser){ show("err", "Log in first to subscribe to alerts."); return; }
+  var email = emailInp ? emailInp.value.trim() : "";
+  if(!email || email.indexOf("@") < 0 || email.indexOf(".") < 0){ show("err", "Please enter a valid email address."); return; }
+  if(btn){ btn.disabled = true; }
+  fetch(API + "/alerts/subscribe", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({email: email, alert_prefs: prefsFromChecks()})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if(btn){ btn.disabled = false; }
+    if(d && d.error){ show("err", d.error); return; }
+    show("ok", "Saved. You will get the daily digest once email sending is live.");
+    loadSubscription();
+  }).catch(function(){ if(btn){ btn.disabled = false; } show("err", "Could not save. Try again."); });
+}
+
 function loadPortfolio(){
   var wrap = document.getElementById("portTable");
   var load = document.getElementById("portLoad");
   var summary = document.getElementById("portSummary");
   var conc = document.getElementById("portConcentration");
   if(!wrap) return;
-  function hideExtras(){ if(summary) summary.style.display = "none"; if(conc) conc.style.display = "none"; }
+  function hideExtras(){ var sp = document.getElementById("portSpark"); if(sp) sp.style.display = "none"; if(summary) summary.style.display = "none"; if(conc) conc.style.display = "none"; }
   if(!currentUser){
     if(load) load.style.display = "none";
     hideExtras();
@@ -2415,6 +2529,8 @@ function renderPortfolio(d){
   if(!wrap) return;
   var hs = (d && d.holdings) ? d.holdings : [];
   if(!hs.length){
+    var sp0 = document.getElementById("portSpark");
+    if(sp0) sp0.style.display = "none";
     if(summary) summary.style.display = "none";
     if(conc) conc.style.display = "none";
     wrap.innerHTML = "<div class=\"portEmpty\">Your portfolio is empty. Search a stock, run the report, and tap Add to Portfolio to start tracking. Or enter a ticker above.</div>";
@@ -2422,6 +2538,7 @@ function renderPortfolio(d){
   }
   var t = (d && d.totals) ? d.totals : {};
   var isNum = function(x){ return typeof x === "number"; };
+  renderSparkline(d.history);
 
   if(summary){
     var tmv = isNum(t.market_value) ? t.market_value : 0;
@@ -2570,6 +2687,11 @@ function removeHolding(sym){
 
 var _portAddBtn = document.getElementById("portAddBtn");
 if(_portAddBtn){ _portAddBtn.addEventListener("click", addHolding); }
+
+var _subBtn = document.getElementById("subBtn");
+if(_subBtn){ _subBtn.addEventListener("click", subscribeEmail); }
+var _subEmail = document.getElementById("subEmail");
+if(_subEmail){ _subEmail.addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); subscribeEmail(); } }); }
 
 var _addPortBtn = document.getElementById("addPortBtn");
 if(_addPortBtn){
@@ -3130,7 +3252,7 @@ function showView(name){
     if(!_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
   }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
-  if(name === "watch"){ loadAlerts(); }
+  if(name === "watch"){ loadAlerts(); loadSubscription(); }
   if(name === "portfolio"){ loadPortfolio(); _portTimer = setInterval(loadPortfolio, 60000); }
   if(name === "ask"){
     var asb = document.getElementById("askSym");
