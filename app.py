@@ -529,6 +529,74 @@ def privacy_page():
     return _legal_page("Privacy Policy", inner)
 
 
+# Recent SEC EDGAR filings for a symbol, parsed from the public ATOM feed and cached two hours.
+# SEC fair access requires a descriptive User-Agent with a contact, so one is set below; change
+# the contact if you fork this. Any failure, a non equity symbol, or an empty feed returns [].
+@app.route("/filings/<symbol>")
+def filings(symbol):
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return jsonify([])
+    ckey = "filings_" + sym
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < 7200:
+        return jsonify(cached[0])
+
+    url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=%s"
+           "&type=&dateb=&owner=include&count=10&output=atom" % sym)
+    headers = {
+        "User-Agent": "Apex Q educational research (contact: research@apexq.io)",
+        "Accept-Encoding": "gzip, deflate",
+    }
+    out = []
+    try:
+        resp = requests.get(url, headers=headers, timeout=12)
+        if resp.status_code != 200 or not resp.text:
+            set_cache(ckey, [])
+            return jsonify([])
+        import xml.etree.ElementTree as ET
+
+        def _local(tag):
+            return tag.split("}")[-1] if "}" in tag else tag
+
+        root = ET.fromstring(resp.text)
+        entries = [el for el in root.iter() if _local(el.tag) == "entry"]
+        for e in entries[:5]:
+            title = ftype = fdate = link = updated = cat_term = atom_link = ""
+            for child in e.iter():
+                lt = _local(child.tag)
+                txt = (child.text or "").strip()
+                if lt == "title" and not title:
+                    title = txt
+                elif lt == "filing-type" and not ftype:
+                    ftype = txt
+                elif lt == "filing-date" and not fdate:
+                    fdate = txt
+                elif lt == "filing-href" and not link:
+                    link = txt
+                elif lt == "updated" and not updated:
+                    updated = txt
+                elif lt == "category" and not cat_term:
+                    cat_term = (child.get("term") or "").strip()
+                elif lt == "link" and not atom_link:
+                    href = child.get("href")
+                    if href:
+                        atom_link = href.strip()
+            final_type = ftype or cat_term or (title.split()[0] if title else "Filing")
+            final_date = fdate or (updated.split("T")[0] if updated else "")
+            final_link = link or atom_link
+            if not final_link and not final_type:
+                continue
+            out.append({"title": title, "type": final_type, "date": final_date, "link": final_link})
+    except Exception as ex:
+        logger.error("filings %s error: %s" % (sym, ex))
+        set_cache(ckey, [])
+        return jsonify([])
+
+    set_cache(ckey, out)
+    return jsonify(out)
+
+
 @app.route("/watchlist", methods=["GET"])
 def watchlist_list():
     u = current_user()
