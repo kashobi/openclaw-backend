@@ -631,6 +631,10 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
         <div class="vrlist" id="vrl"></div>
       </div>
       <div id="stockSections">
+      <div class="ic" id="aboutCard" style="display:none">
+        <div class="ih"><div class="it" id="aboutTitle">About</div></div>
+        <div class="itxt" id="aboutBody"></div>
+      </div>
       <div class="mets">
         <div class="met"><div class="ml2">Current Price</div><div class="mv2 neu" id="mp">--</div></div>
         <div class="met"><div class="ml2">Change Today</div><div class="mv2" id="mc">--</div></div>
@@ -1623,6 +1627,19 @@ function run(){
     document.getElementById("ssect").textContent = d.sector || "";
     document.getElementById("spx").textContent = "$" + (d.price || 0).toLocaleString();
     document.getElementById("mp").textContent = "$" + (d.price || 0).toLocaleString();
+
+    var aboutCard = document.getElementById("aboutCard");
+    if(aboutCard){
+      var summ = (d.company_summary || "").trim();
+      if(summ){
+        document.getElementById("aboutTitle").textContent = "About " + (d.name || d.symbol || "");
+        document.getElementById("aboutBody").textContent = summ;
+        aboutCard.style.display = "";
+      } else {
+        document.getElementById("aboutBody").textContent = "";
+        aboutCard.style.display = "none";
+      }
+    }
 
     var extRow = document.getElementById("extRow");
     if(extRow){
