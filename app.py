@@ -1849,6 +1849,7 @@ def compute_full_report(symbol):
             "symbol": symbol,
             "name": info.get("longName", symbol),
             "sector": info.get("sector", ""),
+            "company_summary": info.get("longBusinessSummary") or "",
             "price": cur,
             "change_pct": chg,
             "recommendation": rec,
