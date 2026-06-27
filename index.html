@@ -549,6 +549,13 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .subStatus{font-size:13px;color:var(--green);font-weight:700;margin-bottom:9px;}
 .subMsg{font-size:13px;margin-top:9px;font-weight:600;}
 .subMsg.ok{color:var(--green);} .subMsg.err{color:var(--red);}
+.appFooter{text-align:center;margin:26px 0 8px;padding-top:18px;border-top:1px solid var(--border);}
+.footLink{color:var(--muted);font-size:13px;font-weight:700;text-decoration:none;}
+.footLink:hover{color:var(--accent);}
+.footDot{color:var(--muted);margin:0 8px;font-size:13px;}
+.footNote{font-size:11px;color:var(--muted);margin-top:7px;}
+.cmpBtn.dangerBtn{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.cmpBtn.dangerBtn:hover{background:var(--red);color:#fff;}
 </style>
 </head>
 <body>
@@ -681,6 +688,12 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
     </div>
   </div>
 </div>
+  <div class="appFooter">
+    <a class="footLink" href="/terms" target="_blank" rel="noopener">Terms</a>
+    <span class="footDot">&middot;</span>
+    <a class="footLink" href="/privacy" target="_blank" rel="noopener">Privacy</a>
+    <div class="footNote">Educational research only. Not financial advice.</div>
+  </div>
 </div>
 <div class="view" id="view-discover">
 <div class="discband">
@@ -782,6 +795,15 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
       <label class="subPref"><input type="checkbox" id="prefPrice" checked/> Price moves</label>
     </div>
     <div class="subMsg" id="subMsg" style="display:none"></div>
+  </div>
+  <div class="vsec" id="dataSec" style="display:none">
+    <div class="vsec-h">Your data</div>
+    <div class="vsec-p">Download everything stored about you, or remove your account completely. Deletion is permanent and cannot be undone.</div>
+    <div class="subRow">
+      <button class="cmpBtn" id="exportBtn">Export my data</button>
+      <button class="cmpBtn dangerBtn" id="deleteBtn">Delete account</button>
+    </div>
+    <div class="subMsg" id="dataMsg" style="display:none"></div>
   </div>
   <div class="stitle" id="watchTitle" style="display:none">&#11088; My Watchlist</div>
     <div id="watchPanel" style="display:none"></div>
@@ -2491,6 +2513,39 @@ function subscribeEmail(){
   }).catch(function(){ if(btn){ btn.disabled = false; } show("err", "Could not save. Try again."); });
 }
 
+// SECURITY: download a JSON file of everything stored about the user.
+function exportData(){
+  var msg = document.getElementById("dataMsg");
+  function show(cls, t){ if(msg){ msg.style.display = "block"; msg.className = "subMsg " + cls; msg.textContent = t; } }
+  if(!currentUser){ show("err", "Log in first to export your data."); return; }
+  fetch(API + "/auth/export", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(!d || d.error){ show("err", "Could not export your data."); return; }
+    try {
+      var blob = new Blob([JSON.stringify(d, null, 2)], {type: "application/json"});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = "apexq-data.json";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      show("ok", "Your data file has downloaded.");
+    } catch(err){ show("err", "Could not build the file. Try again."); }
+  }).catch(function(){ show("err", "Could not export your data."); });
+}
+
+// SECURITY: permanently delete the account after a double confirm, then reload.
+function deleteAccount(){
+  var msg = document.getElementById("dataMsg");
+  function show(cls, t){ if(msg){ msg.style.display = "block"; msg.className = "subMsg " + cls; msg.textContent = t; } }
+  if(!currentUser){ show("err", "Log in first."); return; }
+  if(!confirm("Delete your account and all of your data? This cannot be undone.")) return;
+  if(!confirm("This is permanent. Delete everything now?")) return;
+  fetch(API + "/auth/delete", {method: "POST", credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(!d || d.error){ show("err", "Could not delete your account."); return; }
+    show("ok", "Your account has been deleted.");
+    setTimeout(function(){ window.location.reload(); }, 900);
+  }).catch(function(){ show("err", "Could not delete your account."); });
+}
+
 function loadPortfolio(){
   var wrap = document.getElementById("portTable");
   var load = document.getElementById("portLoad");
@@ -2692,6 +2747,10 @@ var _subBtn = document.getElementById("subBtn");
 if(_subBtn){ _subBtn.addEventListener("click", subscribeEmail); }
 var _subEmail = document.getElementById("subEmail");
 if(_subEmail){ _subEmail.addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); subscribeEmail(); } }); }
+var _exportBtn = document.getElementById("exportBtn");
+if(_exportBtn){ _exportBtn.addEventListener("click", exportData); }
+var _deleteBtn = document.getElementById("deleteBtn");
+if(_deleteBtn){ _deleteBtn.addEventListener("click", deleteAccount); }
 
 var _addPortBtn = document.getElementById("addPortBtn");
 if(_addPortBtn){
@@ -3252,7 +3311,7 @@ function showView(name){
     if(!_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
   }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
-  if(name === "watch"){ loadAlerts(); loadSubscription(); }
+  if(name === "watch"){ loadAlerts(); loadSubscription(); var _ds = document.getElementById("dataSec"); if(_ds) _ds.style.display = currentUser ? "" : "none"; }
   if(name === "portfolio"){ loadPortfolio(); _portTimer = setInterval(loadPortfolio, 60000); }
   if(name === "ask"){
     var asb = document.getElementById("askSym");
