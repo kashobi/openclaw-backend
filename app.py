@@ -143,6 +143,14 @@ def ensure_db():
             "last_checked TIMESTAMP DEFAULT NOW(),"
             "UNIQUE (user_id, symbol))"
         )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS alert_subscriptions ("
+            "user_id INTEGER NOT NULL,"
+            "email TEXT,"
+            "verified INTEGER DEFAULT 0,"
+            "alert_prefs TEXT DEFAULT 'all',"
+            "UNIQUE (user_id))"
+        )
         conn.commit()
         cur.close()
         logger.info("ensure_db: tables ready")
@@ -515,6 +523,66 @@ def compute_portfolio(uid):
     return payload
 
 
+def compute_portfolio_history(uid):
+    # Last 7 days of total portfolio value, one point per trading day, summed as shares * close
+    # across every holding. This is the one place that fetches multi day history, so it is cached
+    # for an hour and kept out of compute_portfolio so the 60 second totals path and the dashboard
+    # never trigger it. Returns a list of {date, value}, oldest first, or an empty list.
+    ckey = "portfolio_hist_" + str(uid)
+    entry = CACHE.get(ckey)
+    if entry and (time.time() - entry[1]) < 3600:
+        return entry[0]
+    conn = get_db()
+    if conn is None:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, shares FROM holdings WHERE user_id = %s", (uid,))
+        rows = cur.fetchall()
+        cur.close()
+    except Exception as e:
+        logger.error("portfolio history db error: %s" % e)
+        return []
+    finally:
+        conn.close()
+
+    if not rows:
+        set_cache(ckey, [])
+        return []
+
+    totals = {}
+    for symbol, shares in rows:
+        try:
+            shares_f = float(shares)
+        except (TypeError, ValueError):
+            continue
+        try:
+            hist = yf.Ticker(symbol).history(period="7d", timeout=10)
+        except Exception as e:
+            logger.error("portfolio history fetch %s: %s" % (symbol, e))
+            continue
+        if hist is None or len(hist) == 0 or "Close" not in hist:
+            continue
+        try:
+            closes = hist["Close"]
+            for idx, val in closes.items():
+                try:
+                    v = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if v != v:  # NaN guard
+                    continue
+                dstr = idx.strftime("%Y-%m-%d")
+                totals[dstr] = totals.get(dstr, 0.0) + shares_f * v
+        except Exception as e:
+            logger.error("portfolio history parse %s: %s" % (symbol, e))
+            continue
+
+    out = [{"date": d, "value": round(totals[d], 2)} for d in sorted(totals.keys())][-7:]
+    set_cache(ckey, out)
+    return out
+
+
 @app.route("/portfolio", methods=["GET"])
 def portfolio_get():
     u = current_user()
@@ -523,6 +591,10 @@ def portfolio_get():
     result = compute_portfolio(u["id"])
     if isinstance(result, dict) and result.get("error"):
         return jsonify(result), 500
+    if isinstance(result, dict):
+        # Copy so the 60 second cached payload, also read by the dashboard, is never mutated.
+        result = dict(result)
+        result["history"] = compute_portfolio_history(u["id"])
     return jsonify(result)
 
 
@@ -2847,6 +2919,61 @@ def alerts():
     if not u:
         return jsonify({"status": "logged_out", "alerts": []})
     return jsonify(build_alerts(u["id"]))
+
+
+@app.route("/alerts/subscribe", methods=["GET", "POST"])
+def alerts_subscribe():
+    # Saves a daily digest email subscription and the user's alert preference. No email is sent
+    # yet and there is no verification step. A future cron job will read this table and send the
+    # digest. alert_prefs is one of all, verdict_only, price_only.
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    uid = u["id"]
+
+    if request.method == "GET":
+        conn = get_db()
+        if conn is None:
+            return jsonify({"subscribed": False, "email": "", "alert_prefs": "all"})
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT email, alert_prefs FROM alert_subscriptions WHERE user_id = %s", (uid,))
+            row = cur.fetchone()
+            cur.close()
+        except Exception as e:
+            logger.error("subscribe get error: %s" % e)
+            return jsonify({"subscribed": False, "email": "", "alert_prefs": "all"})
+        finally:
+            conn.close()
+        if row and row[0]:
+            return jsonify({"subscribed": True, "email": row[0], "alert_prefs": row[1] or "all"})
+        return jsonify({"subscribed": False, "email": "", "alert_prefs": "all"})
+
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip()
+    prefs = (data.get("alert_prefs") or "all").strip()
+    if prefs not in ("all", "verdict_only", "price_only"):
+        prefs = "all"
+    if not email or "@" not in email or "." not in email:
+        return jsonify({"error": "Please enter a valid email address."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO alert_subscriptions (user_id, email, verified, alert_prefs) VALUES (%s,%s,0,%s) "
+            "ON CONFLICT (user_id) DO UPDATE SET email=EXCLUDED.email, alert_prefs=EXCLUDED.alert_prefs",
+            (uid, email, prefs),
+        )
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("subscribe post error: %s" % e)
+        return jsonify({"error": "Could not save your subscription."}), 500
+    finally:
+        conn.close()
+    return jsonify({"subscribed": True, "email": email, "alert_prefs": prefs})
 
 
 @app.route("/dashboard")
