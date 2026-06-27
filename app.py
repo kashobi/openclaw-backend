@@ -16,6 +16,32 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
+# SECURITY: rate limiting on sensitive routes. Imported defensively so that if the package is
+# somehow missing in an environment, the app still boots and simply runs without the limit rather
+# than crashing. default_limits is empty so ONLY routes explicitly decorated below are limited;
+# every other route is untouched. Storage is in process memory, which is right for a single
+# instance. A multi instance deployment would point storage_uri at Redis instead.
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    limiter = Limiter(key_func=get_remote_address, app=app, default_limits=[], storage_uri="memory://")
+    login_limit = limiter.limit("5 per minute")
+    _LIMITER_ON = True
+except Exception as _limiter_err:
+    logger.warning("flask_limiter unavailable, login rate limiting disabled: %s" % _limiter_err)
+    limiter = None
+    _LIMITER_ON = False
+    def login_limit(f):
+        return f
+
+
+# SECURITY: a custom, friendly 429 for the login limit. Login is the only rate limited route, so
+# any 429 in this app comes from that limit and this message is the right one.
+@app.errorhandler(429)
+def _ratelimit_handler(e):
+    return jsonify({"error": "Too many login attempts. Try again shortly."}), 429
+
+
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 QUIVER_KEY = os.environ.get("QUIVER_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
@@ -332,6 +358,7 @@ def auth_signup():
 
 
 @app.route("/auth/login", methods=["POST"])
+@login_limit  # SECURITY: 5 login attempts per minute per IP
 def auth_login():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -363,6 +390,143 @@ def auth_login():
 def auth_logout():
     session.clear()
     return jsonify({"ok": True})
+
+
+# SECURITY: lets a logged in user download everything stored about them in one JSON file.
+@app.route("/auth/export", methods=["GET"])
+def auth_export():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    uid = u["id"]
+    out = {"username": u["username"], "email": None, "watchlist": [], "holdings": [], "alert_prefs": None}
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, name, added_at FROM watchlist WHERE user_id=%s ORDER BY added_at ASC", (uid,))
+        for sym, nm, ts in cur.fetchall():
+            out["watchlist"].append({"symbol": sym, "name": nm, "added_at": ts.isoformat() if ts else None})
+        cur.execute("SELECT symbol, shares, avg_cost, added_at FROM holdings WHERE user_id=%s ORDER BY added_at ASC", (uid,))
+        for sym, sh, ac, ts in cur.fetchall():
+            try:
+                shares_f = float(sh)
+                avg_f = float(ac)
+            except (TypeError, ValueError):
+                shares_f, avg_f = None, None
+            out["holdings"].append({"symbol": sym, "shares": shares_f, "avg_cost": avg_f, "added_at": ts.isoformat() if ts else None})
+        cur.execute("SELECT email, alert_prefs FROM alert_subscriptions WHERE user_id=%s", (uid,))
+        sub = cur.fetchone()
+        if sub:
+            out["email"] = sub[0]
+            out["alert_prefs"] = sub[1] or "all"
+        cur.close()
+    except Exception as e:
+        logger.error("export error: %s" % e)
+        return jsonify({"error": "Could not export your data."}), 500
+    finally:
+        conn.close()
+    return jsonify(out)
+
+
+# SECURITY: permanently deletes the account and every row tied to it, then clears the session.
+@app.route("/auth/delete", methods=["POST"])
+def auth_delete():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    uid = u["id"]
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database not available."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM watchlist WHERE user_id=%s", (uid,))
+        cur.execute("DELETE FROM holdings WHERE user_id=%s", (uid,))
+        cur.execute("DELETE FROM verdict_history WHERE user_id=%s", (uid,))
+        cur.execute("DELETE FROM alert_subscriptions WHERE user_id=%s", (uid,))
+        cur.execute("DELETE FROM users WHERE id=%s", (uid,))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("delete error: %s" % e)
+        return jsonify({"error": "Could not delete your account."}), 500
+    finally:
+        conn.close()
+    session.clear()
+    return jsonify({"ok": True})
+
+
+# SECURITY/compliance: plain English legal pages, served as standalone styled HTML.
+def _legal_page(title, inner):
+    doc = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%s | Apex Q</title>
+<style>
+body{margin:0;background:#f0f3f8;color:#141a2b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;}
+.wrap{max-width:720px;margin:0 auto;padding:32px 22px 64px;}
+a.back{display:inline-block;margin-bottom:20px;color:#1a1f71;font-weight:700;text-decoration:none;font-size:14px;}
+h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em;}
+h2{font-size:16px;margin:26px 0 6px;color:#1a1f71;}
+p,li{font-size:15px;color:#33405c;}
+ul{padding-left:20px;}
+.disc{margin-top:28px;padding:14px 16px;background:#fff;border:1px solid #e2e8f2;border-radius:12px;font-size:14px;color:#33405c;}
+.upd{margin-top:18px;font-size:13px;color:#5c6b85;}
+</style></head>
+<body><div class="wrap"><a class="back" href="/">&#8592; Back to Apex Q</a>
+<h1>%s</h1>
+%s
+<p class="disc"><strong>Educational use only.</strong> Apex Q is an educational research terminal. Nothing it shows is financial, investment, legal, or tax advice, and nothing here is a recommendation to buy or sell any security. Markets carry risk. Do your own research and speak with a licensed professional before making any financial decision.</p>
+<p class="upd">Last updated June 2026.</p></div></body></html>""" % (title, title, inner)
+    return Response(doc, mimetype="text/html")
+
+
+@app.route("/terms")
+def terms_page():
+    inner = """
+<p>Welcome to Apex Q. By using this terminal you agree to these terms. Please read them in full.</p>
+<h2>What Apex Q is</h2>
+<p>Apex Q is an educational research tool. It reads live market data, valuation figures, analyst views, and public filings, and it explains what those signals mean in plain English. It exists to help you learn how to read the market for yourself.</p>
+<h2>Not financial advice</h2>
+<p>Apex Q does not give financial, investment, legal, or tax advice. The verdicts, scores, and summaries it produces are educational illustrations only. They are not recommendations and they are not a solicitation to buy or sell anything. You alone are responsible for your decisions.</p>
+<h2>Accuracy and availability</h2>
+<p>Market and company data come from third party providers. We work to keep it accurate and current, but we cannot guarantee it is complete, correct, or always available. Figures may be delayed, and the service may go offline for maintenance or for reasons outside our control.</p>
+<h2>Your account</h2>
+<p>You are responsible for keeping your login details private and for everything done under your account. Tell us right away if you believe your account has been accessed without your permission.</p>
+<h2>Acceptable use</h2>
+<p>Use Apex Q for your own lawful, personal, educational purposes. Do not scrape it in bulk, attempt to break or overload it, resell access to it, or use it to break any law.</p>
+<h2>Limitation of liability</h2>
+<p>Apex Q is provided as is, without warranties of any kind. To the fullest extent allowed by law, we are not liable for any loss arising from your use of the terminal or from any decision you make based on it.</p>
+<h2>Changes</h2>
+<p>We may update these terms or the service over time. Continued use after a change means you accept the updated terms.</p>
+"""
+    return _legal_page("Terms of Service", inner)
+
+
+@app.route("/privacy")
+def privacy_page():
+    inner = """
+<p>This policy explains what Apex Q stores, why, and the control you have over it.</p>
+<h2>What we store</h2>
+<ul>
+<li>Your username and a secure one way hash of your password. We never store your password in plain text.</li>
+<li>The stocks you save to your watchlist.</li>
+<li>The holdings you choose to enter into the portfolio tracker, meaning the ticker, share count, and the cost you type in.</li>
+<li>If you opt in to email alerts, the email address and the alert preference you provide.</li>
+</ul>
+<h2>How we use it</h2>
+<p>We use this information only to run your account and to show you your own data. We do not sell it, and we do not share it with advertisers.</p>
+<h2>Market data providers</h2>
+<p>When you look up a stock, the request goes to third party market data providers to fetch prices and figures. Those lookups are about the ticker, not about you, and your identity is not handed to them as part of normal use.</p>
+<h2>Cookies and session</h2>
+<p>We use a single session cookie to keep you logged in. It is not used to track you across other websites.</p>
+<h2>Your controls</h2>
+<p>You can export everything stored about you at any time, and you can delete your account and all of its data at any time. Deletion is permanent and removes your watchlist, your holdings, your verdict history, and any alert subscription.</p>
+<h2>Contact</h2>
+<p>If you have a question about your data, reach out through the app and we will help.</p>
+"""
+    return _legal_page("Privacy Policy", inner)
 
 
 @app.route("/watchlist", methods=["GET"])
