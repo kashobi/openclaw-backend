@@ -79,84 +79,6 @@ def set_cache(key, data):
     CACHE[key] = (data, time.time())
 
 
-# ============ BACKEND UPGRADE: Secondary data source (Finnhub) for real-time prices ============
-# Finnhub provides real-time quotes when yfinance data is delayed (15 min on many symbols).
-# A simple in-process rate limiter keeps us under the free-tier 60 calls/minute cap.
-# This is additive: if FINNHUB_KEY is unset or the call fails, every existing code path
-# falls back to yfinance exactly as before. No scoring, caching, or route logic changes.
-_FINNHUB_CALLS = []
-FINNHUB_RATE_LIMIT = 55  # Stay safely under 60/min on the free tier
-
-def _finnhub_rate_ok():
-    """Returns True if we have budget for another Finnhub call in this minute window."""
-    now = time.time()
-    global _FINNHUB_CALLS
-    _FINNHUB_CALLS = [t for t in _FINNHUB_CALLS if now - t < 60.0]
-    return len(_FINNHUB_CALLS) < FINNHUB_RATE_LIMIT
-
-def fetch_finnhub_quote(symbol):
-    """Real-time quote from Finnhub. Returns dict with price, prev_close, change_pct, source
-    or None on any failure. Never raises. Cached for 30 seconds per symbol to avoid redundant
-    calls within rapid refresh cycles."""
-    if not FINNHUB_KEY or not _finnhub_rate_ok():
-        return None
-    ckey = "fhq_" + symbol
-    cached = CACHE.get(ckey)
-    if cached and (time.time() - cached[1]) < 30:
-        return cached[0]
-    _FINNHUB_CALLS.append(time.time())
-    try:
-        url = "https://finnhub.io/api/v1/quote?symbol=%s&token=%s" % (symbol, FINNHUB_KEY)
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            d = r.json()
-            if d and isinstance(d.get("c"), (int, float)) and d["c"] > 0:
-                price = round(float(d["c"]), 2)
-                prev_close = round(float(d.get("pc", price)), 2)
-                change = round(float(d.get("d", 0)), 2)
-                change_pct = round(float(d.get("dp", 0)), 2)
-                result = {
-                    "price": price,
-                    "change": change,
-                    "change_pct": change_pct,
-                    "prev_close": prev_close,
-                    "source": "finnhub",
-                }
-                CACHE[ckey] = (result, time.time())
-                return result
-    except Exception as e:
-        logger.error("fetch_finnhub_quote %s: %s" % (symbol, e))
-    return None
-
-def get_realtime_price(symbol):
-    """Tries Finnhub first for real-time, falls back to yfinance. Returns price dict or None.
-    Used by the SSE streaming endpoint and the new market-snapshot endpoint. The existing
-    light_score and compute_full_report functions have their own inline Finnhub integration
-    so their scoring logic is untouched."""
-    fq = fetch_finnhub_quote(symbol)
-    if fq:
-        return fq
-    try:
-        t = yf.Ticker(symbol)
-        hist = t.history(period="5d", timeout=10)
-        if hist.empty:
-            return None
-        cur = fmt_price(hist["Close"].iloc[-1])
-        prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
-        chg = round(((cur - prev) / prev) * 100, 2) if prev else 0
-        return {
-            "price": cur,
-            "change": round(cur - prev, 2) if prev else 0,
-            "change_pct": chg,
-            "prev_close": prev,
-            "source": "yfinance",
-        }
-    except Exception as e:
-        logger.error("get_realtime_price %s: %s" % (symbol, e))
-    return None
-# =========================================================================================
-
-
 # CHUNK: send the bare domain to www, a backup in case the Porkbun forward misses
 @app.before_request
 def force_www():
@@ -1716,21 +1638,9 @@ def compute_full_report(symbol):
         if hist.empty:
             return None
 
-        # BACKEND UPGRADE: Finnhub real-time price fallback.
-        # Tries Finnhub for a live quote first; falls back to yfinance delayed data.
-        # All calculations, scoring, and caching below are unchanged.
-        fq = fetch_finnhub_quote(symbol)
-        if fq and fq.get("price"):
-            cur = fq["price"]
-            prev = fq["prev_close"]
-            chg = fq["change_pct"]
-            price_source = "finnhub"
-        else:
-            cur = fmt_price(hist["Close"].iloc[-1])
-            prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
-            chg = round(((cur - prev) / prev) * 100, 2)
-            price_source = "yfinance"
-
+        cur = fmt_price(hist["Close"].iloc[-1])
+        prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
+        chg = round(((cur - prev) / prev) * 100, 2)
         pe_raw = info.get("trailingPE")
         pe = round(float(pe_raw), 2) if pe_raw else "N/A"
         tgt_raw = info.get("targetMeanPrice")
@@ -2246,7 +2156,6 @@ def compute_full_report(symbol):
             "company_summary": info.get("longBusinessSummary") or "",
             "price": cur,
             "change_pct": chg,
-            "price_source": price_source,
             "recommendation": rec,
             "verdict": verdict,
             "alert": alert,
@@ -2484,22 +2393,9 @@ def light_score(symbol):
         if hist.empty:
             return None
         info = t.info
-
-        # BACKEND UPGRADE: Finnhub real-time price fallback.
-        # Tries Finnhub for a live quote first; falls back to yfinance delayed data.
-        # All scoring logic below is unchanged.
-        fq = fetch_finnhub_quote(symbol)
-        if fq and fq.get("price"):
-            cur = fq["price"]
-            prev = fq["prev_close"]
-            chg = fq["change_pct"]
-            price_source = "finnhub"
-        else:
-            cur = fmt_price(hist["Close"].iloc[-1])
-            prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
-            chg = round(((cur - prev) / prev) * 100, 2)
-            price_source = "yfinance"
-
+        cur = fmt_price(hist["Close"].iloc[-1])
+        prev = fmt_price(hist["Close"].iloc[-2]) if len(hist) > 1 else cur
+        chg = round(((cur - prev) / prev) * 100, 2)
         pe_raw = info.get("trailingPE")
         pe = round(float(pe_raw), 2) if pe_raw else "N/A"
         tgt_raw = info.get("targetMeanPrice")
@@ -2521,7 +2417,6 @@ def light_score(symbol):
                 "conviction": "N/A",
                 "score": 0,
                 "verdict": "ETF",
-                "price_source": price_source,
             }
             set_cache("disc_" + symbol, res)
             return res
@@ -2616,7 +2511,6 @@ def light_score(symbol):
             "conviction": conviction,
             "score": score,
             "verdict": verdict,
-            "price_source": price_source,
         }
         set_cache("disc_" + symbol, res)
         return res
@@ -2740,7 +2634,7 @@ def scan():
         cand = [r for r in rows if num(r.get("change_pct")) and r["change_pct"] > 0]
         cand.sort(key=lambda r: r["change_pct"], reverse=True)
         for r in cand[:12]:
-            out.append(dict(r, reason="Up %s%% today, among the strongest movers in the group." % r["change_pct"])
+            out.append(dict(r, reason="Up %s%% today, among the strongest movers in the group." % r["change_pct"]))
 
     return jsonify({"lens": lens, "items": out})
 
@@ -3252,7 +3146,7 @@ def build_alerts(uid):
 @app.route("/alerts")
 def alerts():
     # Reads the logged in user's saved stocks, scores each one, and surfaces only the names
-    # that warrant a look right now. This is the in app feed. A push to your phone is the next layer.
+    # that warrant a look right now. This is the in app feed. A push to the phone is the next layer.
     u = current_user()
     if not u:
         return jsonify({"status": "logged_out", "alerts": []})
@@ -4117,250 +4011,7 @@ body{margin:0;background:#eef1f6;font-family:-apple-system,BlinkMacSystemFont,'S
     return Response(page, mimetype="text/html")
 
 
-# ============ BACKEND UPGRADE: New Endpoints ============
-
-@app.route("/api/market-snapshot")
-def market_snapshot():
-    """Combined real-time indices, top movers, trending names, and market context in one payload.
-    Reuses existing caches (light_score, _MOVERS, _TREND, ctx_^GSPC) so it is always fast and
-    never makes redundant external calls. Cached for 60 seconds for rapid polling."""
-    ckey = "market_snapshot"
-    cached = CACHE.get(ckey)
-    if cached and (time.time() - cached[1]) < 60:
-        return jsonify(cached[0])
-
-    # Indices — reuse light_score which now carries Finnhub real-time fallback
-    INDEX_SET = [("^GSPC", "S&P 500"), ("^IXIC", "NASDAQ"), ("^DJI", "DOW JONES"), ("^VIX", "VIX")]
-    indices = []
-    for sym, label in INDEX_SET:
-        r = light_score(sym)
-        if r and isinstance(r.get("price"), (int, float)):
-            indices.append({
-                "symbol": sym, "label": label,
-                "price": r.get("price"), "change_pct": r.get("change_pct"),
-                "price_source": r.get("price_source", "yfinance"),
-            })
-        else:
-            indices.append({"symbol": sym, "label": label, "price": None, "change_pct": None, "price_source": "N/A"})
-
-    # Top movers — read the existing cache only
-    movers = {"gainers": [], "losers": []}
-    if _MOVERS.get("data"):
-        movers = {
-            "gainers": (_MOVERS["data"].get("gainers") or [])[:5],
-            "losers": (_MOVERS["data"].get("losers") or [])[:5],
-        }
-
-    # Trending — read the existing cache only
-    trending = []
-    if _TREND.get("data"):
-        trending = (_TREND["data"].get("items") or [])[:5]
-
-    # Market context — read cached Gemini analysis only
-    market_context = get_cache("ctx_^GSPC")
-
-    payload = {
-        "indices": indices,
-        "movers": movers,
-        "trending": trending,
-        "market_context": market_context,
-        "data_timestamp": int(time.time()),
-    }
-    CACHE[ckey] = (payload, time.time())
-    return jsonify(payload)
-
-
-@app.route("/api/custom-signals")
-def custom_signals():
-    """Proprietary Apex Q Smart Money Composite Signal. Merges insider flow, congressional
-    trading, analyst revision momentum, and price momentum into a single composite score
-    with a plain-English read. Each component carries its own sub-score and direction so the
-    user can see exactly what is driving the composite. Educational only, never advice."""
-    symbol = request.args.get("symbol", "").strip().upper()
-    if not symbol:
-        return jsonify({"error": "No symbol provided"}), 400
-
-    ckey = "custom_signal_" + symbol
-    cached = get_cache(ckey)
-    if cached is not None:
-        return jsonify(cached)
-
-    report = compute_full_report(symbol)
-    if not report:
-        return jsonify({"error": "Could not analyze " + symbol}), 404
-
-    components = []
-    composite_score = 0
-
-    # 1. Insider Flow signal (-3 to +3)
-    insider_score = 0
-    ins = report.get("insider", [])
-    ins_buys = len([t for t in ins if t.get("is_clevel") and t.get("action") == "A" and t.get("kind") != "grant"])
-    ins_sells = len([t for t in ins if t.get("is_clevel") and t.get("action") == "D"])
-    if ins_buys >= 2:
-        insider_score = 3
-    elif ins_buys == 1:
-        insider_score = 2
-    elif ins_sells >= 4:
-        insider_score = -3
-    elif ins_sells >= 2:
-        insider_score = -2
-    elif ins_sells == 1:
-        insider_score = -1
-    composite_score += insider_score
-    components.append({
-        "name": "Insider Flow",
-        "score": insider_score, "max": 3,
-        "detail": "%d executive buy(s), %d executive sell(s)" % (ins_buys, ins_sells),
-        "signal": "bullish" if insider_score > 0 else ("bearish" if insider_score < 0 else "neutral"),
-    })
-
-    # 2. Congressional Flow signal (-2 to +2)
-    cong_score = 0
-    cong = report.get("congressional", [])
-    cong_buys = len([t for t in cong if "purchase" in str(t.get("action", "")).lower()])
-    cong_sells = len([t for t in cong if "sale" in str(t.get("action", "")).lower()])
-    cong_net = cong_buys - cong_sells
-    if cong_net >= 2:
-        cong_score = 2
-    elif cong_net == 1:
-        cong_score = 1
-    elif cong_net <= -2:
-        cong_score = -1
-    composite_score += cong_score
-    components.append({
-        "name": "Congressional Flow",
-        "score": cong_score, "max": 2,
-        "detail": "%d buy(s), %d sell(s) by lawmakers" % (cong_buys, cong_sells),
-        "signal": "bullish" if cong_score > 0 else ("bearish" if cong_score < 0 else "neutral"),
-    })
-
-    # 3. Analyst Momentum (-2 to +2)
-    analyst_score = 0
-    rec = report.get("recommendation", "hold").upper()
-    if rec in ("BUY", "STRONG_BUY"):
-        analyst_score = 2
-    elif rec in ("SELL", "STRONG_SELL"):
-        analyst_score = -2
-    fmp_grades = (report.get("fmp") or {}).get("grades", [])
-    recent_upgrades = len([g for g in fmp_grades if "up" in str(g.get("action", "")).lower()])
-    recent_downgrades = len([g for g in fmp_grades if "down" in str(g.get("action", "")).lower()])
-    if recent_upgrades > recent_downgrades and analyst_score < 1:
-        analyst_score = 1
-    elif recent_downgrades > recent_upgrades and analyst_score > -1:
-        analyst_score = -1
-    composite_score += analyst_score
-    components.append({
-        "name": "Analyst Momentum",
-        "score": analyst_score, "max": 2,
-        "detail": "Rating: %s, %d upgrade(s), %d downgrade(s)" % (rec.replace("_", " "), recent_upgrades, recent_downgrades),
-        "signal": "bullish" if analyst_score > 0 else ("bearish" if analyst_score < 0 else "neutral"),
-    })
-
-    # 4. Price Momentum (-3 to +3)
-    price_score = 0
-    chg = report.get("change_pct", 0)
-    if isinstance(chg, (int, float)):
-        if chg > 3:
-            price_score = 2
-        elif chg > 0:
-            price_score = 1
-        elif chg < -8:
-            price_score = -3
-        elif chg < -3:
-            price_score = -2
-        elif chg < 0:
-            price_score = -1
-    composite_score += price_score
-    components.append({
-        "name": "Price Momentum",
-        "score": price_score, "max": 3,
-        "detail": "%s%% today" % chg,
-        "signal": "bullish" if price_score > 0 else ("bearish" if price_score < 0 else "neutral"),
-    })
-
-    # Composite rating
-    max_possible = 10  # 3+2+2+3
-    if composite_score >= 5:
-        rating = "Strong Bullish"
-    elif composite_score >= 2:
-        rating = "Bullish"
-    elif composite_score >= -1:
-        rating = "Neutral"
-    elif composite_score >= -4:
-        rating = "Bearish"
-    else:
-        rating = "Strong Bearish"
-
-    # Plain English summary
-    bull = [c for c in components if c["signal"] == "bullish"]
-    bear = [c for c in components if c["signal"] == "bearish"]
-    if composite_score >= 2:
-        summary = "The Smart Money Composite reads %s on %s. " % (rating, symbol)
-        if bull:
-            summary += "Bullish signals from: " + ", ".join(c["name"] for c in bull) + ". "
-        if bear:
-            summary += "Partial caution from: " + ", ".join(c["name"] for c in bear) + ". "
-        summary += "Educational only, never advice."
-    elif composite_score <= -2:
-        summary = "The Smart Money Composite reads %s on %s. " % (rating, symbol)
-        if bear:
-            summary += "Bearish signals from: " + ", ".join(c["name"] for c in bear) + ". "
-        if bull:
-            summary += "Some support from: " + ", ".join(c["name"] for c in bull) + ". "
-        summary += "Educational only, never advice."
-    else:
-        summary = "The Smart Money Composite reads %s on %s. Signals are mixed across insider flow, congressional trading, analyst momentum, and price action. Educational only, never advice." % (rating, symbol)
-
-    payload = {
-        "symbol": symbol,
-        "composite_score": composite_score,
-        "max_score": max_possible,
-        "rating": rating,
-        "summary": summary,
-        "components": components,
-        "data_timestamp": int(time.time()),
-    }
-    set_cache(ckey, payload)
-    return jsonify(payload)
-
-
-@app.route("/api/stream/prices")
-def stream_prices():
-    """Server-Sent Events stream for live prices. Continuously sends updated prices for
-    requested symbols every 10 seconds. Uses Finnhub real-time quotes when available,
-    yfinance as fallback. The frontend subscribes with:
-    new EventSource('/api/stream/prices?symbols=AAPL,MSFT,NVDA')
-    Each event is a JSON object with symbol, price, change_pct, source, and timestamp.
-    The connection auto-closes after 5 minutes to prevent resource leaks."""
-    symbols_param = request.args.get("symbols", "")
-    syms = [s.strip().upper() for s in symbols_param.split(",") if s.strip()][:15]
-    if not syms:
-        syms = ["AAPL", "MSFT", "NVDA", "GOOGL", "TSLA"]
-
-    def generate():
-        start = time.time()
-        max_duration = 300  # 5 minutes max per connection
-        while time.time() - start < max_duration:
-            for sym in syms:
-                q = get_realtime_price(sym)
-                if q:
-                    data = json.dumps({
-                        "symbol": sym,
-                        "price": q["price"],
-                        "change_pct": q["change_pct"],
-                        "source": q["source"],
-                        "timestamp": int(time.time()),
-                    })
-                    yield "data: %s\n\n" % data
-            time.sleep(10)
-
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                             "Connection": "keep-alive"})
-
-
-# ============ END New Endpoints ============
+# CHUNK: removed for security. The /debug/ask endpoint exposed partial API keys and is gone.
 
 
 if __name__ == "__main__":
