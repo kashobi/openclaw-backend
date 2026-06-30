@@ -13,6 +13,21 @@ import io
 from functools import wraps
 from datetime import datetime, timedelta
 
+# ============ STRIPE PAYMENTS ============
+# Guarded import so a missing package never crashes boot. Add `stripe` to requirements.txt and
+# set the four STRIPE_ env vars. Until that is done, checkout returns a clean error, not a boot crash.
+try:
+    import stripe as _stripe
+    _sk = os.environ.get("STRIPE_SECRET_KEY", "")
+    if _sk:
+        _stripe.api_key = _sk
+except Exception:
+    _stripe = None
+STRIPE_PUBLISHABLE = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+# ============ END STRIPE PAYMENTS ============
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -1790,6 +1805,211 @@ def _attach_verdict_change(base, symbol):
     return out
 
 
+# ============ APEX Q ALPHA SCORE ============
+# Proprietary composite, 0 to 100, that folds momentum, fundamentals, insider and lawmaker
+# flow, sector strength, and news tone into one number. Educational only, never advice.
+# Note on the ceiling: by the scoring rules, insider and congressional max at 12 each, so the
+# practical top score is about 84. A reading of 70 or higher is therefore genuinely strong.
+SECTOR_ETF = {
+    "Technology": "XLK",
+    "Financial Services": "XLF",
+    "Healthcare": "XLV",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Energy": "XLE",
+    "Industrials": "XLI",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Basic Materials": "XLB",
+    "Communication Services": "XLC",
+}
+
+
+def _alpha_num(v):
+    """Coerce a value to float, or None if it is not a usable number."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _five_day_change(ticker):
+    """Five day percent change for a ticker, cached one hour. Returns float or None on failure."""
+    ckey = "fdc_" + ticker
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < 3600:
+        return cached[0]
+    try:
+        hist = yf.Ticker(ticker).history(period="5d")
+        if hist.empty or len(hist) < 2:
+            return None
+        first = float(hist["Close"].iloc[0])
+        last = float(hist["Close"].iloc[-1])
+        if first <= 0:
+            return None
+        chg = round(((last - first) / first) * 100.0, 2)
+        CACHE[ckey] = (chg, time.time())
+        return chg
+    except Exception as e:
+        logger.error("_five_day_change %s: %s" % (ticker, e))
+        return None
+
+
+def compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector):
+    """Return {'score': int 0..100, 'breakdown': [str, ...]}. Designed to never raise."""
+    breakdown = []
+
+    # a. Technical Momentum (0 to 20)
+    ec = _alpha_num(eff_chg)
+    if ec is None:
+        ec = 0.0
+    if ec > 2:
+        tech_raw = 5
+    elif ec > 0:
+        tech_raw = 3
+    elif ec > -2:
+        tech_raw = 1
+    else:
+        tech_raw = 0
+    tech = tech_raw * 4
+    if ec > 0:
+        move = "up %s%% today" % ec
+    elif ec < 0:
+        move = "down %s%% today" % abs(ec)
+    else:
+        move = "flat today"
+    breakdown.append("Technical Momentum: +%d pts (%s)" % (tech, move))
+
+    # b. Fundamental Health (0 to 20): PE up to 10, debt to equity up to 10
+    pe_num = _alpha_num(pe)
+    if pe_num is None:
+        pe_pts, pe_note = 4, "PE not available"
+    elif pe_num <= 0:
+        pe_pts, pe_note = 2, "negative earnings"
+    elif pe_num < 15:
+        pe_pts, pe_note = 10, "PE %.1f, inexpensive" % pe_num
+    elif pe_num < 25:
+        pe_pts, pe_note = 7, "PE %.1f, fair" % pe_num
+    elif pe_num < 40:
+        pe_pts, pe_note = 4, "PE %.1f, rich" % pe_num
+    else:
+        pe_pts, pe_note = 2, "PE %.1f, very rich" % pe_num
+    de_num = _alpha_num(debt_to_equity)
+    if de_num is None:
+        de_pts, de_note = 4, "debt to equity not available"
+    elif de_num < 0:
+        de_pts, de_note = 2, "negative equity"
+    elif de_num < 0.5:
+        de_pts, de_note = 10, "low debt"
+    elif de_num < 1.0:
+        de_pts, de_note = 7, "moderate debt"
+    elif de_num < 2.0:
+        de_pts, de_note = 4, "elevated debt"
+    else:
+        de_pts, de_note = 2, "high debt"
+    fund = pe_pts + de_pts
+    breakdown.append("Fundamental Health: +%d pts (%s, %s)" % (fund, pe_note, de_note))
+
+    # c. Insider Sentiment (0 to 20)
+    ib = ins_buys or 0
+    isl = ins_sells or 0
+    if ib >= 2:
+        ins = 12
+    elif ib == 1:
+        ins = 6
+    else:
+        ins = 0
+    if isl >= 3:
+        ins -= 6
+    elif isl >= 1:
+        ins -= 3
+    ins = max(0, min(20, ins))
+    if ib >= 1 and isl == 0:
+        ins_note = "%d executive buy(s)" % ib
+    elif ib >= 1 and isl >= 1:
+        ins_note = "%d buy(s) against %d sell(s) by executives" % (ib, isl)
+    elif isl >= 1:
+        ins_note = "%d executive sell(s), no buys" % isl
+    else:
+        ins_note = "no notable executive trades"
+    breakdown.append("Insider Sentiment: +%d pts (%s)" % (ins, ins_note))
+
+    # d. Congressional Heat (0 to 20)
+    cb = cong_buys or 0
+    cs = cong_sells or 0
+    if cb >= 2:
+        cong = 12
+    elif cb == 1:
+        cong = 6
+    else:
+        cong = 0
+    if cs >= 2:
+        cong -= 6
+    elif cs == 1:
+        cong -= 3
+    cong = max(0, min(20, cong))
+    if cb >= 1 and cs == 0:
+        cong_note = "%d lawmaker buy(s)" % cb
+    elif cb >= 1 and cs >= 1:
+        cong_note = "%d buy(s) against %d sell(s) by lawmakers" % (cb, cs)
+    elif cs >= 1:
+        cong_note = "%d lawmaker sell(s), no buys" % cs
+    else:
+        cong_note = "no recent lawmaker trades"
+    breakdown.append("Congressional Heat: +%d pts (%s)" % (cong, cong_note))
+
+    # e. Sector Tailwinds (0 to 10)
+    etf = SECTOR_ETF.get(sector or "")
+    if not etf:
+        sector_pts, sector_note = 5, "sector not mapped, neutral"
+    else:
+        etf_chg = _five_day_change(etf)
+        spx_chg = _five_day_change("^GSPC")
+        if etf_chg is None or spx_chg is None:
+            sector_pts, sector_note = 5, "%s data unavailable" % etf
+        elif etf_chg > spx_chg:
+            sector_pts, sector_note = 10, "%s up %s%% over 5 days, leading the market" % (etf, etf_chg)
+        elif etf_chg > 0:
+            sector_pts, sector_note = 5, "%s up %s%% over 5 days, trailing the market" % (etf, etf_chg)
+        else:
+            sector_pts, sector_note = 0, "%s down over 5 days" % etf
+    breakdown.append("Sector Tailwinds: +%d pts (%s)" % (sector_pts, sector_note))
+
+    # f. News Sentiment (0 to 10)
+    pos_words = ["buy", "beat", "upgrade", "positive"]
+    neg_words = ["sell", "miss", "downgrade", "negative"]
+    pos = neg = 0
+    for n in (news or []):
+        head = str(n.get("headline", "")).lower()
+        for w in pos_words:
+            pos += len(re.findall(r"\b" + w + r"(s|es|ed|ing)?\b", head))
+        for w in neg_words:
+            neg += len(re.findall(r"\b" + w + r"(s|es|ed|ing)?\b", head))
+    total_words = pos + neg
+    if not news:
+        news_pts, news_note = 5, "no recent headlines"
+    elif total_words == 0:
+        news_pts, news_note = 5, "headlines are neutral"
+    else:
+        ratio = pos / float(total_words)
+        if ratio > 0.6:
+            news_pts, news_note = 10, "headlines lean positive"
+        elif ratio >= 0.4:
+            news_pts, news_note = 5, "headlines are mixed"
+        else:
+            news_pts, news_note = 0, "headlines lean negative"
+    breakdown.append("News Sentiment: +%d pts (%s)" % (news_pts, news_note))
+
+    total = tech + fund + ins + cong + sector_pts + news_pts
+    total = max(0, min(100, int(round(total))))
+    return {"score": total, "breakdown": breakdown}
+# ============ END APEX Q ALPHA SCORE ============
+
+
 def compute_full_report(symbol):
     cached = get_cache(f"full_{symbol}")
     if cached:
@@ -2325,6 +2545,15 @@ def compute_full_report(symbol):
             "recent_actions": recent_actions,
         }
 
+        try:
+            _alpha = compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector_name)
+            alpha_score = _alpha["score"]
+            alpha_breakdown = _alpha["breakdown"]
+        except Exception as e:
+            logger.error("alpha score %s: %s" % (symbol, e))
+            alpha_score = 0
+            alpha_breakdown = []
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -2339,6 +2568,8 @@ def compute_full_report(symbol):
             "verdict_signal_reason": verdict_reason,
             "conviction": conviction,
             "score": score,
+            "alpha_score": alpha_score,
+            "alpha_breakdown": alpha_breakdown,
             "pe_ratio": pe,
             "analyst_target": tgt,
             "market_cap": market_cap,
@@ -4556,6 +4787,57 @@ def export_trades():
     fname = "apexq_%s_trades.csv" % symbol
     return Response(out, mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=%s" % fname})
+@app.route("/create-checkout-session", methods=["POST"])
+def create_checkout():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in", "message": "Log in to upgrade."}), 401
+    if _stripe is None or not STRIPE_PRICE_ID or not os.environ.get("STRIPE_SECRET_KEY"):
+        return jsonify({"error": "payments_unavailable", "message": "Payments are not set up yet."}), 503
+    try:
+        # Named checkout, not session, so it never shadows the Flask session object.
+        checkout = _stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            mode="subscription",
+            line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+            success_url=request.host_url + "?upgraded=true",
+            cancel_url=request.host_url,
+            client_reference_id=str(u["id"]),
+        )
+        return jsonify({"url": checkout.url})
+    except Exception as e:
+        logger.error("create_checkout error: %s" % e)
+        return jsonify({"error": "checkout_failed", "message": str(e)}), 500
+
+
+@app.route("/stripe-webhook", methods=["POST"])
+def stripe_webhook():
+    if _stripe is None:
+        return "stripe unavailable", 503
+    payload = request.get_data(as_text=True)
+    sig = request.headers.get("Stripe-Signature")
+    try:
+        event = _stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception as e:
+        logger.error("stripe webhook verify failed: %s" % e)
+        return "invalid", 400
+    if event.get("type") == "checkout.session.completed":
+        sid = event["data"]["object"].get("client_reference_id")
+        if sid:
+            conn = get_db()
+            if conn is not None:
+                try:
+                    cur = conn.cursor()
+                    cur.execute("UPDATE users SET tier = 'premium' WHERE id = %s", (int(sid),))
+                    conn.commit()
+                    cur.close()
+                except Exception as e:
+                    logger.error("stripe webhook db error: %s" % e)
+                finally:
+                    conn.close()
+    return "ok", 200
+
+
 # ============ END PREMIUM ROUTES ============
 
 
