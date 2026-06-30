@@ -699,6 +699,26 @@ body{
 .upgradeList li::before{content:"\2713";position:absolute;left:0;top:0;color:var(--accent);font-weight:800;}
 .upgradeLater{width:100%;background:none;border:none;color:var(--muted);font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;cursor:pointer;margin-top:10px;padding:6px;}
 .upgradeLater:hover{color:var(--text);}
+.upgradeCta{background:var(--accent);color:#0c0f12;border:none;box-shadow:0 6px 18px rgba(34,197,94,.4);}
+.upgradeCta:hover{background:var(--accent-d);}
+.upgradePrice{font-size:18px;font-weight:800;color:var(--text);margin:2px 0 14px;font-family:'JetBrains Mono',monospace;}
+.alphaCard .alphaWrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap;}
+.alphaGaugeBox{flex:0 0 auto;}
+.alphaGauge{width:138px;height:138px;display:block;}
+.alphaTrack{stroke:var(--s2);}
+.alphaArc{stroke:var(--accent);transition:stroke-dashoffset .8s ease,stroke .3s ease;}
+.alphaNum{font-family:'JetBrains Mono',monospace;font-size:34px;font-weight:800;fill:var(--text);}
+.alphaOf{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;fill:var(--muted);}
+.alphaSide{flex:1 1 200px;min-width:180px;}
+.alphaLabel{font-size:20px;font-weight:800;color:var(--text);margin-bottom:5px;letter-spacing:-.3px;}
+.alphaSub{font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:13px;}
+.alphaToggle{background:var(--s2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;}
+.alphaToggle:hover{background:var(--surface);border-color:var(--accent);}
+.alphaBreak{margin-top:14px;display:flex;flex-direction:column;gap:8px;}
+.alphaRow{display:flex;align-items:flex-start;gap:10px;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text);line-height:1.45;}
+.alphaRow .ard{flex:0 0 auto;width:7px;height:7px;border-radius:50%;margin-top:6px;background:var(--accent);}
+.sgRight{display:flex;align-items:center;gap:7px;}
+.sgAlpha{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;font-family:'JetBrains Mono',monospace;border:1px solid var(--border);display:none;letter-spacing:.2px;background:var(--s2);}
 </style>
 </head>
 <body>
@@ -708,6 +728,7 @@ body{
   <div class="hdr-right">
     <div class="badge"><div class="dot"></div>LIVE INTEL ACTIVE</div>
     <div class="premiumBadge" id="premiumBadge" style="display:none">&#11088; Premium</div>
+    <button id="headerUpgradeBtn" class="acctBtn upgradeCta" style="display:none">&#11088; Upgrade</button>
     <button id="acctBtn" class="acctBtn">Log In</button>
   </div>
 </div>
@@ -797,6 +818,25 @@ body{
         <div class="vrlist" id="vrl"></div>
       </div>
       <div id="stockSections">
+      <div class="ic alphaCard" id="alphaCard" style="display:none">
+        <div class="ih"><div class="it">&#9889; Apex Q Alpha Score</div></div>
+        <div class="alphaWrap">
+          <div class="alphaGaugeBox">
+            <svg class="alphaGauge" id="alphaGauge" viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="alphaTrack" cx="60" cy="60" r="52" fill="none" stroke-width="11"></circle>
+              <circle class="alphaArc" id="alphaArc" cx="60" cy="60" r="52" fill="none" stroke-width="11" stroke-linecap="round" transform="rotate(-90 60 60)"></circle>
+              <text class="alphaNum" id="alphaNum" x="60" y="56" text-anchor="middle" dominant-baseline="middle">--</text>
+              <text class="alphaOf" x="60" y="80" text-anchor="middle" dominant-baseline="middle">/ 100</text>
+            </svg>
+          </div>
+          <div class="alphaSide">
+            <div class="alphaLabel" id="alphaLabel">Composite Signal</div>
+            <div class="alphaSub">One number blending momentum, fundamentals, insider and lawmaker flow, sector strength, and news tone. Educational only, not advice.</div>
+            <button class="alphaToggle" id="alphaToggle" type="button" onclick="toggleAlphaBreak()">Show how this was calculated</button>
+          </div>
+        </div>
+        <div class="alphaBreak" id="alphaBreak" style="display:none"></div>
+      </div>
       <div class="ic" id="aboutCard" style="display:none">
         <div class="ih"><div class="it" id="aboutTitle">About</div></div>
         <div class="itxt" id="aboutBody"></div>
@@ -1060,6 +1100,7 @@ body{
       <li>CSV export of insider and congressional trades</li>
       <li>Unlimited portfolio holdings</li>
     </ul>
+    <div class="upgradePrice">$12 / month</div>
     <button class="authSubmit" id="upgradeBtn">Upgrade to Premium</button>
     <button class="upgradeLater" id="upgradeLater">Maybe later</button>
   </div>
@@ -1810,6 +1851,59 @@ function loadHomeContext(){
   }).catch(function(){ card.style.display = "none"; });
 }
 
+function alphaColor(s){
+  if(s < 40) return "#ef4444";
+  if(s < 70) return "#f59e0b";
+  return "#22c55e";
+}
+function alphaLabel(s){
+  if(s < 40) return "Weak Signal";
+  if(s < 55) return "Mixed Signal";
+  if(s < 70) return "Constructive";
+  if(s < 80) return "Strong Signal";
+  return "Elite Signal";
+}
+function toggleAlphaBreak(){
+  var box = document.getElementById("alphaBreak");
+  var tog = document.getElementById("alphaToggle");
+  if(!box) return;
+  var open = box.style.display !== "none";
+  box.style.display = open ? "none" : "flex";
+  if(tog){ tog.textContent = open ? "Show how this was calculated" : "Hide breakdown"; }
+}
+function renderAlpha(d){
+  var card = document.getElementById("alphaCard");
+  if(!card) return;
+  var s = d ? d.alpha_score : null;
+  if(typeof s !== "number" || isNaN(s)){ card.style.display = "none"; return; }
+  s = Math.max(0, Math.min(100, Math.round(s)));
+  card.style.display = "";
+  var col = alphaColor(s);
+  var C = 2 * Math.PI * 52;
+  var arc = (s / 100) * C;
+  var arcEl = document.getElementById("alphaArc");
+  if(arcEl){
+    arcEl.setAttribute("stroke", col);
+    arcEl.setAttribute("stroke-dasharray", C.toFixed(1));
+    arcEl.setAttribute("stroke-dashoffset", (C - arc).toFixed(1));
+  }
+  var numEl = document.getElementById("alphaNum");
+  if(numEl){ numEl.textContent = s; numEl.setAttribute("fill", col); }
+  var lab = document.getElementById("alphaLabel");
+  if(lab){ lab.textContent = alphaLabel(s); lab.style.color = col; }
+  var box = document.getElementById("alphaBreak");
+  if(box){
+    var items = (d && d.alpha_breakdown) ? d.alpha_breakdown : [];
+    var h = "";
+    for(var i=0;i<items.length;i++){
+      h += "<div class=\"alphaRow\"><span class=\"ard\" style=\"background:" + col + "\"></span><span>" + esc(items[i]) + "</span></div>";
+    }
+    box.innerHTML = h;
+    box.style.display = "none";
+  }
+  var tog = document.getElementById("alphaToggle");
+  if(tog){ tog.textContent = "Show how this was calculated"; }
+}
 function run(){
   var val = document.getElementById("si").value.trim();
   if(!val) return;
@@ -1841,6 +1935,7 @@ function run(){
     }
     document.getElementById("stockSections").style.display = "";
     document.getElementById("etfSections").style.display = "none";
+    renderAlpha(d);
 
     document.getElementById("sym").textContent = d.symbol || val;
     document.getElementById("sfull").textContent = d.name || val;
@@ -2466,7 +2561,7 @@ function renderWatchCards(items){
     var nm = (it.name && it.name !== it.symbol) ? it.name : "";
     return "<div class=\"sg watchCard\" data-sym=\"" + esc(it.symbol) + "\">"
       + "<button class=\"watchRemove\" data-remove=\"" + esc(it.symbol) + "\" aria-label=\"Remove\">&times;</button>"
-      + "<div class=\"sgtop\"><div class=\"sgsym\">" + esc(it.symbol) + "</div><div class=\"sgv loading\" id=\"wv_" + sid + "\">&#8230;</div></div>"
+      + "<div class=\"sgtop\"><div class=\"sgsym\">" + esc(it.symbol) + "</div><div class=\"sgRight\"><span class=\"sgAlpha\" id=\"wa_" + sid + "\"></span><div class=\"sgv loading\" id=\"wv_" + sid + "\">&#8230;</div></div></div>"
       + "<div class=\"sgi\" id=\"wi_" + sid + "\">" + (nm ? esc(nm) : "Tap to open report") + "</div></div>";
   }).join("");
 }
@@ -2476,6 +2571,19 @@ function fillWatchCard(it){
   return fetch(API + "/analyze?symbol=" + encodeURIComponent(it.symbol)).then(function(r){ return r.json(); }).then(function(d){
     var v = document.getElementById("wv_" + sid);
     var i = document.getElementById("wi_" + sid);
+    var a = document.getElementById("wa_" + sid);
+    if(a){
+      if(d && typeof d.alpha_score === "number" && !isNaN(d.alpha_score)){
+        var as = Math.max(0, Math.min(100, Math.round(d.alpha_score)));
+        var ac = as < 40 ? "#ef4444" : (as < 70 ? "#f59e0b" : "#22c55e");
+        a.textContent = "\u03B1 " + as;
+        a.style.color = ac;
+        a.style.borderColor = ac;
+        a.style.display = "inline-block";
+      } else {
+        a.style.display = "none";
+      }
+    }
     if(v){
       if(d && d.verdict){
         var vc = d.verdict === "APPROVE" ? "va" : (d.verdict === "PASS" ? "vp" : "vw");
@@ -3540,8 +3648,11 @@ if(_alertBannerEl){ _alertBannerEl.addEventListener("click", function(){ showVie
 
 // ============ PREMIUM TIER UI ============
 function applyPremiumUI(){
+  var prem = (currentUser && currentUser.tier === "premium");
   var b = document.getElementById("premiumBadge");
-  if(b){ b.style.display = (currentUser && currentUser.tier === "premium") ? "flex" : "none"; }
+  if(b){ b.style.display = prem ? "flex" : "none"; }
+  var up = document.getElementById("headerUpgradeBtn");
+  if(up){ up.style.display = (currentUser && !prem) ? "inline-block" : "none"; }
 }
 
 function renderUsageBar(id, label, info, prem){
@@ -3596,21 +3707,12 @@ function closeUpgradeModal(){
 function doUpgrade(){
   if(!currentUser){ closeUpgradeModal(); openAuth("login"); return; }
   var btn = document.getElementById("upgradeBtn");
-  if(btn){ btn.disabled = true; btn.textContent = "Upgrading..."; }
-  fetch(API + "/upgrade", {method: "POST", credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+  if(btn){ btn.disabled = true; btn.textContent = "Redirecting to checkout..."; }
+  fetch(API + "/create-checkout-session", {method: "POST", credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(d && d.url){ window.location.href = d.url; return; }
     if(btn){ btn.disabled = false; btn.textContent = "Upgrade to Premium"; }
-    if(d && d.ok){
-      if(currentUser){ currentUser.tier = "premium"; }
-      applyPremiumUI();
-      refreshUsage();
-      closeUpgradeModal();
-      showToast("Welcome to Premium. Everything is unlocked.");
-    } else if(d && d.error === "not_logged_in"){
-      closeUpgradeModal();
-      openAuth("login");
-    } else {
-      showToast((d && d.message) ? d.message : "Could not upgrade. Try again.");
-    }
+    if(d && d.error === "not_logged_in"){ closeUpgradeModal(); openAuth("login"); return; }
+    showToast((d && d.message) ? d.message : "Could not start checkout. Try again.");
   }).catch(function(){
     if(btn){ btn.disabled = false; btn.textContent = "Upgrade to Premium"; }
     showToast("Connection issue. Try again.");
@@ -3626,8 +3728,46 @@ function doUpgrade(){
   if(btn){ btn.addEventListener("click", doUpgrade); }
   var ov = document.getElementById("upgradeOverlay");
   if(ov){ ov.addEventListener("click", function(e){ if(e.target === ov){ closeUpgradeModal(); } }); }
+  var hup = document.getElementById("headerUpgradeBtn");
+  if(hup){ hup.addEventListener("click", function(){ showUpgradeModal(); }); }
 })();
 // ============ END PREMIUM TIER UI ============
+
+// ============ STRIPE RETURN + GLOBAL 402 ============
+// Global safety net: any 402 from a premium gate opens the upgrade modal. Native fetch is
+// captured FIRST, then wrapped, so the wrapper never calls itself. This is the ordering fix.
+window._origFetch = window.fetch.bind(window);
+window.fetch = function(url, options){
+  return window._origFetch(url, options).then(function(r){
+    if(r && r.status === 402 && typeof showUpgradeModal === "function"){ showUpgradeModal(); }
+    return r;
+  });
+};
+
+// After a successful Stripe checkout the user returns with ?upgraded=true. The webhook flips the
+// tier server side, so here we poll /auth/me a few times until it reads premium, then refresh the UI.
+(function(){
+  if(!/[?&]upgraded=true/.test(window.location.search)){ return; }
+  showToast("Payment received. Activating Premium...");
+  if(window.history && window.history.replaceState){
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+  var tries = 0;
+  var poll = setInterval(function(){
+    tries++;
+    window._origFetch(API + "/auth/me", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+      if(d && d.user && d.user.tier === "premium"){
+        currentUser = d.user;
+        applyPremiumUI();
+        refreshUsage();
+        showToast("Welcome to Premium. Everything is unlocked.");
+        clearInterval(poll);
+      }
+    }).catch(function(){});
+    if(tries >= 6){ clearInterval(poll); }
+  }, 2000);
+})();
+// ============ END STRIPE RETURN + GLOBAL 402 ============
 
 refreshMe();
 loadTrending();
