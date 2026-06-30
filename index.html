@@ -682,6 +682,23 @@ body{
 @media(max-width:768px){
   .tabbar{background:rgba(21,24,30,.9);border-top:1px solid var(--border);box-shadow:0 -4px 22px rgba(0,0,0,.4);}
 }
+
+/* ---------- PREMIUM TIER UI ---------- */
+.premiumBadge{display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#1a1205;border-radius:999px;padding:6px 14px;font-size:11px;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:.5px;box-shadow:0 4px 14px rgba(245,158,11,.4);white-space:nowrap;}
+.usageBar{font-size:12px;font-weight:700;color:var(--muted);font-family:'JetBrains Mono',monospace;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:9px 14px;margin:4px 2px 12px;}
+.usageBar.locked{color:var(--yellow);border-color:var(--yellow);background:var(--ybg);cursor:pointer;}
+.usageBar.prem{color:var(--accent);border-color:var(--accent);background:rgba(34,197,94,.1);}
+.usageBar .usageUp{color:var(--accent);text-decoration:underline;}
+.upgradeBox{text-align:center;max-width:404px;}
+.upgradeCrown{font-size:42px;margin:4px 0 6px;}
+.upgradeTitle{font-size:21px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spacing:-.3px;}
+.upgradeMsg{font-size:14px;color:var(--muted);line-height:1.55;margin-bottom:14px;font-weight:500;}
+.upgradeReason{font-size:12.5px;color:var(--yellow);background:var(--ybg);border:1px solid var(--yellow);border-radius:11px;padding:9px 12px;margin-bottom:14px;line-height:1.45;font-weight:600;}
+.upgradeList{list-style:none;text-align:left;margin:0 0 16px;padding:0;display:flex;flex-direction:column;gap:9px;}
+.upgradeList li{font-size:13.5px;color:var(--text);font-weight:600;padding-left:26px;position:relative;line-height:1.4;}
+.upgradeList li::before{content:"\2713";position:absolute;left:0;top:0;color:var(--accent);font-weight:800;}
+.upgradeLater{width:100%;background:none;border:none;color:var(--muted);font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;cursor:pointer;margin-top:10px;padding:6px;}
+.upgradeLater:hover{color:var(--text);}
 </style>
 </head>
 <body>
@@ -690,6 +707,7 @@ body{
   <div class="logo"><div class="lmark">&#9889;</div><div class="lname">Apex <span>Q</span></div></div>
   <div class="hdr-right">
     <div class="badge"><div class="dot"></div>LIVE INTEL ACTIVE</div>
+    <div class="premiumBadge" id="premiumBadge" style="display:none">&#11088; Premium</div>
     <button id="acctBtn" class="acctBtn">Log In</button>
   </div>
 </div>
@@ -884,6 +902,7 @@ body{
     <button class="lens" data-lens="insiders">Insiders Buying</button>
   </div>
   <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names are coming as we expand the universe. Educational only, never advice.</div>
+  <div class="usageBar" id="scanUsage" style="display:none"></div>
   <div class="loading" id="scanLoad">Scanning the market...</div>
   <div id="scanResults"></div>
 </div>
@@ -972,6 +991,7 @@ body{
     <button class="askChip askNew" id="askNewBtn">New chat</button>
   </div>
   <div class="askChat" id="askChat"><div class="askEmpty">Ask a question about a stock to start a conversation.</div></div>
+  <div class="usageBar" id="askUsage" style="display:none"></div>
   <div class="askInputs">
     <div class="acWrap"><input class="cmpInp" id="askSym" type="text" placeholder="Ticker or company name" autocomplete="off"/><div class="acx" id="acAsk"></div></div>
     <input class="cmpInp" id="askQ" type="text" placeholder="Your question, like why is this a watch" autocomplete="off"/>
@@ -1025,6 +1045,23 @@ body{
     <div class="newsModalSource" id="newsModalSource"></div>
     <div class="newsModalBody" id="newsModalBody"></div>
     <a class="newsModalLink" id="newsModalLink" href="#" target="_blank" rel="noopener noreferrer">Read full article</a>
+  </div>
+</div>
+<div class="authOverlay" id="upgradeOverlay">
+  <div class="authBox upgradeBox">
+    <button class="authClose" id="upgradeClose">&times;</button>
+    <div class="upgradeCrown">&#11088;</div>
+    <div class="upgradeTitle">This is a Premium feature</div>
+    <div class="upgradeMsg">Upgrade to unlock unlimited scans, ETF reports, data exports, and more.</div>
+    <div class="upgradeReason" id="upgradeReason" style="display:none"></div>
+    <ul class="upgradeList">
+      <li>Unlimited scans and questions</li>
+      <li>ETF reports and deeper data</li>
+      <li>CSV export of insider and congressional trades</li>
+      <li>Unlimited portfolio holdings</li>
+    </ul>
+    <button class="authSubmit" id="upgradeBtn">Upgrade to Premium</button>
+    <button class="upgradeLater" id="upgradeLater">Maybe later</button>
   </div>
 </div>
 <script>
@@ -2405,6 +2442,8 @@ function refreshMe(){
     loadAlerts();
     _dashCache = null;
     loadDashboard();
+    applyPremiumUI();
+    refreshUsage();
   }).catch(function(){});
 }
 
@@ -2882,8 +2921,9 @@ function addHolding(){
     if(res && res.ok){
       symEl.value = ""; shEl.value = ""; coEl.value = "";
       loadPortfolio();
-    } else if(res && res.error === "free_limit"){
-      showMsg(res.message || "Free accounts can track up to 5 holdings.");
+    } else if(res && (res.error === "premium_required" || res.error === "free_limit")){
+      showMsg(res.message || "Upgrade to Premium for unlimited holdings.");
+      showUpgradeModal(res.message);
     } else if(res && res.error === "not_logged_in"){
       openAuth("login");
     } else {
@@ -2960,8 +3000,9 @@ if(_addPortSubmit){
         var form = document.getElementById("addPortForm");
         if(form) form.style.display = "none";
         if(typeof _portData !== "undefined"){ _portData = null; }
-      } else if(res && res.error === "free_limit"){
-        showToast(res.message || "Free accounts can track up to 5 holdings");
+      } else if(res && (res.error === "premium_required" || res.error === "free_limit")){
+        showToast(res.message || "Upgrade to Premium for unlimited holdings");
+        showUpgradeModal(res.message);
       } else if(res && res.error === "not_logged_in"){
         openAuth("login");
       } else {
@@ -3015,6 +3056,8 @@ function loadScan(lens){
   if(res){ res.innerHTML = ""; }
   fetch(API + "/scan?lens=" + encodeURIComponent(lens)).then(function(r){ return r.json(); }).then(function(d){
     if(load){ load.classList.remove("on"); }
+    if(d && d.error === "premium_required"){ showUpgradeModal(d.message); refreshUsage(); return; }
+    refreshUsage();
     var items = (d && d.items) ? d.items : [];
     if(!res){ return; }
     if(!items.length){ res.innerHTML = "<div class=\"scanEmpty\">No names match this lens right now. Markets shift through the day, so check back later or try another lens.</div>"; return; }
@@ -3379,10 +3422,12 @@ function sendAsk(){
   var hist = JSON.stringify(askHistory.slice(0, -1));
   fetch(API + "/ask?symbol=" + encodeURIComponent(currentAskSymbol) + "&q=" + encodeURIComponent(q) + "&history=" + encodeURIComponent(hist)).then(function(r){ return r.json(); }).then(function(d){
     removeTyping();
+    if(d && d.error === "premium_required"){ askHistory.pop(); showUpgradeModal(d.message); refreshUsage(); return; }
     var a = (d && d.answer) ? d.answer : "No answer came back. Try rephrasing the question.";
     if(d && d.symbol){ currentAskSymbol = String(d.symbol).toUpperCase(); setAskLock(currentAskSymbol); }
     askHistory.push({role: "assistant", content: a});
     addBotMsg(a, d && d.verdict);
+    refreshUsage();
   }).catch(function(){
     removeTyping();
     addBotMsg("Could not get an answer right now. Try again.", null, true);
@@ -3472,12 +3517,14 @@ function showView(name){
   stopPortfolioRefresh();
   if(name === "insights"){
     loadCongressInsights();
+    refreshUsage();
     if(!_scanLoaded){ _scanLoaded = true; loadScan("strong"); }
   }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
   if(name === "watch"){ loadAlerts(); loadSubscription(); var _ds = document.getElementById("dataSec"); if(_ds) _ds.style.display = currentUser ? "" : "none"; }
   if(name === "portfolio"){ loadPortfolio(); _portTimer = setInterval(loadPortfolio, 60000); }
   if(name === "ask"){
+    refreshUsage();
     var asb = document.getElementById("askSym");
     if(asb && !asb.value.trim() && !askHistory.length && currentSymbol){ asb.value = currentSymbol; }
   }
@@ -3490,6 +3537,97 @@ for(var _t=0; _t<_tabs.length; _t++){
 }
 var _alertBannerEl = document.getElementById("alertBanner");
 if(_alertBannerEl){ _alertBannerEl.addEventListener("click", function(){ showView("watch"); }); }
+
+// ============ PREMIUM TIER UI ============
+function applyPremiumUI(){
+  var b = document.getElementById("premiumBadge");
+  if(b){ b.style.display = (currentUser && currentUser.tier === "premium") ? "flex" : "none"; }
+}
+
+function renderUsageBar(id, label, info, prem){
+  var el = document.getElementById(id);
+  if(!el){ return; }
+  if(prem){
+    el.className = "usageBar prem";
+    el.innerHTML = "&#11088; Premium &middot; unlimited " + label;
+    el.style.display = "block";
+    el.onclick = null;
+    return;
+  }
+  var used = (info && typeof info.used === "number") ? info.used : 0;
+  var lim = (info && typeof info.limit === "number") ? info.limit : 3;
+  if(used >= lim){
+    el.className = "usageBar locked";
+    el.innerHTML = "&#128274; " + used + "/" + lim + " " + label + " used today &middot; <span class=\"usageUp\">Upgrade for unlimited</span>";
+    el.onclick = function(){ showUpgradeModal("You have reached today's free " + label + " limit."); };
+  } else {
+    el.className = "usageBar";
+    el.innerHTML = used + "/" + lim + " " + label + " used today";
+    el.onclick = null;
+  }
+  el.style.display = "block";
+}
+
+function refreshUsage(){
+  fetch(API + "/usage", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(!d){ return; }
+    var prem = !!d.premium;
+    renderUsageBar("scanUsage", "scans", d.scan, prem);
+    renderUsageBar("askUsage", "questions", d.ask, prem);
+  }).catch(function(){});
+}
+
+function showUpgradeModal(reason){
+  var ov = document.getElementById("upgradeOverlay");
+  if(!ov){ return; }
+  var r = document.getElementById("upgradeReason");
+  if(r){
+    if(reason && String(reason).trim()){ r.textContent = reason; r.style.display = "block"; }
+    else { r.textContent = ""; r.style.display = "none"; }
+  }
+  ov.classList.add("on");
+}
+
+function closeUpgradeModal(){
+  var ov = document.getElementById("upgradeOverlay");
+  if(ov){ ov.classList.remove("on"); }
+}
+
+function doUpgrade(){
+  if(!currentUser){ closeUpgradeModal(); openAuth("login"); return; }
+  var btn = document.getElementById("upgradeBtn");
+  if(btn){ btn.disabled = true; btn.textContent = "Upgrading..."; }
+  fetch(API + "/upgrade", {method: "POST", credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(btn){ btn.disabled = false; btn.textContent = "Upgrade to Premium"; }
+    if(d && d.ok){
+      if(currentUser){ currentUser.tier = "premium"; }
+      applyPremiumUI();
+      refreshUsage();
+      closeUpgradeModal();
+      showToast("Welcome to Premium. Everything is unlocked.");
+    } else if(d && d.error === "not_logged_in"){
+      closeUpgradeModal();
+      openAuth("login");
+    } else {
+      showToast((d && d.message) ? d.message : "Could not upgrade. Try again.");
+    }
+  }).catch(function(){
+    if(btn){ btn.disabled = false; btn.textContent = "Upgrade to Premium"; }
+    showToast("Connection issue. Try again.");
+  });
+}
+
+(function(){
+  var c = document.getElementById("upgradeClose");
+  if(c){ c.addEventListener("click", closeUpgradeModal); }
+  var later = document.getElementById("upgradeLater");
+  if(later){ later.addEventListener("click", closeUpgradeModal); }
+  var btn = document.getElementById("upgradeBtn");
+  if(btn){ btn.addEventListener("click", doUpgrade); }
+  var ov = document.getElementById("upgradeOverlay");
+  if(ov){ ov.addEventListener("click", function(e){ if(e.target === ov){ closeUpgradeModal(); } }); }
+})();
+// ============ END PREMIUM TIER UI ============
 
 refreshMe();
 loadTrending();
