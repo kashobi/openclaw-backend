@@ -3256,6 +3256,196 @@ def congress_insights():
     return jsonify(payload)
 
 
+def _price_pairs(ticker_sym, start_date, end_date):
+    """Sorted [(date, close)] for a ticker, start inclusive and end exclusive. Cached one hour.
+    Returns [] on any failure so one bad ticker can never break a whole backtest."""
+    ckey = "pp_" + ticker_sym + "_" + start_date.isoformat() + "_" + end_date.isoformat()
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < 3600:
+        return cached[0]
+    pairs = []
+    try:
+        hh = yf.Ticker(ticker_sym).history(start=start_date.isoformat(), end=end_date.isoformat(), timeout=10)
+        if hh is not None and not hh.empty:
+            closes = hh["Close"].tolist()
+            idx = hh.index.tolist()
+            for i in range(len(idx)):
+                try:
+                    d = idx[i].date()
+                except Exception:
+                    continue
+                cv = closes[i]
+                # cv == cv is False only for NaN, so this drops gaps without needing the math module.
+                if isinstance(cv, (int, float)) and cv == cv and cv > 0:
+                    pairs.append((d, float(cv)))
+    except Exception as e:
+        logger.error("_price_pairs %s: %s" % (ticker_sym, e))
+        pairs = []
+    pairs.sort(key=lambda x: x[0])
+    if pairs:
+        set_cache(ckey, pairs)
+    return pairs
+
+
+@app.route("/backtest-congress")
+def backtest_congress():
+    name = (request.args.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Provide a politician name."}), 400
+    try:
+        capital = float(request.args.get("capital") or 10000)
+    except (TypeError, ValueError):
+        capital = 10000.0
+    if capital <= 0:
+        capital = 10000.0
+
+    today = datetime.now().date()
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end_date = datetime.strptime(end_str, "%Y-%m-%d").date() if end_str else today
+    except ValueError:
+        end_date = today
+    try:
+        start_date = datetime.strptime(start_str, "%Y-%m-%d").date() if start_str else (end_date - timedelta(days=365))
+    except ValueError:
+        start_date = end_date - timedelta(days=365)
+    if start_date >= end_date:
+        return jsonify({"error": "Start date must be before end date."}), 400
+
+    ckey = "bt_" + "|".join([name.lower(), start_date.isoformat(), end_date.isoformat(), str(int(capital))])
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < 3600:
+        return jsonify(cached[0])
+
+    all_trades = get_all_congress_trades()
+    if not all_trades:
+        return jsonify({"error": "Congressional trade data is unavailable right now. Try again shortly."}), 503
+
+    nlow = name.lower()
+    purchases = []
+    for t in all_trades:
+        if _ctrade_name(t).lower() != nlow:
+            continue
+        if "purchase" not in _ctrade_action(t).lower():
+            continue
+        sym = _ctrade_ticker(t)
+        if not sym:
+            continue
+        try:
+            td = datetime.strptime(_ctrade_date(t), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if td < start_date or td > end_date:
+            continue
+        purchases.append({"symbol": sym, "date": td})
+
+    if not purchases:
+        return jsonify({"error": "No purchases found for %s between %s and %s." % (name, start_date.isoformat(), end_date.isoformat())}), 404
+
+    purchases.sort(key=lambda p: p["date"])
+    n = len(purchases)
+    per = capital / float(n)
+
+    # SPY supplies the canonical trading calendar and the benchmark line.
+    fetch_end = end_date + timedelta(days=1)  # yfinance end is exclusive
+    spy_pairs = _price_pairs("SPY", start_date, fetch_end)
+    if not spy_pairs:
+        return jsonify({"error": "Could not load S&P 500 prices for that window."}), 503
+    spy_dates = [d for d, _ in spy_pairs]
+    spy_map = dict(spy_pairs)
+    spy_first = spy_pairs[0][1]
+    spy_last = spy_pairs[-1][1]
+
+    tickers = sorted(set(p["symbol"] for p in purchases))
+    hist = {}
+    for tk in tickers:
+        hist[tk] = dict(_price_pairs(tk, start_date, fetch_end))
+
+    trades_out = []
+    active = []
+    for p in purchases:
+        tmap = hist.get(p["symbol"]) or {}
+        buy_price = None
+        buy_d = None
+        for d in spy_dates:
+            if d < p["date"]:
+                continue
+            if d in tmap:
+                buy_price = tmap[d]
+                buy_d = d
+                break
+        if buy_price is None or buy_price <= 0 or buy_d is None:
+            continue
+        shares = per / buy_price
+        cur_price = None
+        for d in reversed(spy_dates):
+            if d in tmap:
+                cur_price = tmap[d]
+                break
+        if cur_price is None:
+            cur_price = buy_price
+        p["buy_price"] = buy_price
+        p["buy_date"] = buy_d
+        p["shares"] = shares
+        active.append(p)
+        trades_out.append({
+            "symbol": p["symbol"],
+            "date": buy_d.isoformat(),
+            "shares": round(shares, 4),
+            "buy_price": round(buy_price, 2),
+            "current_price": round(cur_price, 2),
+            "current_value": round(shares * cur_price, 2),
+            "return_pct": round((cur_price / buy_price - 1.0) * 100.0, 2),
+        })
+
+    if not active:
+        return jsonify({"error": "Found purchases for %s but none had usable price history in that window." % name}), 404
+
+    # Time series. The portfolio starts as the full capital in cash, and each pick deploys an equal
+    # slice at its trade date, marked to market daily and forward filled. This keeps it dollar for
+    # dollar comparable to the S&P line, which is fully invested from day one.
+    chart = []
+    last_price = {tk: None for tk in tickers}
+    for d in spy_dates:
+        for tk in tickers:
+            if d in hist[tk]:
+                last_price[tk] = hist[tk][d]
+        deployed = 0
+        holdings = 0.0
+        for p in active:
+            if p["buy_date"] <= d:
+                deployed += 1
+                lp = last_price.get(p["symbol"])
+                if lp is not None:
+                    holdings += p["shares"] * lp
+        cash = capital - per * deployed
+        if cash < 0:
+            cash = 0.0
+        port = cash + holdings
+        spx_val = capital * (spy_map[d] / spy_first)
+        chart.append({"date": d.isoformat(), "portfolio_value": round(port, 2), "sp500_value": round(spx_val, 2)})
+
+    final_port = chart[-1]["portfolio_value"] if chart else capital
+    total_return = (final_port / capital - 1.0) * 100.0
+    sp500_return = (spy_last / spy_first - 1.0) * 100.0
+
+    result = {
+        "politician": name,
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+        "capital": round(capital, 2),
+        "trades": trades_out,
+        "chart_data": chart,
+        "total_return": round(total_return, 2),
+        "sp500_return": round(sp500_return, 2),
+        "purchases_found": n,
+        "purchases_simulated": len(active),
+    }
+    set_cache(ckey, result)
+    return jsonify(result)
+
+
 @app.route("/congress/politician")
 def congress_politician():
     name = (request.args.get("name") or "").strip()
