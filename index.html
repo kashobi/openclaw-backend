@@ -719,6 +719,38 @@ body{
 .alphaRow .ard{flex:0 0 auto;width:7px;height:7px;border-radius:50%;margin-top:6px;background:var(--accent);}
 .sgRight{display:flex;align-items:center;gap:7px;}
 .sgAlpha{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;font-family:'JetBrains Mono',monospace;border:1px solid var(--border);display:none;letter-spacing:.2px;background:var(--s2);}
+#view-backtest .btForm{display:flex;flex-direction:column;gap:12px;margin-bottom:16px;}
+select.cmpInp{cursor:pointer;}
+.btRow{display:flex;gap:10px;flex-wrap:wrap;}
+.btField{display:flex;flex-direction:column;gap:5px;flex:1 1 130px;}
+.btLabel{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+.btRun{align-self:flex-start;}
+.btLoading{color:var(--muted);font-size:14px;padding:18px 2px;font-weight:600;}
+.btErr{background:var(--rbg);border:1px solid var(--red);color:var(--red);border-radius:12px;padding:12px 14px;font-size:13.5px;font-weight:600;margin-bottom:14px;}
+.btCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px;margin-bottom:16px;}
+.btCard{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 15px;box-shadow:var(--shadow-sm);}
+.btCardL{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;}
+.btCardV{font-size:21px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);letter-spacing:-.5px;}
+.btCardS{font-size:11.5px;color:var(--muted);margin-top:4px;font-weight:600;}
+.btUp{color:var(--green);}
+.btDn{color:var(--red);}
+.btLegend{display:flex;gap:18px;margin-bottom:8px;font-size:12.5px;color:var(--muted);font-weight:700;}
+.btLeg{display:flex;align-items:center;gap:6px;}
+.btSw{width:11px;height:11px;border-radius:3px;display:inline-block;}
+.btChartHost{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px;margin-bottom:18px;box-shadow:var(--shadow-sm);}
+.btSvg{width:100%;height:auto;display:block;}
+.btTip{position:absolute;top:8px;background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:7px 9px;font-size:11.5px;font-family:'JetBrains Mono',monospace;color:var(--text);pointer-events:none;box-shadow:var(--shadow-sm);z-index:5;min-width:96px;}
+.btTipD{font-weight:800;margin-bottom:4px;}
+.btTipR{display:flex;align-items:center;gap:6px;font-weight:700;}
+.btTradesWrap{margin-top:4px;}
+.btTradesTitle{font-size:13px;font-weight:800;color:var(--text);margin-bottom:9px;}
+.btTrades{display:flex;flex-direction:column;gap:7px;}
+.btTrow{display:flex;align-items:center;gap:10px;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:12.5px;font-family:'JetBrains Mono',monospace;}
+.btTsym{font-weight:800;color:var(--text);min-width:54px;}
+.btTd{color:var(--muted);min-width:84px;}
+.btTp{color:var(--muted);flex:1;}
+.btTr{font-weight:800;text-align:right;}
+.btNote{color:var(--muted);font-size:13px;padding:10px 2px;}
 </style>
 </head>
 <body>
@@ -1045,6 +1077,29 @@ body{
   </div>
 </div>
 </div>
+<div class="view" id="view-backtest">
+  <div class="vhead">
+    <div class="vhead-t">Copy Congress</div>
+    <div class="vhead-s">Pick a member of Congress and a window, then see how copying their stock purchases would have performed against the S&P 500. Each pick gets an equal slice of your capital, bought at the trade date and held. Educational only, not advice.</div>
+  </div>
+  <div class="btForm">
+    <select class="cmpInp" id="btPol"><option value="">Select a member of Congress</option></select>
+    <div class="btRow">
+      <div class="btField"><label class="btLabel">Start date</label><input class="cmpInp" id="btStart" type="date"></div>
+      <div class="btField"><label class="btLabel">End date</label><input class="cmpInp" id="btEnd" type="date"></div>
+      <div class="btField"><label class="btLabel">Capital</label><input class="cmpInp" id="btCap" type="number" min="100" step="100" value="10000"></div>
+    </div>
+    <button class="cmpBtn btRun" id="btRun">Run Backtest</button>
+  </div>
+  <div class="btLoading" id="btLoading" style="display:none">Crunching trades and prices, this can take a moment...</div>
+  <div class="btErr" id="btErr" style="display:none"></div>
+  <div class="btResults" id="btResults" style="display:none">
+    <div class="btCards" id="btCards"></div>
+    <div class="btLegend"><span class="btLeg"><span class="btSw" style="background:#22c55e"></span>Copy portfolio</span><span class="btLeg"><span class="btSw" style="background:#3b82f6"></span>S&P 500</span></div>
+    <div class="btChartHost" id="btChart"></div>
+    <div class="btTradesWrap"><div class="btTradesTitle">Trades simulated</div><div class="btTrades" id="btTrades"></div></div>
+  </div>
+</div>
 <div class="foot">
   APEX Q INTELLIGENCE TERMINAL &nbsp;|&nbsp; ANALYST AGENT &bull; REGULATORY AGENT &bull; INSIDER AGENT &bull; NEWS AGENT &bull; SYNTHESIS ENGINE<br><br>
   The insights provided are generated by our analytical engine for educational and illustrative purposes only.<br>
@@ -1076,6 +1131,7 @@ body{
   <button class="tab" data-view="compare"><span class="tabi">&#9878;&#65039;</span><span class="tabt">Compare</span></button>
   <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Saved</span></button>
   <button class="tab" data-view="portfolio"><span class="tabi">&#128200;</span><span class="tabt">Portfolio</span></button>
+  <button class="tab" data-view="backtest"><span class="tabi">&#128202;</span><span class="tabt">Backtest</span></button>
   <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
 </nav>
 <div class="newsModalOverlay" id="newsModalOverlay">
@@ -3615,6 +3671,163 @@ function loadAlerts(){
   }).catch(function(){ if(feed){ feed.innerHTML = "<div class=\"alertEmpty\">Could not load alerts right now.</div>"; } _verdictFlips = {}; applyWatchFlipBadges(); setAlertCount(0, 0); });
 }
 
+var _btInit = false;
+function initBacktest(){
+  if(_btInit) return;
+  _btInit = true;
+  function iso(d){ return d.getFullYear() + "-" + ("0"+(d.getMonth()+1)).slice(-2) + "-" + ("0"+d.getDate()).slice(-2); }
+  var end = new Date();
+  var start = new Date(); start.setFullYear(start.getFullYear() - 1);
+  var se = document.getElementById("btStart"); if(se && !se.value) se.value = iso(start);
+  var ee = document.getElementById("btEnd"); if(ee && !ee.value) ee.value = iso(end);
+  var sel = document.getElementById("btPol");
+  fetch(API + "/congress/insights").then(function(r){ return r.json(); }).then(function(d){
+    var pols = (d && d.politicians) ? d.politicians : [];
+    if(sel && pols.length){
+      for(var i=0;i<pols.length;i++){
+        var o = document.createElement("option");
+        o.value = pols[i].name;
+        o.textContent = pols[i].name + (pols[i].party ? " (" + pols[i].party + ")" : "");
+        sel.appendChild(o);
+      }
+    }
+  }).catch(function(){});
+  var btn = document.getElementById("btRun");
+  if(btn){ btn.addEventListener("click", runBacktest); }
+}
+
+function runBacktest(){
+  var name = (document.getElementById("btPol") || {}).value || "";
+  var start = (document.getElementById("btStart") || {}).value || "";
+  var end = (document.getElementById("btEnd") || {}).value || "";
+  var cap = (document.getElementById("btCap") || {}).value || "10000";
+  var err = document.getElementById("btErr");
+  var load = document.getElementById("btLoading");
+  var res = document.getElementById("btResults");
+  if(err){ err.style.display = "none"; err.textContent = ""; }
+  if(!name){ if(err){ err.textContent = "Pick a member of Congress first."; err.style.display = "block"; } return; }
+  if(res) res.style.display = "none";
+  if(load) load.style.display = "block";
+  var url = API + "/backtest-congress?name=" + encodeURIComponent(name) + "&start=" + encodeURIComponent(start) + "&end=" + encodeURIComponent(end) + "&capital=" + encodeURIComponent(cap);
+  fetch(url).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, d: d}; }); }).then(function(p){
+    if(load) load.style.display = "none";
+    var d = p.d || {};
+    if(!p.ok || d.error){
+      if(err){ err.textContent = d.error || "Could not run that backtest."; err.style.display = "block"; }
+      return;
+    }
+    renderBacktest(d);
+  }).catch(function(){
+    if(load) load.style.display = "none";
+    if(err){ err.textContent = "Connection issue. Try again."; err.style.display = "block"; }
+  });
+}
+
+function renderBacktest(d){
+  var res = document.getElementById("btResults");
+  if(!res) return;
+  res.style.display = "block";
+  var cap = d.capital || 0;
+  var tr = d.total_return || 0;
+  var sr = d.sp500_return || 0;
+  var diff = tr - sr;
+  var trades = d.trades || [];
+  var best = null, worst = null;
+  for(var i=0;i<trades.length;i++){
+    if(best === null || trades[i].return_pct > best.return_pct) best = trades[i];
+    if(worst === null || trades[i].return_pct < worst.return_pct) worst = trades[i];
+  }
+  function pc(v){ return (v>=0?"+":"") + (v||0).toFixed(2) + "%"; }
+  function cls(v){ return v>=0 ? "btUp" : "btDn"; }
+  function money0(v){ return "$" + Math.round(v).toLocaleString(); }
+  var endVal = cap * (1 + tr/100);
+  var cards = "";
+  cards += "<div class='btCard'><div class='btCardL'>Copy portfolio</div><div class='btCardV " + cls(tr) + "'>" + pc(tr) + "</div><div class='btCardS'>" + money0(endVal) + " from " + money0(cap) + "</div></div>";
+  cards += "<div class='btCard'><div class='btCardL'>S&P 500</div><div class='btCardV " + cls(sr) + "'>" + pc(sr) + "</div><div class='btCardS'>same window, fully invested</div></div>";
+  cards += "<div class='btCard'><div class='btCardL'>Edge vs S&P</div><div class='btCardV " + cls(diff) + "'>" + pc(diff) + "</div><div class='btCardS'>" + (diff>=0?"outperformed":"trailed") + " the index</div></div>";
+  cards += "<div class='btCard'><div class='btCardL'>Trades simulated</div><div class='btCardV'>" + trades.length + "</div><div class='btCardS'>" + (d.purchases_found||trades.length) + " purchases found</div></div>";
+  if(best){ cards += "<div class='btCard'><div class='btCardL'>Best pick</div><div class='btCardV btUp'>" + esc(best.symbol) + " " + pc(best.return_pct) + "</div><div class='btCardS'>bought " + esc(best.date) + "</div></div>"; }
+  if(worst){ cards += "<div class='btCard'><div class='btCardL'>Worst pick</div><div class='btCardV btDn'>" + esc(worst.symbol) + " " + pc(worst.return_pct) + "</div><div class='btCardS'>bought " + esc(worst.date) + "</div></div>"; }
+  var cardsEl = document.getElementById("btCards"); if(cardsEl) cardsEl.innerHTML = cards;
+  var rows = "";
+  for(var k=0;k<trades.length;k++){
+    var t = trades[k];
+    rows += "<div class='btTrow'><span class='btTsym'>" + esc(t.symbol) + "</span><span class='btTd'>" + esc(t.date) + "</span><span class='btTp'>$" + (t.buy_price||0).toLocaleString() + " &#8594; $" + (t.current_price||0).toLocaleString() + "</span><span class='btTr " + cls(t.return_pct) + "'>" + pc(t.return_pct) + "</span></div>";
+  }
+  var trEl = document.getElementById("btTrades"); if(trEl) trEl.innerHTML = rows || "<div class='btNote'>No trades.</div>";
+  renderBacktestChart(d.chart_data, cap);
+}
+
+function renderBacktestChart(data, capital){
+  var host = document.getElementById("btChart");
+  if(!host) return;
+  if(!data || data.length < 2){ host.innerHTML = "<div class='btNote'>Not enough price history to chart this window.</div>"; return; }
+  var W = 720, H = 320, padL = 12, padR = 14, padT = 16, padB = 28;
+  var plotW = W - padL - padR, plotH = H - padT - padB, baseY = padT + plotH;
+  var n = data.length;
+  var mn = Infinity, mx = -Infinity;
+  for(var i=0;i<n;i++){
+    var a = data[i].portfolio_value, b = data[i].sp500_value;
+    if(a<mn)mn=a; if(a>mx)mx=a; if(b<mn)mn=b; if(b>mx)mx=b;
+  }
+  if(capital<mn)mn=capital; if(capital>mx)mx=capital;
+  if(mx===mn){ mx=mn+1; }
+  var padv=(mx-mn)*0.06; mn-=padv; mx+=padv;
+  function X(i){ return padL + (i/(n-1))*plotW; }
+  function Y(v){ return padT + (1-(v-mn)/(mx-mn))*plotH; }
+  function money(v){ return "$" + Math.round(v).toLocaleString(); }
+  var pLine="", sLine="";
+  for(var j=0;j<n;j++){
+    pLine += (j?"L":"M") + X(j).toFixed(1) + " " + Y(data[j].portfolio_value).toFixed(1) + " ";
+    sLine += (j?"L":"M") + X(j).toFixed(1) + " " + Y(data[j].sp500_value).toFixed(1) + " ";
+  }
+  var area = pLine + "L" + X(n-1).toFixed(1) + " " + baseY.toFixed(1) + " L" + X(0).toFixed(1) + " " + baseY.toFixed(1) + " Z";
+  var capY = Y(capital).toFixed(1);
+  var svg = "<svg class='btSvg' viewBox='0 0 " + W + " " + H + "' preserveAspectRatio='xMidYMid meet'>";
+  svg += "<line x1='" + padL + "' y1='" + capY + "' x2='" + (W-padR) + "' y2='" + capY + "' stroke='var(--border)' stroke-width='1' stroke-dasharray='4 4'></line>";
+  svg += "<path d='" + area + "' fill='rgba(34,197,94,0.15)' stroke='none'></path>";
+  svg += "<path d='" + sLine + "' fill='none' stroke='#3b82f6' stroke-width='2' vector-effect='non-scaling-stroke'></path>";
+  svg += "<path d='" + pLine + "' fill='none' stroke='#22c55e' stroke-width='2.4' vector-effect='non-scaling-stroke'></path>";
+  svg += "<text x='" + (padL+2) + "' y='" + (padT+4) + "' fill='var(--muted)' font-size='11' font-family='monospace'>" + money(mx) + "</text>";
+  svg += "<text x='" + (padL+2) + "' y='" + (baseY-3) + "' fill='var(--muted)' font-size='11' font-family='monospace'>" + money(mn) + "</text>";
+  svg += "<text x='" + (padL+2) + "' y='" + (H-8) + "' fill='var(--muted)' font-size='11' font-family='monospace'>" + esc(data[0].date) + "</text>";
+  svg += "<text x='" + (W-padR) + "' y='" + (H-8) + "' fill='var(--muted)' font-size='11' font-family='monospace' text-anchor='end'>" + esc(data[n-1].date) + "</text>";
+  svg += "<line id='btGuide' x1='0' y1='" + padT + "' x2='0' y2='" + baseY + "' stroke='var(--muted)' stroke-width='1' stroke-dasharray='3 3' style='display:none'></line>";
+  svg += "<circle id='btDotP' r='3.6' fill='#22c55e' stroke='var(--bg)' stroke-width='1.5' style='display:none'></circle>";
+  svg += "<circle id='btDotS' r='3.6' fill='#3b82f6' stroke='var(--bg)' stroke-width='1.5' style='display:none'></circle>";
+  svg += "</svg>";
+  svg += "<div class='btTip' id='btTip' style='display:none'></div>";
+  host.innerHTML = svg;
+
+  var guide = document.getElementById("btGuide");
+  var dotP = document.getElementById("btDotP");
+  var dotS = document.getElementById("btDotS");
+  var tip = document.getElementById("btTip");
+  function moveTo(clientX){
+    var rect = host.getBoundingClientRect();
+    if(!rect.width) return;
+    var frac = (clientX - rect.left)/rect.width;
+    if(frac<0)frac=0; if(frac>1)frac=1;
+    var idx = Math.round(frac*(n-1));
+    var px = X(idx), pyP = Y(data[idx].portfolio_value), pyS = Y(data[idx].sp500_value);
+    if(guide){ guide.setAttribute("x1",px); guide.setAttribute("x2",px); guide.style.display="block"; }
+    if(dotP){ dotP.setAttribute("cx",px); dotP.setAttribute("cy",pyP); dotP.style.display="block"; }
+    if(dotS){ dotS.setAttribute("cx",px); dotS.setAttribute("cy",pyS); dotS.style.display="block"; }
+    if(tip){
+      tip.innerHTML = "<div class='btTipD'>" + esc(data[idx].date) + "</div><div class='btTipR'><span class='btSw' style='background:#22c55e'></span>" + money(data[idx].portfolio_value) + "</div><div class='btTipR'><span class='btSw' style='background:#3b82f6'></span>" + money(data[idx].sp500_value) + "</div>";
+      tip.style.display="block";
+      var tw = tip.offsetWidth || 110;
+      var lp = frac*rect.width - tw/2;
+      if(lp<2)lp=2; if(lp>rect.width-tw-2)lp=rect.width-tw-2;
+      tip.style.left = lp + "px";
+    }
+  }
+  function hideTip(){ if(guide)guide.style.display="none"; if(dotP)dotP.style.display="none"; if(dotS)dotS.style.display="none"; if(tip)tip.style.display="none"; }
+  host.onmousemove = function(e){ moveTo(e.clientX); };
+  host.onmouseleave = hideTip;
+  host.ontouchmove = function(e){ if(e.touches && e.touches[0]){ moveTo(e.touches[0].clientX); } };
+}
+
 function showView(name){
   var vs = document.querySelectorAll(".view");
   for(var i=0;i<vs.length;i++){ vs[i].classList.remove("active"); }
@@ -3637,6 +3850,7 @@ function showView(name){
     if(asb && !asb.value.trim() && !askHistory.length && currentSymbol){ asb.value = currentSymbol; }
   }
   if(name === "home"){ loadHomeContext(); loadDashboard(); }
+  if(name === "backtest"){ initBacktest(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
