@@ -14,14 +14,15 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 :root{
-  --bg:#f0f3f8;--surface:#ffffff;--s2:#eef2f8;--border:#e3e8f1;
-  --accent:#1a1f71;--accent-d:#10143f;--accent-rgb:26,31,113;
-  --green:#0d7c4b;--gbg:#dcf2e6;
-  --red:#c0392b;--rbg:#fbe2df;--yellow:#9a6a00;--ybg:#fdeccb;
-  --text:#141a2b;--muted:#5c6b85;--navy:#141a2e;
-  --shadow:0 6px 24px rgba(20,26,46,.06);
-  --shadow-hi:0 14px 34px rgba(20,26,46,.12);
-  --shadow-sm:0 2px 10px rgba(20,26,46,.05);
+  --bg:#0c0f12;--surface:#1a1d23;--s2:#22262e;--border:#2a2d35;
+  --accent:#22c55e;--accent-d:#16a34a;--accent-rgb:34,197,94;
+  --green:#22c55e;--gbg:#13251b;
+  --red:#ef4444;--rbg:#2a1518;--yellow:#f59e0b;--ybg:#2a1f0a;
+  --text:#e2e8f0;--muted:#9ca3af;--navy:#15181e;
+  --shadow:0 8px 24px rgba(0,0,0,.35);
+  --shadow-hi:0 16px 38px rgba(0,0,0,.5);
+  --shadow-sm:0 2px 10px rgba(0,0,0,.28);
+  --sidebar-w:96px;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{max-width:100%;overflow-x:hidden;}
@@ -566,6 +567,121 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .filingType{font-size:13px;font-weight:700;color:var(--text);}
 .filingDate{font-size:12px;color:var(--muted);white-space:nowrap;}
 .filingLoad{font-size:13px;color:var(--muted);padding:6px 0;}
+
+/* ============================================================
+   PREMIUM DARK REDESIGN  (CSS only, appended overrides + layout)
+   Every existing id, class, and all JavaScript are unchanged.
+   The sidebar is the existing .tabbar restyled, so the same tab
+   buttons and the same showView handler drive it untouched.
+   ============================================================ */
+
+/* Page surface with a soft green aura for depth */
+body{
+  background:
+    radial-gradient(1100px 560px at 82% -12%, rgba(34,197,94,.06), transparent 60%),
+    radial-gradient(900px 520px at -12% 112%, rgba(34,197,94,.05), transparent 55%),
+    var(--bg);
+  background-attachment:fixed;
+}
+
+/* Ticker strip */
+.tkbar{background:var(--navy);border-bottom:1px solid var(--border);}
+.tki{border-right:1px solid var(--border);}
+.tki:hover{background:#202530;}
+.tpx{color:var(--muted);}
+
+/* Header */
+.hdr{background:rgba(26,29,35,.82);backdrop-filter:saturate(140%) blur(10px);-webkit-backdrop-filter:saturate(140%) blur(10px);border-bottom:1px solid var(--border);}
+.lmark{background:linear-gradient(135deg,#22c55e,#15803d);box-shadow:0 6px 18px rgba(34,197,94,.35);}
+.lname{color:var(--text);}
+
+/* Market strip */
+.mbar{background:var(--surface);border-bottom:1px solid var(--border);}
+.mi{border-right:1px solid var(--border);}
+.mi:hover{background:var(--s2);}
+
+/* Search + every input: remove the white focus and hover fills from the light theme */
+.swrap{background:var(--surface);border-bottom:1px solid var(--border);}
+.sinp,.cmpInp,.authInp{background:var(--bg);border-color:var(--border);color:var(--text);}
+.sinp:focus,.cmpInp:focus,.authInp:focus{background:var(--bg);border-color:var(--accent);box-shadow:0 0 0 4px rgba(34,197,94,.14);}
+.sinp::placeholder,.cmpInp::placeholder,.authInp::placeholder{color:var(--muted);}
+.ac,.acx{background:var(--surface);border-color:var(--border);box-shadow:var(--shadow-hi);}
+.aci{border-bottom:1px solid var(--border);}
+.aci:hover{background:var(--s2);}
+
+/* Rounder corners and floaty shadows on the main surfaces */
+.rc,.vsec,.contextCard,.newsModal,.authBox{border-radius:20px;}
+.rc{box-shadow:var(--shadow);}
+.ic,.met,.gaugeWrap,.congCard,.congHeader,.sg,.scanRow,.cmpCard,.cmpV,.alertRow,.discRow,.discExp,.moverRow,.scanEmpty,.sgempty{border-radius:16px;}
+.main{grid-template-columns:1fr;}
+
+/* Dashboard tiles lift on hover */
+#dashGrid .dcard{border-radius:18px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}
+#dashGrid .dcard:hover{transform:translateY(-2px);box-shadow:var(--shadow-hi);border-color:rgba(34,197,94,.25);}
+
+/* Buttons: drop the white hovers, add a green glow */
+.saveBtn:hover,.shareBtn:hover{background:var(--s2);}
+.saveBtn.saved{background:var(--gbg);color:var(--green);border-color:var(--green);}
+.sbtn,.cmpBtn,.authSubmit,.installBtn{box-shadow:0 6px 18px rgba(34,197,94,.28);}
+.sbtn:hover,.cmpBtn:hover,.authSubmit:hover{background:var(--accent-d);}
+.acctBtn{box-shadow:0 6px 18px rgba(34,197,94,.28);}
+.acctBtn.loggedin{background:var(--s2);color:var(--accent);border:1px solid var(--accent);box-shadow:none;}
+.cmpBtn.dangerBtn{background:var(--rbg);color:var(--red);border:1px solid var(--red);box-shadow:none;}
+.cmpBtn.dangerBtn:hover{background:var(--red);color:#fff;}
+
+/* Verdict box: dark tinted gradients, and the inner frosted panels flip dark so light text stays readable */
+.vb.approve{background:linear-gradient(135deg,#12261b,#0e1c15);border:1px solid rgba(34,197,94,.4);}
+.vb.pass{background:linear-gradient(135deg,#271619,#1c1113);border:1px solid rgba(239,68,68,.4);}
+.vb.watch{background:linear-gradient(135deg,#271f0e,#1c160a);border:1px solid rgba(245,158,11,.4);}
+.vb.etf{background:linear-gradient(135deg,#16241f,#101a16);border:1px solid rgba(34,197,94,.4);}
+.vsco,.vconf,.vmean,.wg,.vr,.vlesson{background:rgba(255,255,255,.05);}
+.vr{border:1px solid rgba(255,255,255,.06);}
+.vr.live{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.45);}
+.vr-hdr:hover{background:rgba(34,197,94,.06);}
+.vmean,.vlesson{border-left-color:var(--accent);}
+.vflag.info{background:var(--s2);border-left-color:var(--accent);}
+
+/* ETF pill in compare and scan was a light lavender chip, make it match */
+.vetf{background:rgba(34,197,94,.14);color:var(--accent);border:1px solid var(--accent);}
+
+/* News + overlays */
+.newsItem:hover{background:var(--s2);}
+.newsModalOverlay,.authOverlay{background:rgba(0,0,0,.7);}
+
+/* Footer */
+.foot{background:var(--navy);border-top:1px solid var(--border);color:var(--muted);}
+
+/* Slim dark scrollbars */
+*{scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
+*::-webkit-scrollbar{width:10px;height:10px;}
+*::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px;}
+*::-webkit-scrollbar-track{background:transparent;}
+
+/* ---------- LAYOUT ----------
+   Desktop: the bottom tab bar becomes a fixed left rail and the page shifts right to clear it.
+   Phones: it stays the original fixed bottom bar, just dark. No markup or JS changes either way. */
+@media(min-width:769px){
+  body{padding-left:var(--sidebar-w);}
+  .tabbar{
+    top:0;bottom:0;left:0;right:auto;width:var(--sidebar-w);
+    flex-direction:column;justify-content:flex-start;gap:6px;
+    padding:18px 8px;border-top:none;border-right:1px solid var(--border);
+    background:rgba(21,24,30,.92);backdrop-filter:saturate(140%) blur(12px);-webkit-backdrop-filter:saturate(140%) blur(12px);
+    box-shadow:6px 0 22px rgba(0,0,0,.35);
+  }
+  .tabbar .tab{flex:0 0 auto;width:100%;border-radius:14px;padding:11px 2px;gap:5px;transition:background .15s,color .15s;}
+  .tabbar .tab:hover{background:var(--s2);}
+  .tabbar .tab.active{background:rgba(34,197,94,.14);}
+  .tabbar .tabi{font-size:21px;}
+  .tabbar .tabt{font-size:10px;}
+  .tabBadge{left:auto;right:14px;top:6px;}
+  .views{max-width:1180px;margin:0 auto;padding-bottom:30px;}
+  .installBtn{bottom:24px;}
+  #alertBanner,.contextCard{margin-left:auto;margin-right:auto;}
+}
+@media(max-width:768px){
+  .tabbar{background:rgba(21,24,30,.9);border-top:1px solid var(--border);box-shadow:0 -4px 22px rgba(0,0,0,.4);}
+}
 </style>
 </head>
 <body>
