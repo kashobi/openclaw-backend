@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,22 +12,25 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Apex Q">
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script>(function(){try{var t=localStorage.getItem('apexq-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
 <style>
-/* Geist Sans and Geist Mono, loaded from the Fontsource CDN on jsDelivr. The npm geist package
-   ships only as a Next.js import and has no plain CSS file, so these verified font faces replace
-   the single stylesheet link. The family names match the variables in :root exactly. */
-@font-face{font-family:'Geist Sans';font-style:normal;font-display:swap;font-weight:400;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-400-normal.woff2) format('woff2');}
-@font-face{font-family:'Geist Sans';font-style:normal;font-display:swap;font-weight:500;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-500-normal.woff2) format('woff2');}
-@font-face{font-family:'Geist Sans';font-style:normal;font-display:swap;font-weight:600;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-600-normal.woff2) format('woff2');}
-@font-face{font-family:'Geist Sans';font-style:normal;font-display:swap;font-weight:700;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-700-normal.woff2) format('woff2');}
-@font-face{font-family:'Geist Sans';font-style:normal;font-display:swap;font-weight:800;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-800-normal.woff2) format('woff2');}
+/* Geist Mono, loaded from the Fontsource CDN on jsDelivr. Inter, the sans family, comes from the
+   Google Fonts link in the head. The npm geist package ships only as a Next.js import with no plain
+   CSS file, so these verified faces are used instead of a stylesheet link. */
 @font-face{font-family:'Geist Mono';font-style:normal;font-display:swap;font-weight:400;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-mono@latest/latin-400-normal.woff2) format('woff2');}
 @font-face{font-family:'Geist Mono';font-style:normal;font-display:swap;font-weight:500;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-mono@latest/latin-500-normal.woff2) format('woff2');}
 @font-face{font-family:'Geist Mono';font-style:normal;font-display:swap;font-weight:600;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-mono@latest/latin-600-normal.woff2) format('woff2');}
 @font-face{font-family:'Geist Mono';font-style:normal;font-display:swap;font-weight:700;src:url(https://cdn.jsdelivr.net/fontsource/fonts/geist-mono@latest/latin-700-normal.woff2) format('woff2');}
 :root{
-  --font-sans: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'Geist Mono', 'JetBrains Mono', monospace;
+  --sidebar-w:96px;
+  --radius:18px;
+}
+[data-theme="dark"]{
   --bg:#0c0f12;--surface:#1a1d23;--s2:#22262e;--border:#2a2d35;
   --accent:#22c55e;--accent-d:#16a34a;--accent-rgb:34,197,94;
   --green:#22c55e;--gbg:#13251b;
@@ -36,7 +39,18 @@
   --shadow:0 8px 24px rgba(0,0,0,.35);
   --shadow-hi:0 16px 38px rgba(0,0,0,.5);
   --shadow-sm:0 2px 10px rgba(0,0,0,.28);
-  --sidebar-w:96px;
+  --hero-grad:linear-gradient(165deg,#181d3d 0%,#0c0f12 62%);
+}
+[data-theme="light"]{
+  --bg:#f8fafc;--surface:#ffffff;--s2:#f1f5f9;--border:#e2e8f0;
+  --accent:#1a1f71;--accent-d:#141a5e;--accent-rgb:26,31,113;
+  --green:#0d7c4b;--gbg:#e7f5ee;
+  --red:#c0392b;--rbg:#fdeeec;--yellow:#b7791f;--ybg:#fdf6e3;
+  --text:#0f172a;--muted:#64748b;--navy:#1e293b;
+  --shadow:0 8px 24px rgba(15,23,42,.10);
+  --shadow-hi:0 16px 38px rgba(15,23,42,.16);
+  --shadow-sm:0 2px 10px rgba(15,23,42,.07);
+  --hero-grad:linear-gradient(165deg,#ffffff 0%,#eef2f7 72%);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{max-width:100%;overflow-x:hidden;}
@@ -208,7 +222,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-sans);width:1
 .mv2.pos{color:var(--green);}
 .mv2.neg{color:var(--red);}
 .mv2.neu{color:var(--accent);}
-.ic{background:var(--s2);border:1px solid var(--border);border-radius:14px;padding:15px;margin-bottom:11px;}
+.ic{background:var(--s2);border:1px solid var(--border);border-radius:18px;padding:15px;margin-bottom:11px;}
 .ih{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
 .it{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.3px;color:var(--muted);font-family:var(--font-mono);}
 .ibdg{font-size:10px;font-weight:800;padding:3px 12px;border-radius:999px;font-family:var(--font-mono);}
@@ -794,6 +808,35 @@ select.cmpInp{cursor:pointer;}
 .ptSell{margin-left:auto;background:var(--rbg);color:var(--red);border:1px solid var(--red);border-radius:8px;padding:5px 12px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;}
 .ptSell:hover{background:var(--red);color:#fff;}
 .ptDisc{margin-top:16px;font-size:11.5px;color:var(--muted);font-style:italic;padding:10px 12px;background:var(--s2);border-radius:10px;border:1px solid var(--border);}
+/* ===== Landing hero, theme toggle, and visual polish ===== */
+body{transition:background-color .3s ease,color .3s ease;}
+.themeToggle{background:var(--s2);border:1px solid var(--border);border-radius:11px;width:40px;height:40px;font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text);transition:background .2s ease,border-color .2s ease,transform .15s ease;}
+.themeToggle:hover{border-color:var(--accent);transform:translateY(-1px);}
+.hero{padding:58px 24px 40px;background:var(--hero-grad);border-bottom:1px solid var(--border);}
+.heroInner{max-width:940px;margin:0 auto;text-align:center;}
+.heroH1{font-size:3rem;font-weight:900;letter-spacing:-1.5px;color:var(--text);line-height:1.08;margin-bottom:16px;}
+.heroSub{font-size:1.15rem;color:var(--muted);max-width:660px;margin:0 auto 30px;line-height:1.55;font-weight:500;}
+.heroBtns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:46px;}
+.heroPrimary{background:var(--accent);color:#fff;border:none;border-radius:12px;padding:14px 30px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 8px 22px rgba(var(--accent-rgb),.34);transition:transform .15s ease,box-shadow .2s ease,background .2s ease;}
+.heroPrimary:hover{background:var(--accent-d);transform:translateY(-2px);box-shadow:0 12px 30px rgba(var(--accent-rgb),.45);}
+.heroGhost{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:14px 30px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;transition:transform .15s ease,border-color .2s ease,background .2s ease;}
+.heroGhost:hover{border-color:var(--accent);transform:translateY(-2px);}
+.heroFeatures{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;text-align:left;}
+.heroCard{padding:24px;margin-bottom:0;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease,background .3s ease;}
+.heroCard:hover{transform:translateY(-4px);box-shadow:var(--shadow-hi);border-color:var(--accent);}
+.heroCardIcon{font-size:28px;margin-bottom:12px;}
+.heroCardT{font-size:1.05rem;font-weight:800;color:var(--text);margin-bottom:7px;letter-spacing:-.3px;}
+.heroCardB{font-size:.95rem;color:var(--muted);line-height:1.5;font-weight:500;}
+.ic{transition:border-color .2s ease,box-shadow .2s ease,background .3s ease;}
+.tab{transition:color .2s ease,background .2s ease;}
+.btCard,.ptCard,.btChartHost,.ptCashCard,.alphaCard,.rc{border-radius:18px;}
+@media(max-width:768px){
+  .hero{padding:38px 18px 30px;}
+  .heroH1{font-size:2.05rem;letter-spacing:-1px;}
+  .heroSub{font-size:1.02rem;margin-bottom:24px;}
+  .heroBtns{margin-bottom:34px;}
+  .heroFeatures{grid-template-columns:1fr;gap:12px;}
+}
 </style>
 </head>
 <body>
@@ -801,6 +844,7 @@ select.cmpInp{cursor:pointer;}
 <div class="hdr">
   <div class="logo"><div class="lmark">&#9889;</div><div class="lname">Apex <span>Q</span></div></div>
   <div class="hdr-right">
+    <button id="themeToggle" class="themeToggle" aria-label="Toggle light or dark mode">&#9728;&#65039;</button>
     <div class="badge"><div class="dot"></div>LIVE INTEL ACTIVE</div>
     <div class="premiumBadge" id="premiumBadge" style="display:none">&#11088; Premium</div>
     <button id="headerUpgradeBtn" class="acctBtn upgradeCta" style="display:none">&#11088; Upgrade</button>
@@ -818,6 +862,33 @@ select.cmpInp{cursor:pointer;}
   <div class="vbNote" id="vbNote"></div>
 </div>
 <div class="view active" id="view-home">
+<section class="hero" id="heroSection">
+  <div class="heroInner">
+    <h1 class="heroH1">The Smarter Way to Research Stocks</h1>
+    <p class="heroSub">Congressional trades, insider activity, moat ratings, and a grounded AI that never hallucinates. All in one place, free.</p>
+    <div class="heroBtns">
+      <button class="heroPrimary" onclick="var s=document.getElementById('si');if(s){s.focus();s.scrollIntoView({behavior:'smooth',block:'center'});}">Start Analyzing</button>
+      <button class="heroGhost" onclick="go('AAPL')">See an Example</button>
+    </div>
+    <div class="heroFeatures">
+      <div class="ic heroCard">
+        <div class="heroCardIcon">&#127963;</div>
+        <div class="heroCardT">Track Congress</div>
+        <div class="heroCardB">See what lawmakers are buying and selling, with real time returns.</div>
+      </div>
+      <div class="ic heroCard">
+        <div class="heroCardIcon">&#9989;</div>
+        <div class="heroCardT">Never Hallucinate</div>
+        <div class="heroCardB">Our AI explains stocks using only live data, never guesswork.</div>
+      </div>
+      <div class="ic heroCard">
+        <div class="heroCardIcon">&#128218;</div>
+        <div class="heroCardT">Built for Learning</div>
+        <div class="heroCardB">Every signal includes a plain English lesson.</div>
+      </div>
+    </div>
+  </div>
+</section>
 <div class="mbar"><div class="mbari">
   <div class="mi" data-sym="^GSPC"><div class="ml">S&amp;P 500</div><div class="mv ld" id="m0">--</div></div>
   <div class="mi" data-sym="^IXIC"><div class="ml">NASDAQ</div><div class="mv ld" id="m1">--</div></div>
@@ -4313,6 +4384,37 @@ if(ib){
     });
   });
 }
+</script>
+<script>
+(function(){
+  // Theme toggle. New, isolated code: it flips data-theme, saves the choice, and updates the icon.
+  var SUN = "\u2600\uFE0F", MOON = "\uD83C\uDF19";
+  var btn = document.getElementById("themeToggle");
+  function paintIcon(){
+    var t = document.documentElement.getAttribute("data-theme");
+    if(btn){ btn.textContent = (t === "light") ? MOON : SUN; }
+  }
+  paintIcon();
+  if(btn){
+    btn.addEventListener("click", function(){
+      var cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+      var next = cur === "light" ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", next);
+      try{ localStorage.setItem("apexq-theme", next); }catch(e){}
+      paintIcon();
+    });
+  }
+  // Hide the marketing hero once a report is shown. This watches the existing report area for its
+  // visibility change, so it never touches run(), the search logic, or any API or chart code.
+  var ra = document.getElementById("reportArea");
+  var hero = document.getElementById("heroSection");
+  if(ra && hero){
+    var obs = new MutationObserver(function(){
+      if(ra.style.display !== "none"){ hero.style.display = "none"; }
+    });
+    obs.observe(ra, {attributes: true, attributeFilter: ["style"]});
+  }
+})();
 </script>
 </body>
 </html>
