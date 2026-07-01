@@ -28,6 +28,37 @@ STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # ============ END STRIPE PAYMENTS ============
 
+# ============ TWILIO SMS (phone verification) ============
+# We call Twilio's REST API with requests, which is already a dependency, so no new package is
+# added. If the keys are not set, codes are logged to the server instead of texted, which keeps
+# the whole verification flow working in development.
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_PHONE_NUMBER", "")
+
+
+def _send_sms(to_number, body):
+    """Send an SMS via Twilio. Returns True on success. With no Twilio config, logs and returns True."""
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER):
+        logger.info("SMS (Twilio not configured) to %s: %s" % (to_number, body))
+        return True
+    try:
+        url = "https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json" % TWILIO_ACCOUNT_SID
+        resp = requests.post(
+            url,
+            data={"From": TWILIO_PHONE_NUMBER, "To": to_number, "Body": body},
+            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            timeout=10,
+        )
+        if resp.status_code >= 400:
+            logger.error("Twilio send failed %s: %s" % (resp.status_code, resp.text[:200]))
+            return False
+        return True
+    except Exception as e:
+        logger.error("Twilio send error: %s" % e)
+        return False
+# ============ END TWILIO SMS ============
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -275,6 +306,43 @@ def ensure_db():
             "alert_prefs TEXT DEFAULT 'all',"
             "UNIQUE (user_id))"
         )
+        # User data capture, phone verification, and paper trading columns, all added in place
+        # so existing rows keep working. Email is unique but nullable, so old accounts stay valid.
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN DEFAULT false")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_cash NUMERIC DEFAULT 100000")
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS phone_verifications ("
+            "id SERIAL PRIMARY KEY,"
+            "phone TEXT,"
+            "code TEXT,"
+            "expires_at TIMESTAMP,"
+            "verified BOOLEAN DEFAULT false)"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS paper_trades ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER,"
+            "symbol TEXT,"
+            "shares NUMERIC,"
+            "buy_price NUMERIC,"
+            "buy_date TIMESTAMP DEFAULT NOW(),"
+            "sold BOOLEAN DEFAULT false,"
+            "sell_price NUMERIC,"
+            "sell_date TIMESTAMP)"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS email_queue ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER,"
+            "subject TEXT,"
+            "body TEXT,"
+            "sent BOOLEAN DEFAULT false,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
         conn.commit()
         cur.close()
         logger.info("ensure_db: tables ready")
@@ -486,12 +554,16 @@ def auth_me():
         if conn is not None:
             try:
                 cur = conn.cursor()
-                cur.execute("SELECT COALESCE(tier, 'free') FROM users WHERE id = %s", (u["id"],))
+                cur.execute("SELECT COALESCE(tier, 'free'), phone, COALESCE(phone_verified, false), email, first_name FROM users WHERE id = %s", (u["id"],))
                 row = cur.fetchone()
                 cur.close()
                 if row:
                     session["tier"] = row[0]
                     u["tier"] = row[0]
+                    u["phone"] = row[1]
+                    u["phone_verified"] = bool(row[2])
+                    u["email"] = row[3]
+                    u["first_name"] = row[4]
             except Exception as e:
                 logger.error("auth_me tier error: %s" % e)
             finally:
@@ -504,12 +576,18 @@ def auth_signup():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
+    email = (data.get("email") or "").strip()
+    first_name = (data.get("first_name") or "").strip()[:80]
+    last_name = (data.get("last_name") or "").strip()[:80]
+    phone = (data.get("phone") or "").strip()[:30]
     if len(username) < 3 or len(username) > 30:
         return jsonify({"error": "Username must be 3 to 30 characters."}), 400
     if not all(c.isalnum() or c in "_." for c in username):
         return jsonify({"error": "Username can use letters, numbers, underscore, and period only."}), 400
     if len(password) < 8:
         return jsonify({"error": "Password must be at least 8 characters."}), 400
+    if not email or not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return jsonify({"error": "Enter a valid email address."}), 400
     conn = get_db()
     if conn is None:
         return jsonify({"error": "Accounts are not available right now."}), 500
@@ -519,8 +597,16 @@ def auth_signup():
         if cur.fetchone():
             cur.close()
             return jsonify({"error": "That username is taken."}), 409
+        cur.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(%s)", (email,))
+        if cur.fetchone():
+            cur.close()
+            return jsonify({"error": "That email is already registered."}), 409
         pw_hash = generate_password_hash(password)
-        cur.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id", (username, pw_hash))
+        cur.execute(
+            "INSERT INTO users (username, password_hash, email, first_name, last_name, phone, tier, paper_cash) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 'free', 100000) RETURNING id",
+            (username, pw_hash, email, first_name or None, last_name or None, phone or None),
+        )
         uid = cur.fetchone()[0]
         conn.commit()
         cur.close()
@@ -528,10 +614,15 @@ def auth_signup():
         session["user_id"] = uid
         session["username"] = username
         session["tier"] = "free"
-        return jsonify({"ok": True, "user": {"id": uid, "username": username, "tier": "free"}})
+        return jsonify({"ok": True, "user": {"id": uid, "username": username, "tier": "free",
+                                             "phone": phone or None, "phone_verified": False}})
     except Exception as e:
         logger.error("signup error: %s" % e)
-        return jsonify({"error": "Could not create account. Try again."}), 500
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"error": "Could not create account. The email or username may already be in use."}), 500
     finally:
         conn.close()
 
@@ -570,6 +661,117 @@ def auth_login():
 def auth_logout():
     session.clear()
     return jsonify({"ok": True})
+
+
+# Marketing list export as CSV. Per spec this is open for internal use, but because it exposes
+# every user's email and phone, you can lock it by setting MARKETING_EXPORT_TOKEN and then
+# calling it as /marketing/export?token=YOURTOKEN. With no token set, it stays open.
+@app.route("/marketing/export")
+def marketing_export():
+    gate = os.environ.get("MARKETING_EXPORT_TOKEN", "")
+    if gate and request.args.get("token") != gate:
+        return Response("error,unauthorized\n", mimetype="text/csv"), 401
+    conn = get_db()
+    if conn is None:
+        return Response("error,no database\n", mimetype="text/csv"), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT email, first_name, last_name, phone, COALESCE(phone_verified, false), created_at "
+                    "FROM users ORDER BY created_at ASC NULLS LAST")
+        rows = cur.fetchall()
+        cur.close()
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(["email", "first_name", "last_name", "phone", "phone_verified", "created_at"])
+        for em, fn, ln, ph, pv, ts in rows:
+            w.writerow([em or "", fn or "", ln or "", ph or "", "yes" if pv else "no", ts.isoformat() if ts else ""])
+        return Response(out.getvalue(), mimetype="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=apexq_marketing.csv"})
+    except Exception as e:
+        logger.error("marketing_export error: %s" % e)
+        return Response("error,export failed\n", mimetype="text/csv"), 500
+    finally:
+        conn.close()
+
+
+@app.route("/auth/send-verification", methods=["POST"])
+def send_verification():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    data = request.get_json(silent=True) or {}
+    phone = (data.get("phone") or "").strip()
+    cleaned = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if not re.match(r"^\+?[0-9]{7,15}$", cleaned):
+        return jsonify({"error": "Enter a valid phone number with country code, like +12035551234."}), 400
+    code = "%06d" % _secrets.randbelow(1000000)
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Verification is not available right now."}), 500
+    try:
+        cur = conn.cursor()
+        expires = datetime.now() + timedelta(minutes=10)
+        cur.execute("INSERT INTO phone_verifications (phone, code, expires_at, verified) VALUES (%s, %s, %s, false)",
+                    (cleaned, code, expires))
+        cur.execute("UPDATE users SET phone = %s WHERE id = %s", (cleaned, u["id"]))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("send_verification db error: %s" % e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"error": "Could not start verification. Try again."}), 500
+    finally:
+        conn.close()
+    _send_sms(cleaned, "Your Apex Q verification code is %s. It expires in 10 minutes." % code)
+    return jsonify({"ok": True})
+
+
+@app.route("/auth/verify-phone", methods=["POST"])
+def verify_phone():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    data = request.get_json(silent=True) or {}
+    code = (data.get("code") or "").strip()
+    if not code:
+        return jsonify({"error": "Enter the code we sent you."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Verification is not available right now."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT phone FROM users WHERE id = %s", (u["id"],))
+        prow = cur.fetchone()
+        phone = prow[0] if prow else None
+        if not phone:
+            cur.close()
+            return jsonify({"error": "Add a phone number first."}), 400
+        cur.execute(
+            "SELECT id FROM phone_verifications WHERE phone = %s AND code = %s AND verified = false "
+            "AND expires_at > NOW() ORDER BY id DESC LIMIT 1",
+            (phone, code),
+        )
+        match = cur.fetchone()
+        if not match:
+            cur.close()
+            return jsonify({"error": "That code is wrong or has expired."}), 400
+        cur.execute("UPDATE phone_verifications SET verified = true WHERE id = %s", (match[0],))
+        cur.execute("UPDATE users SET phone_verified = true WHERE id = %s", (u["id"],))
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("verify_phone error: %s" % e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"error": "Could not verify. Try again."}), 500
+    finally:
+        conn.close()
 
 
 # SECURITY: lets a logged in user download everything stored about them in one JSON file.
@@ -5029,6 +5231,283 @@ def stripe_webhook():
 
 
 # ============ END PREMIUM ROUTES ============
+
+
+# ============ PAPER TRADING ============
+# Free for every logged in user. Each account starts with 100000 in virtual cash. Buys and sells
+# use the same realtime price source as the rest of the app. Educational simulation only.
+PAPER_START_CASH = 100000.0
+
+
+def _paper_price(symbol):
+    """Best available current price for a symbol as a float, or None."""
+    rp = get_realtime_price(symbol)
+    if rp and rp.get("price"):
+        try:
+            return float(rp["price"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _paper_chart(rows, start_equity):
+    """Reconstruct daily total equity, cash plus marked to market holdings, since the first trade,
+    alongside a buy and hold S&P line starting from the same equity. Returns [] if there are no
+    trades or prices cannot be loaded. Reuses _price_pairs, which is cached one hour per ticker."""
+    if not rows:
+        return []
+    buy_dates = [r[4].date() for r in rows if r[4] is not None]
+    if not buy_dates:
+        return []
+    start_date = min(buy_dates)
+    today = datetime.now().date()
+    if start_date >= today:
+        start_date = today - timedelta(days=5)
+    fetch_end = today + timedelta(days=1)
+    spy_pairs = _price_pairs("SPY", start_date, fetch_end)
+    if not spy_pairs:
+        return []
+    spy_dates = [d for d, _ in spy_pairs]
+    spy_map = dict(spy_pairs)
+    spy_first = spy_pairs[0][1]
+    symbols = sorted(set(r[1] for r in rows))
+    hist = {}
+    for s in symbols:
+        hist[s] = dict(_price_pairs(s, start_date, fetch_end))
+    trades = []
+    for r in rows:
+        tid, sym, sh, bp, bd, sold, sp, sd = r
+        trades.append({
+            "symbol": sym,
+            "shares": float(sh),
+            "buy_price": float(bp),
+            "buy_date": bd.date() if bd else start_date,
+            "sold": bool(sold),
+            "sell_price": float(sp) if sp is not None else None,
+            "sell_date": sd.date() if sd else None,
+        })
+    out = []
+    last_price = {s: None for s in symbols}
+    for d in spy_dates:
+        for s in symbols:
+            if d in hist[s]:
+                last_price[s] = hist[s][d]
+        cash = start_equity
+        holdings = 0.0
+        for t in trades:
+            if t["buy_date"] <= d:
+                cash -= t["shares"] * t["buy_price"]
+            sold_by_d = t["sold"] and t["sell_date"] is not None and t["sell_date"] <= d
+            if sold_by_d:
+                cash += t["shares"] * (t["sell_price"] if t["sell_price"] is not None else t["buy_price"])
+            held = (t["buy_date"] <= d) and not sold_by_d
+            if held:
+                lp = last_price.get(t["symbol"])
+                if lp is not None:
+                    holdings += t["shares"] * lp
+        port = cash + holdings
+        spx = start_equity * (spy_map[d] / spy_first)
+        out.append({"date": d.isoformat(), "portfolio_value": round(port, 2), "sp500_value": round(spx, 2)})
+    return out
+
+
+@app.route("/paper/portfolio")
+def paper_portfolio():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    uid = u["id"]
+    ckey = "paper_%s" % uid
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < 60:
+        return jsonify(cached[0])
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Paper trading is not available right now."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COALESCE(paper_cash, %s) FROM users WHERE id = %s", (PAPER_START_CASH, uid))
+        crow = cur.fetchone()
+        cash = float(crow[0]) if crow else PAPER_START_CASH
+        cur.execute("SELECT id, symbol, shares, buy_price, buy_date, sold, sell_price, sell_date "
+                    "FROM paper_trades WHERE user_id = %s ORDER BY buy_date ASC", (uid,))
+        rows = cur.fetchall()
+        cur.close()
+    except Exception as e:
+        logger.error("paper_portfolio db error: %s" % e)
+        conn.close()
+        return jsonify({"error": "Could not load your paper portfolio."}), 500
+    conn.close()
+
+    open_positions = []
+    closed_trades = []
+    held_symbols = set()
+    for r in rows:
+        tid, sym, sh, bp, bd, sold, sp, sd = r
+        sh = float(sh)
+        bp = float(bp)
+        if sold:
+            spf = float(sp) if sp is not None else bp
+            closed_trades.append({
+                "trade_id": tid, "symbol": sym, "shares": round(sh, 4),
+                "buy_price": round(bp, 2), "sell_price": round(spf, 2),
+                "pnl": round((spf - bp) * sh, 2),
+                "return_pct": round((spf / bp - 1) * 100, 2) if bp else 0,
+                "buy_date": bd.isoformat() if bd else None,
+                "sell_date": sd.isoformat() if sd else None,
+            })
+        else:
+            held_symbols.add(sym)
+            open_positions.append({"trade_id": tid, "symbol": sym, "shares": sh, "buy_price": bp, "buy_date": bd})
+
+    prices = {}
+    for sym in held_symbols:
+        p = _paper_price(sym)
+        if p is not None:
+            prices[sym] = p
+
+    holdings_value = 0.0
+    holdings_out = []
+    for pos in open_positions:
+        cp = prices.get(pos["symbol"], pos["buy_price"])
+        val = pos["shares"] * cp
+        holdings_value += val
+        holdings_out.append({
+            "trade_id": pos["trade_id"], "symbol": pos["symbol"], "shares": round(pos["shares"], 4),
+            "buy_price": round(pos["buy_price"], 2), "current_price": round(cp, 2),
+            "value": round(val, 2), "pnl": round((cp - pos["buy_price"]) * pos["shares"], 2),
+            "return_pct": round((cp / pos["buy_price"] - 1) * 100, 2) if pos["buy_price"] else 0,
+            "buy_date": pos["buy_date"].isoformat() if pos["buy_date"] else None,
+        })
+
+    total_value = cash + holdings_value
+    total_pnl = total_value - PAPER_START_CASH
+    total_return = (total_value / PAPER_START_CASH - 1) * 100 if PAPER_START_CASH else 0
+    closed_wins = len([t for t in closed_trades if t["pnl"] > 0])
+    win_rate = (closed_wins / len(closed_trades) * 100) if closed_trades else 0.0
+
+    chart_data = _paper_chart(rows, PAPER_START_CASH)
+    sp500_return = 0.0
+    if chart_data and chart_data[-1].get("sp500_value"):
+        sp500_return = (chart_data[-1]["sp500_value"] / PAPER_START_CASH - 1) * 100
+
+    result = {
+        "cash": round(cash, 2),
+        "holdings_value": round(holdings_value, 2),
+        "total_value": round(total_value, 2),
+        "starting_cash": PAPER_START_CASH,
+        "total_pnl": round(total_pnl, 2),
+        "total_return": round(total_return, 2),
+        "sp500_return": round(sp500_return, 2),
+        "win_rate": round(win_rate, 1),
+        "open_count": len(holdings_out),
+        "closed_count": len(closed_trades),
+        "positions": holdings_out,
+        "closed": list(reversed(closed_trades))[:10],
+        "chart_data": chart_data,
+    }
+    set_cache(ckey, result)
+    return jsonify(result)
+
+
+@app.route("/paper/buy", methods=["POST"])
+def paper_buy():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get("symbol") or "").strip().upper()
+    try:
+        shares = float(data.get("shares") or 0)
+    except (TypeError, ValueError):
+        shares = 0
+    if not symbol:
+        return jsonify({"error": "Enter a symbol."}), 400
+    if shares <= 0:
+        return jsonify({"error": "Enter a share count greater than zero."}), 400
+    price = _paper_price(symbol)
+    if price is None or price <= 0:
+        return jsonify({"error": "Could not get a price for %s." % symbol}), 400
+    cost = shares * price
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Paper trading is not available right now."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COALESCE(paper_cash, %s) FROM users WHERE id = %s", (PAPER_START_CASH, u["id"]))
+        row = cur.fetchone()
+        cash = float(row[0]) if row else 0.0
+        if cost > cash:
+            cur.close()
+            return jsonify({"error": "Not enough virtual cash. Cost $%.2f, you have $%.2f." % (cost, cash)}), 400
+        cur.execute("UPDATE users SET paper_cash = COALESCE(paper_cash, %s) - %s WHERE id = %s",
+                    (PAPER_START_CASH, cost, u["id"]))
+        cur.execute("INSERT INTO paper_trades (user_id, symbol, shares, buy_price) VALUES (%s, %s, %s, %s)",
+                    (u["id"], symbol, shares, price))
+        conn.commit()
+        cur.close()
+        CACHE.pop("paper_%s" % u["id"], None)
+        return jsonify({"ok": True, "symbol": symbol, "shares": shares, "price": round(price, 2), "cost": round(cost, 2)})
+    except Exception as e:
+        logger.error("paper_buy error: %s" % e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"error": "Could not complete the buy. Try again."}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/paper/sell", methods=["POST"])
+def paper_sell():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    data = request.get_json(silent=True) or {}
+    try:
+        trade_id = int(data.get("trade_id") or 0)
+    except (TypeError, ValueError):
+        trade_id = 0
+    if not trade_id:
+        return jsonify({"error": "Missing trade id."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Paper trading is not available right now."}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, shares, sold FROM paper_trades WHERE id = %s AND user_id = %s", (trade_id, u["id"]))
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            return jsonify({"error": "Trade not found."}), 404
+        if row[2]:
+            cur.close()
+            return jsonify({"error": "That position is already closed."}), 400
+        symbol = row[0]
+        shares = float(row[1])
+        price = _paper_price(symbol)
+        if price is None or price <= 0:
+            cur.close()
+            return jsonify({"error": "Could not get a price to sell %s." % symbol}), 400
+        proceeds = shares * price
+        cur.execute("UPDATE paper_trades SET sold = true, sell_price = %s, sell_date = NOW() WHERE id = %s", (price, trade_id))
+        cur.execute("UPDATE users SET paper_cash = COALESCE(paper_cash, %s) + %s WHERE id = %s",
+                    (PAPER_START_CASH, proceeds, u["id"]))
+        conn.commit()
+        cur.close()
+        CACHE.pop("paper_%s" % u["id"], None)
+        return jsonify({"ok": True, "symbol": symbol, "shares": shares, "price": round(price, 2), "proceeds": round(proceeds, 2)})
+    except Exception as e:
+        logger.error("paper_sell error: %s" % e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"error": "Could not complete the sell. Try again."}), 500
+    finally:
+        conn.close()
+# ============ END PAPER TRADING ============
 
 
 if __name__ == "__main__":
