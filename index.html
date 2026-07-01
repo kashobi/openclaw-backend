@@ -2183,8 +2183,13 @@ function run(){
     if(aboutCard){
       var summ = (d.company_summary || "").trim();
       if(summ){
+        // Keep it short. People do not read long blurbs, so show the first two sentences, capped tight.
+        var shortSumm = summ;
+        var sent = summ.match(/[^.!?]+[.!?]+/g);
+        if(sent && sent.length){ shortSumm = sent.slice(0, 2).join(" ").trim(); }
+        if(shortSumm.length > 240){ shortSumm = shortSumm.slice(0, 237).replace(/\s+\S*$/, "") + "..."; }
         document.getElementById("aboutTitle").textContent = "About " + (d.name || d.symbol || "");
-        document.getElementById("aboutBody").textContent = summ;
+        document.getElementById("aboutBody").textContent = shortSumm;
         aboutCard.style.display = "";
       } else {
         document.getElementById("aboutBody").textContent = "";
@@ -2490,7 +2495,7 @@ document.addEventListener("click", function(e){
   if(svp){ e.stopPropagation(); savePortfolioEdit(svp.getAttribute("data-save-port")); return; }
   if(e.target.id === "portLogin"){ openAuth("login"); return; }
   var themeEl = e.target.closest("[data-theme]");
-  if(themeEl){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
+  if(themeEl && themeEl !== document.documentElement){ setActiveChip(themeEl); loadTheme(themeEl.getAttribute("data-theme")); return; }
   var congBack = e.target.closest("[data-cong-back]");
   if(congBack){ e.stopPropagation(); showCongressList(); return; }
   var polEl = e.target.closest("[data-pol]");
