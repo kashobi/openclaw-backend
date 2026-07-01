@@ -751,6 +751,35 @@ select.cmpInp{cursor:pointer;}
 .btTp{color:var(--muted);flex:1;}
 .btTr{font-weight:800;text-align:right;}
 .btNote{color:var(--muted);font-size:13px;padding:10px 2px;}
+.authRow2{display:flex;gap:8px;}
+.authRow2 .authInp{flex:1;min-width:0;}
+.verifyBanner{background:var(--ybg);border:1px solid var(--yellow);border-radius:12px;padding:11px 14px;margin-bottom:14px;}
+.vbMsg{font-size:13.5px;font-weight:700;color:var(--text);margin-bottom:8px;}
+.vbForm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.vbInput{background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:8px 11px;color:var(--text);font-size:14px;font-family:'JetBrains Mono',monospace;width:120px;letter-spacing:2px;}
+.vbBtn{background:var(--accent);color:#0c0f12;border:none;border-radius:9px;padding:8px 15px;font-weight:800;font-size:13px;cursor:pointer;}
+.vbBtn:hover{background:var(--accent-d);}
+.vbResend{background:none;border:none;color:var(--muted);font-size:12.5px;font-weight:700;cursor:pointer;text-decoration:underline;}
+.vbNote{font-size:12px;color:var(--muted);margin-top:7px;font-weight:600;}
+.ptGuard{color:var(--muted);font-size:14px;padding:20px 2px;font-weight:600;}
+.ptCashCard{background:linear-gradient(135deg,var(--gbg),var(--surface));border:1px solid var(--accent);border-radius:16px;padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow-sm);}
+.ptCashL{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+.ptCashV{font-size:34px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--text);letter-spacing:-1px;margin:3px 0;}
+.ptTotals{font-size:12.5px;color:var(--muted);font-weight:600;}
+.ptCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px;margin-bottom:16px;}
+.ptBuy{display:flex;gap:9px;margin-bottom:12px;flex-wrap:wrap;}
+.ptSymInp{flex:2;min-width:130px;text-transform:uppercase;}
+.ptShareInp{flex:1;min-width:90px;}
+.ptErr{background:var(--rbg);border:1px solid var(--red);color:var(--red);border-radius:11px;padding:10px 13px;font-size:13px;font-weight:600;margin-bottom:12px;}
+.ptSection{margin-top:16px;}
+.ptSecTitle{font-size:13px;font-weight:800;color:var(--text);margin-bottom:9px;}
+.ptPositions,.ptClosed{display:flex;flex-direction:column;gap:7px;}
+.ptRow{display:flex;align-items:center;gap:10px;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:12.5px;font-family:'JetBrains Mono',monospace;flex-wrap:wrap;}
+.ptSym{font-weight:800;color:var(--text);min-width:52px;}
+.ptCol{color:var(--muted);}
+.ptSell{margin-left:auto;background:var(--rbg);color:var(--red);border:1px solid var(--red);border-radius:8px;padding:5px 12px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;}
+.ptSell:hover{background:var(--red);color:#fff;}
+.ptDisc{margin-top:16px;font-size:11.5px;color:var(--muted);font-style:italic;padding:10px 12px;background:var(--s2);border-radius:10px;border:1px solid var(--border);}
 </style>
 </head>
 <body>
@@ -765,6 +794,15 @@ select.cmpInp{cursor:pointer;}
   </div>
 </div>
 <div class="views">
+<div class="verifyBanner" id="verifyBanner" style="display:none">
+  <div class="vbMsg">&#128241; Verify your phone to enable alerts.</div>
+  <div class="vbForm">
+    <input class="vbInput" id="vbCode" type="text" inputmode="numeric" maxlength="6" placeholder="6 digit code">
+    <button class="vbBtn" id="vbVerify">Verify</button>
+    <button class="vbResend" id="vbResend">Resend code</button>
+  </div>
+  <div class="vbNote" id="vbNote"></div>
+</div>
 <div class="view active" id="view-home">
 <div class="mbar"><div class="mbari">
   <div class="mi" data-sym="^GSPC"><div class="ml">S&amp;P 500</div><div class="mv ld" id="m0">--</div></div>
@@ -1100,6 +1138,32 @@ select.cmpInp{cursor:pointer;}
     <div class="btTradesWrap"><div class="btTradesTitle">Trades simulated</div><div class="btTrades" id="btTrades"></div></div>
   </div>
 </div>
+<div class="view" id="view-trade">
+  <div class="vhead">
+    <div class="vhead-t">Paper Trading</div>
+    <div class="vhead-s">Practice with 100000 in virtual cash. Buy and sell at live prices and track your performance against the S&P 500. Educational simulation only.</div>
+  </div>
+  <div class="ptGuard" id="ptGuard" style="display:none">Log in to start paper trading with 100000 in virtual cash.</div>
+  <div id="ptMain" style="display:none">
+    <div class="ptCashCard">
+      <div class="ptCashL">Virtual cash</div>
+      <div class="ptCashV" id="ptCash">$100,000</div>
+      <div class="ptTotals" id="ptTotals">Total value $100,000</div>
+    </div>
+    <div class="ptCards" id="ptCards"></div>
+    <div class="ptBuy">
+      <input class="cmpInp ptSymInp" id="ptSym" type="text" placeholder="Symbol, like AAPL" autocapitalize="characters" spellcheck="false">
+      <input class="cmpInp ptShareInp" id="ptShares" type="number" min="0" step="1" placeholder="Shares">
+      <button class="cmpBtn" id="ptBuyBtn">Buy</button>
+    </div>
+    <div class="ptErr" id="ptErr" style="display:none"></div>
+    <div class="btLegend"><span class="btLeg"><span class="btSw" style="background:#22c55e"></span>Your portfolio</span><span class="btLeg"><span class="btSw" style="background:#3b82f6"></span>S&P 500</span></div>
+    <div class="btChartHost" id="ptChart"></div>
+    <div class="ptSection"><div class="ptSecTitle">Open positions</div><div class="ptPositions" id="ptPositions"></div></div>
+    <div class="ptSection"><div class="ptSecTitle">Recent closed trades</div><div class="ptClosed" id="ptClosed"></div></div>
+    <div class="ptDisc">Paper trading is for educational simulation only. Real market conditions differ.</div>
+  </div>
+</div>
 <div class="foot">
   APEX Q INTELLIGENCE TERMINAL &nbsp;|&nbsp; ANALYST AGENT &bull; REGULATORY AGENT &bull; INSIDER AGENT &bull; NEWS AGENT &bull; SYNTHESIS ENGINE<br><br>
   The insights provided are generated by our analytical engine for educational and illustrative purposes only.<br>
@@ -1117,6 +1181,14 @@ select.cmpInp{cursor:pointer;}
     </div>
     <div class="authErr" id="authErr" style="display:none"></div>
     <input class="authInp" id="authUser" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <div id="authSignupFields" style="display:none">
+      <input class="authInp" id="authEmail" type="email" placeholder="Email" autocomplete="email" autocapitalize="none" spellcheck="false">
+      <div class="authRow2">
+        <input class="authInp" id="authFirst" type="text" placeholder="First name" autocomplete="given-name">
+        <input class="authInp" id="authLast" type="text" placeholder="Last name" autocomplete="family-name">
+      </div>
+      <input class="authInp" id="authPhone" type="tel" placeholder="Phone (optional), like +12035551234" autocomplete="tel">
+    </div>
     <input class="authInp" id="authPass" type="password" placeholder="Password" autocomplete="current-password">
     <div class="authHint" id="authHint"></div>
     <button class="authSubmit" id="authSubmit">Log In</button>
@@ -1132,6 +1204,7 @@ select.cmpInp{cursor:pointer;}
   <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Saved</span></button>
   <button class="tab" data-view="portfolio"><span class="tabi">&#128200;</span><span class="tabt">Portfolio</span></button>
   <button class="tab" data-view="backtest"><span class="tabi">&#128202;</span><span class="tabt">Backtest</span></button>
+  <button class="tab" data-view="trade"><span class="tabi">&#128181;</span><span class="tabt">Trade</span></button>
   <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
 </nav>
 <div class="newsModalOverlay" id="newsModalOverlay">
@@ -2525,6 +2598,7 @@ function setAuthMode(mode){
   document.getElementById("tabLogin").classList.toggle("active", mode === "login");
   document.getElementById("tabSignup").classList.toggle("active", mode === "signup");
   document.getElementById("authSubmit").textContent = mode === "login" ? "Log In" : "Create Account";
+  document.getElementById("authSignupFields").style.display = (mode === "signup") ? "block" : "none";
   document.getElementById("authHint").textContent = mode === "signup" ? "Username 3 to 30 characters. Password at least 8 characters." : "";
   document.getElementById("authPass").setAttribute("autocomplete", mode === "login" ? "current-password" : "new-password");
   var err = document.getElementById("authErr");
@@ -2551,6 +2625,15 @@ function submitAuth(){
   var u = document.getElementById("authUser").value.trim();
   var p = document.getElementById("authPass").value;
   if(!u || !p){ showAuthErr("Enter your username and password."); return; }
+  var payload = {username: u, password: p};
+  if(authMode === "signup"){
+    var em = document.getElementById("authEmail").value.trim();
+    if(!em || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)){ showAuthErr("Enter a valid email address."); return; }
+    payload.email = em;
+    payload.first_name = document.getElementById("authFirst").value.trim();
+    payload.last_name = document.getElementById("authLast").value.trim();
+    payload.phone = document.getElementById("authPhone").value.trim();
+  }
   var btn = document.getElementById("authSubmit");
   btn.disabled = true;
   var path = authMode === "signup" ? "/auth/signup" : "/auth/login";
@@ -2558,7 +2641,7 @@ function submitAuth(){
     method: "POST",
     headers: {"Content-Type": "application/json"},
     credentials: "same-origin",
-    body: JSON.stringify({username: u, password: p})
+    body: JSON.stringify(payload)
   }).then(function(r){ return r.json().then(function(d){ return {status: r.status, body: d}; }); }).then(function(res){
     btn.disabled = false;
     if(res.body && res.body.ok){
@@ -2595,6 +2678,7 @@ function refreshMe(){
     loadDashboard();
     applyPremiumUI();
     refreshUsage();
+    updateVerifyBanner();
   }).catch(function(){});
 }
 
@@ -3828,6 +3912,210 @@ function renderBacktestChart(data, capital){
   host.ontouchmove = function(e){ if(e.touches && e.touches[0]){ moveTo(e.touches[0].clientX); } };
 }
 
+// ============ PHONE VERIFICATION ============
+var _verifySent = false;
+function updateVerifyBanner(){
+  var bn = document.getElementById("verifyBanner");
+  if(!bn) return;
+  if(currentUser && currentUser.phone && !currentUser.phone_verified){
+    bn.style.display = "block";
+    if(!_verifySent){ _verifySent = true; sendVerifyCode(); }
+  } else {
+    bn.style.display = "none";
+  }
+}
+function sendVerifyCode(){
+  var phone = currentUser && currentUser.phone;
+  if(!phone) return;
+  var note = document.getElementById("vbNote");
+  fetch(API + "/auth/send-verification", {method:"POST", headers:{"Content-Type":"application/json"}, credentials:"same-origin", body: JSON.stringify({phone: phone})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(!note) return;
+      note.textContent = (d && d.ok) ? ("Code sent to " + phone + ".") : ((d && d.error) ? d.error : "Could not send a code.");
+    }).catch(function(){ if(note){ note.textContent = "Connection issue sending code."; } });
+}
+function verifyPhoneCode(){
+  var el = document.getElementById("vbCode");
+  var code = el ? el.value.trim() : "";
+  var note = document.getElementById("vbNote");
+  if(!code){ if(note){ note.textContent = "Enter the 6 digit code."; } return; }
+  fetch(API + "/auth/verify-phone", {method:"POST", headers:{"Content-Type":"application/json"}, credentials:"same-origin", body: JSON.stringify({code: code})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(d && d.ok){
+        if(currentUser){ currentUser.phone_verified = true; }
+        if(note){ note.textContent = "Phone verified. Thank you."; }
+        setTimeout(updateVerifyBanner, 1200);
+      } else if(note){ note.textContent = (d && d.error) ? d.error : "Wrong or expired code."; }
+    }).catch(function(){ if(note){ note.textContent = "Connection issue. Try again."; } });
+}
+(function(){
+  var v = document.getElementById("vbVerify");
+  if(v){ v.addEventListener("click", verifyPhoneCode); }
+  var r = document.getElementById("vbResend");
+  if(r){ r.addEventListener("click", sendVerifyCode); }
+})();
+// ============ END PHONE VERIFICATION ============
+
+// ============ PAPER TRADING ============
+var _tradeInit = false;
+function initTrade(){
+  var guard = document.getElementById("ptGuard");
+  var main = document.getElementById("ptMain");
+  if(!currentUser){
+    if(guard) guard.style.display = "block";
+    if(main) main.style.display = "none";
+    return;
+  }
+  if(guard) guard.style.display = "none";
+  if(main) main.style.display = "block";
+  if(!_tradeInit){
+    _tradeInit = true;
+    var b = document.getElementById("ptBuyBtn");
+    if(b){ b.addEventListener("click", paperBuy); }
+  }
+  loadPaper();
+}
+function loadPaper(){
+  fetch(API + "/paper/portfolio", {credentials:"same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(!d || d.error){ return; }
+    renderPaper(d);
+  }).catch(function(){});
+}
+function paperBuy(){
+  if(!currentUser){ openAuth("login"); return; }
+  var symEl = document.getElementById("ptSym");
+  var shEl = document.getElementById("ptShares");
+  var err = document.getElementById("ptErr");
+  var sym = symEl ? symEl.value.trim().toUpperCase() : "";
+  var sh = shEl ? shEl.value : "";
+  if(err){ err.style.display = "none"; err.textContent = ""; }
+  if(!sym || !sh || Number(sh) <= 0){ if(err){ err.textContent = "Enter a symbol and a share count."; err.style.display = "block"; } return; }
+  var btn = document.getElementById("ptBuyBtn");
+  if(btn) btn.disabled = true;
+  fetch(API + "/paper/buy", {method:"POST", headers:{"Content-Type":"application/json"}, credentials:"same-origin", body: JSON.stringify({symbol: sym, shares: Number(sh)})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(btn) btn.disabled = false;
+      if(d && d.ok){
+        if(symEl) symEl.value = "";
+        if(shEl) shEl.value = "";
+        showToast("Bought " + d.shares + " " + d.symbol + " at $" + d.price);
+        loadPaper();
+      } else if(err){ err.textContent = (d && d.error) ? d.error : "Could not buy."; err.style.display = "block"; }
+    }).catch(function(){ if(btn) btn.disabled = false; if(err){ err.textContent = "Connection issue. Try again."; err.style.display = "block"; } });
+}
+function paperSell(tradeId){
+  fetch(API + "/paper/sell", {method:"POST", headers:{"Content-Type":"application/json"}, credentials:"same-origin", body: JSON.stringify({trade_id: tradeId})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(d && d.ok){ showToast("Sold " + d.shares + " " + d.symbol + " at $" + d.price); loadPaper(); }
+      else { showToast((d && d.error) ? d.error : "Could not sell."); }
+    }).catch(function(){ showToast("Connection issue. Try again."); });
+}
+function renderPaper(d){
+  function money(v){ return "$" + Math.round(v).toLocaleString(); }
+  function money2(v){ return "$" + (v||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
+  function signedMoney(v){ return (v<0?"-$":"+$") + Math.abs(v||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
+  function pc(v){ return (v>=0?"+":"") + (v||0).toFixed(2) + "%"; }
+  function cls(v){ return v>=0 ? "btUp" : "btDn"; }
+  var cashEl = document.getElementById("ptCash");
+  if(cashEl){ cashEl.textContent = money2(d.cash); }
+  var tot = document.getElementById("ptTotals");
+  if(tot){ tot.innerHTML = "Total value <strong>" + money2(d.total_value) + "</strong> &middot; holdings " + money2(d.holdings_value); }
+  var diff = (d.total_return||0) - (d.sp500_return||0);
+  var cards = "";
+  cards += "<div class='btCard'><div class='btCardL'>Total P&L</div><div class='btCardV " + cls(d.total_pnl) + "'>" + signedMoney(d.total_pnl) + "</div><div class='btCardS'>" + pc(d.total_return) + " on " + money(d.starting_cash) + "</div></div>";
+  cards += "<div class='btCard'><div class='btCardL'>vs S&P 500</div><div class='btCardV " + cls(diff) + "'>" + pc(diff) + "</div><div class='btCardS'>index " + pc(d.sp500_return) + " same period</div></div>";
+  cards += "<div class='btCard'><div class='btCardL'>Win rate</div><div class='btCardV'>" + (d.win_rate||0).toFixed(0) + "%</div><div class='btCardS'>" + (d.closed_count||0) + " closed trades</div></div>";
+  cards += "<div class='btCard'><div class='btCardL'>Open positions</div><div class='btCardV'>" + (d.open_count||0) + "</div><div class='btCardS'>holding " + money2(d.holdings_value) + "</div></div>";
+  var cardsEl = document.getElementById("ptCards");
+  if(cardsEl){ cardsEl.innerHTML = cards; }
+  var pos = d.positions || [];
+  var ph = "";
+  for(var i=0;i<pos.length;i++){
+    var p = pos[i];
+    ph += "<div class='ptRow'><span class='ptSym'>" + esc(p.symbol) + "</span><span class='ptCol'>" + p.shares + " sh</span><span class='ptCol'>$" + p.buy_price.toLocaleString() + " &#8594; $" + p.current_price.toLocaleString() + "</span><span class='ptCol " + cls(p.pnl) + "'>" + signedMoney(p.pnl) + " (" + pc(p.return_pct) + ")</span><button class='ptSell' onclick='paperSell(" + p.trade_id + ")'>Sell</button></div>";
+  }
+  var posEl = document.getElementById("ptPositions");
+  if(posEl){ posEl.innerHTML = ph || "<div class='btNote'>No open positions. Buy something above to start.</div>"; }
+  var cl = d.closed || [];
+  var ch = "";
+  for(var j=0;j<cl.length;j++){
+    var c = cl[j];
+    ch += "<div class='ptRow'><span class='ptSym'>" + esc(c.symbol) + "</span><span class='ptCol'>" + c.shares + " sh</span><span class='ptCol'>$" + c.buy_price.toLocaleString() + " &#8594; $" + c.sell_price.toLocaleString() + "</span><span class='ptCol " + cls(c.pnl) + "'>" + signedMoney(c.pnl) + " (" + pc(c.return_pct) + ")</span></div>";
+  }
+  var clEl = document.getElementById("ptClosed");
+  if(clEl){ clEl.innerHTML = ch || "<div class='btNote'>No closed trades yet.</div>"; }
+  renderPaperChart(d.chart_data, d.starting_cash || 100000);
+}
+function renderPaperChart(data, baseline){
+  var host = document.getElementById("ptChart");
+  if(!host) return;
+  if(!data || data.length < 2){ host.innerHTML = "<div class='btNote'>Your performance chart appears once you have held a position across a trading day.</div>"; return; }
+  var W = 720, H = 300, padL = 12, padR = 14, padT = 16, padB = 28;
+  var plotW = W - padL - padR, plotH = H - padT - padB, baseY = padT + plotH;
+  var n = data.length;
+  var mn = Infinity, mx = -Infinity;
+  for(var i=0;i<n;i++){
+    var a = data[i].portfolio_value, b = data[i].sp500_value;
+    if(a<mn)mn=a; if(a>mx)mx=a; if(b<mn)mn=b; if(b>mx)mx=b;
+  }
+  if(baseline<mn)mn=baseline; if(baseline>mx)mx=baseline;
+  if(mx===mn){ mx=mn+1; }
+  var padv=(mx-mn)*0.06; mn-=padv; mx+=padv;
+  function X(i){ return padL + (i/(n-1))*plotW; }
+  function Y(v){ return padT + (1-(v-mn)/(mx-mn))*plotH; }
+  function money(v){ return "$" + Math.round(v).toLocaleString(); }
+  var pLine="", sLine="";
+  for(var j=0;j<n;j++){
+    pLine += (j?"L":"M") + X(j).toFixed(1) + " " + Y(data[j].portfolio_value).toFixed(1) + " ";
+    sLine += (j?"L":"M") + X(j).toFixed(1) + " " + Y(data[j].sp500_value).toFixed(1) + " ";
+  }
+  var area = pLine + "L" + X(n-1).toFixed(1) + " " + baseY.toFixed(1) + " L" + X(0).toFixed(1) + " " + baseY.toFixed(1) + " Z";
+  var capY = Y(baseline).toFixed(1);
+  var svg = "<svg class='btSvg' viewBox='0 0 " + W + " " + H + "' preserveAspectRatio='xMidYMid meet'>";
+  svg += "<line x1='" + padL + "' y1='" + capY + "' x2='" + (W-padR) + "' y2='" + capY + "' stroke='var(--border)' stroke-width='1' stroke-dasharray='4 4'></line>";
+  svg += "<path d='" + area + "' fill='rgba(34,197,94,0.15)' stroke='none'></path>";
+  svg += "<path d='" + sLine + "' fill='none' stroke='#3b82f6' stroke-width='2' vector-effect='non-scaling-stroke'></path>";
+  svg += "<path d='" + pLine + "' fill='none' stroke='#22c55e' stroke-width='2.4' vector-effect='non-scaling-stroke'></path>";
+  svg += "<text x='" + (padL+2) + "' y='" + (padT+4) + "' fill='var(--muted)' font-size='11' font-family='monospace'>" + money(mx) + "</text>";
+  svg += "<text x='" + (padL+2) + "' y='" + (baseY-3) + "' fill='var(--muted)' font-size='11' font-family='monospace'>" + money(mn) + "</text>";
+  svg += "<text x='" + (padL+2) + "' y='" + (H-8) + "' fill='var(--muted)' font-size='11' font-family='monospace'>" + esc(data[0].date) + "</text>";
+  svg += "<text x='" + (W-padR) + "' y='" + (H-8) + "' fill='var(--muted)' font-size='11' font-family='monospace' text-anchor='end'>" + esc(data[n-1].date) + "</text>";
+  svg += "<line id='ptGuide' x1='0' y1='" + padT + "' x2='0' y2='" + baseY + "' stroke='var(--muted)' stroke-width='1' stroke-dasharray='3 3' style='display:none'></line>";
+  svg += "<circle id='ptDotP' r='3.6' fill='#22c55e' stroke='var(--bg)' stroke-width='1.5' style='display:none'></circle>";
+  svg += "<circle id='ptDotS' r='3.6' fill='#3b82f6' stroke='var(--bg)' stroke-width='1.5' style='display:none'></circle>";
+  svg += "</svg>";
+  svg += "<div class='btTip' id='ptTip' style='display:none'></div>";
+  host.innerHTML = svg;
+  var guide = document.getElementById("ptGuide");
+  var dotP = document.getElementById("ptDotP");
+  var dotS = document.getElementById("ptDotS");
+  var tip = document.getElementById("ptTip");
+  function moveTo(clientX){
+    var rect = host.getBoundingClientRect();
+    if(!rect.width) return;
+    var frac = (clientX - rect.left)/rect.width;
+    if(frac<0)frac=0; if(frac>1)frac=1;
+    var idx = Math.round(frac*(n-1));
+    var px = X(idx), pyP = Y(data[idx].portfolio_value), pyS = Y(data[idx].sp500_value);
+    if(guide){ guide.setAttribute("x1",px); guide.setAttribute("x2",px); guide.style.display="block"; }
+    if(dotP){ dotP.setAttribute("cx",px); dotP.setAttribute("cy",pyP); dotP.style.display="block"; }
+    if(dotS){ dotS.setAttribute("cx",px); dotS.setAttribute("cy",pyS); dotS.style.display="block"; }
+    if(tip){
+      tip.innerHTML = "<div class='btTipD'>" + esc(data[idx].date) + "</div><div class='btTipR'><span class='btSw' style='background:#22c55e'></span>" + money(data[idx].portfolio_value) + "</div><div class='btTipR'><span class='btSw' style='background:#3b82f6'></span>" + money(data[idx].sp500_value) + "</div>";
+      tip.style.display="block";
+      var tw = tip.offsetWidth || 110;
+      var lp = frac*rect.width - tw/2;
+      if(lp<2)lp=2; if(lp>rect.width-tw-2)lp=rect.width-tw-2;
+      tip.style.left = lp + "px";
+    }
+  }
+  function hideTip(){ if(guide)guide.style.display="none"; if(dotP)dotP.style.display="none"; if(dotS)dotS.style.display="none"; if(tip)tip.style.display="none"; }
+  host.onmousemove = function(e){ moveTo(e.clientX); };
+  host.onmouseleave = hideTip;
+  host.ontouchmove = function(e){ if(e.touches && e.touches[0]){ moveTo(e.touches[0].clientX); } };
+}
+// ============ END PAPER TRADING ============
+
 function showView(name){
   var vs = document.querySelectorAll(".view");
   for(var i=0;i<vs.length;i++){ vs[i].classList.remove("active"); }
@@ -3851,6 +4139,7 @@ function showView(name){
   }
   if(name === "home"){ loadHomeContext(); loadDashboard(); }
   if(name === "backtest"){ initBacktest(); }
+  if(name === "trade"){ initTrade(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
