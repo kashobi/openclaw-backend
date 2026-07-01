@@ -3827,13 +3827,13 @@ def peers():
 _MOVERS = {"data": None, "ts": 0}
 
 
-@app.route("/movers")
-def movers():
-    # The biggest gainers and decliners across the whole market, pulled live and refreshed every
-    # half hour. Surfaces names well beyond the usual large caps, which fits the Discover idea.
+def get_movers_cached():
+    # Biggest market gainers and decliners, refreshed at most every 30 minutes and shared by the
+    # Home dashboard, the Discover tab, and the /movers route so all three show the same live data.
+    # Primary source is FMP; if that is empty we derive movers from the universe we already score.
     now = time.time()
     if _MOVERS["data"] is not None and now - _MOVERS["ts"] < 1800:
-        return jsonify(_MOVERS["data"])
+        return _MOVERS["data"]
 
     def pct(v):
         try:
@@ -3873,15 +3873,22 @@ def movers():
                 return {"symbol": r["symbol"], "name": r.get("name") or r["symbol"], "change_pct": r["change_pct"], "price": r.get("price")}
             up = sorted(rows, key=lambda r: r["change_pct"], reverse=True)
             down = sorted(rows, key=lambda r: r["change_pct"])
-            gainers = [mv(r) for r in up if r["change_pct"] > 0][:8]
-            losers = [mv(r) for r in down if r["change_pct"] < 0][:8]
+            gainers = [mv(r) for r in up if r["change_pct"] > 0][:5]
+            losers = [mv(r) for r in down if r["change_pct"] < 0][:5]
 
     out = {"gainers": gainers, "losers": losers, "data_timestamp": int(time.time())}
     # Only cache a real result, so a transient FMP miss does not stick for half an hour.
     if gainers or losers:
         _MOVERS["data"] = out
         _MOVERS["ts"] = now
-    return jsonify(out)
+    return out
+
+
+@app.route("/movers")
+def movers():
+    # The biggest gainers and decliners across the whole market, pulled live and refreshed every
+    # half hour. Surfaces names well beyond the usual large caps, which fits the Discover idea.
+    return jsonify(get_movers_cached())
 
 
 def _alert_order(a):
@@ -4049,14 +4056,12 @@ def dashboard():
     # Live market context: read the cached value only, never call the model from here.
     data["market_context"] = get_cache("ctx_^GSPC")
 
-    # Top movers: read the existing movers cache only, top 3 each side.
-    movers = {"gainers": [], "losers": []}
-    if _MOVERS.get("data"):
-        movers = {
-            "gainers": (_MOVERS["data"].get("gainers") or [])[:3],
-            "losers": (_MOVERS["data"].get("losers") or [])[:3],
-        }
-    data["movers"] = movers
+    # Top movers: shared cached helper, top 3 each side, same source as Discover and /movers.
+    md = get_movers_cached()
+    data["movers"] = {
+        "gainers": (md.get("gainers") or [])[:3],
+        "losers": (md.get("losers") or [])[:3],
+    }
 
     # Congress: read the cached insights only, top 3 most active.
     congress = []
@@ -4860,13 +4865,12 @@ def market_snapshot():
         else:
             indices.append({"symbol": sym, "label": label, "price": None, "change_pct": None, "price_source": "N/A"})
 
-    # Top movers — read the existing cache only
-    movers = {"gainers": [], "losers": []}
-    if _MOVERS.get("data"):
-        movers = {
-            "gainers": (_MOVERS["data"].get("gainers") or [])[:5],
-            "losers": (_MOVERS["data"].get("losers") or [])[:5],
-        }
+    # Top movers — shared cached helper, same source as the Home dashboard and /movers
+    md = get_movers_cached()
+    movers = {
+        "gainers": (md.get("gainers") or [])[:5],
+        "losers": (md.get("losers") or [])[:5],
+    }
 
     # Trending — read the existing cache only
     trending = []
@@ -5240,13 +5244,29 @@ PAPER_START_CASH = 100000.0
 
 
 def _paper_price(symbol):
-    """Best available current price for a symbol as a float, or None."""
+    """Best available current price for a symbol as a float, or None. Tries the light realtime
+    quote first, then the cached discover score (light_score), then a direct yfinance close, so a
+    live price is almost always found and open positions never fall back to a flat zero P&L."""
     rp = get_realtime_price(symbol)
     if rp and rp.get("price"):
         try:
             return float(rp["price"])
         except (TypeError, ValueError):
-            return None
+            pass
+    ls = light_score(symbol)
+    if ls and ls.get("price"):
+        try:
+            return float(ls["price"])
+        except (TypeError, ValueError):
+            pass
+    try:
+        h = yf.Ticker(symbol).history(period="1d", timeout=10)
+        if h is not None and len(h) and "Close" in h:
+            v = float(h["Close"].iloc[-1])
+            if v == v and v > 0:
+                return v
+    except Exception:
+        pass
     return None
 
 
