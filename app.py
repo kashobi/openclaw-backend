@@ -416,6 +416,15 @@ FREE_DAILY_SCANS = 3
 FREE_DAILY_ASKS = 3
 _USAGE = {"date": None, "scan": {}, "ask": {}}
 
+# Master switch for every free tier limit. While building and before marketing, keep this OFF so
+# nothing blocks testing: the daily scan and question caps, the premium only features, and the five
+# holdings cap are all lifted.
+#
+# PAUSED FOR NOW. This is hard set to False so nothing, including any leftover Railway environment
+# variable, can turn the paywall on by accident. When you are ready to market Apex Q and switch the
+# limits on, change False to True on the line below and redeploy. That one edit is the whole switch.
+FREE_LIMITS_ENABLED = False
+
 def is_premium(u):
     return bool(u and u.get("tier") == "premium")
 
@@ -443,6 +452,8 @@ def usage_count(kind, u):
 def usage_gate(kind):
     """For a free user at or over the daily limit, returns a 402 response tuple. Otherwise it
     counts this use and returns None. Premium users are never limited and never counted."""
+    if not FREE_LIMITS_ENABLED:
+        return None
     u = current_user()
     if is_premium(u):
         return None
@@ -459,7 +470,7 @@ def usage_gate(kind):
 def require_premium(f):
     @wraps(f)
     def _wrap(*args, **kwargs):
-        if not is_premium(current_user()):
+        if FREE_LIMITS_ENABLED and not is_premium(current_user()):
             return jsonify({"error": "premium_required",
                             "message": "Upgrade to Premium to use this feature."}), 402
         return f(*args, **kwargs)
@@ -1245,7 +1256,7 @@ def portfolio_add():
         count = cur.fetchone()[0]
         cur.execute("SELECT 1 FROM holdings WHERE user_id = %s AND symbol = %s", (uid, symbol))
         exists = cur.fetchone() is not None
-        if count >= 5 and not exists and not is_premium(u):
+        if FREE_LIMITS_ENABLED and count >= 5 and not exists and not is_premium(u):
             cur.close()
             return jsonify({"error": "premium_required", "message": "Free accounts can track up to 5 holdings. Upgrade to Premium for unlimited."}), 402
         cur.execute(
