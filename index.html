@@ -851,6 +851,9 @@ body{transition:background-color .3s ease,color .3s ease;}
   .ptRow, .btTrow{row-gap:4px;}
   .ptCol{font-size:12px;}
 }
+/* Why lines under each Alpha Score factor. */
+.alphaRowT{display:block;}
+.alphaWhy{display:block;font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5;font-weight:500;}
 </style>
 </head>
 <body>
@@ -2107,6 +2110,15 @@ function toggleAlphaBreak(){
   box.style.display = open ? "none" : "flex";
   if(tog){ tog.textContent = open ? "Show how this was calculated" : "Hide breakdown"; }
 }
+// Plain English reason each factor matters, shown under its line so the score explains itself.
+var ALPHA_WHY = {
+  "Technical Momentum": "This is how the stock is trading today. A name climbing on the day shows buyers are in control right now. It is the fastest read but also the noisiest, so it carries the least weight over time.",
+  "Fundamental Health": "This checks what you pay for the earnings and how much debt the company carries. A lower price for each dollar of profit leaves more room to grow, and less debt means the company holds up better when times get hard.",
+  "Insider Sentiment": "This tracks the shares the company's own executives buy and sell. Insiders know the business better than anyone, so their own money going in is a quiet vote of confidence, and heavy selling is a caution flag.",
+  "Congressional Heat": "This counts recent buying and selling by members of Congress. Lawmakers sometimes see policy shifts before the public does, so several of them trading the same name at once can hint at what is coming.",
+  "Sector Tailwinds": "This compares the whole sector against the market. A rising tide lifts most boats, so a stock in a strong sector has the wind at its back before you even look at the company itself.",
+  "News Sentiment": "This reads the tone of recent headlines. Good news can pull in new buyers and bad news can scare them off, so the mood of the coverage often moves the price in the short run."
+};
 function renderAlpha(d){
   var card = document.getElementById("alphaCard");
   if(!card) return;
@@ -2132,7 +2144,9 @@ function renderAlpha(d){
     var items = (d && d.alpha_breakdown) ? d.alpha_breakdown : [];
     var h = "";
     for(var i=0;i<items.length;i++){
-      h += "<div class=\"alphaRow\"><span class=\"ard\" style=\"background:" + col + "\"></span><span>" + esc(items[i]) + "</span></div>";
+      var cat = String(items[i]).split(":")[0].trim();
+      var why = ALPHA_WHY[cat] || "";
+      h += "<div class=\"alphaRow\"><span class=\"ard\" style=\"background:" + col + "\"></span><span class=\"alphaRowT\">" + esc(items[i]) + (why ? "<span class=\"alphaWhy\">" + esc(why) + "</span>" : "") + "</span></div>";
     }
     box.innerHTML = h;
     box.style.display = "none";
