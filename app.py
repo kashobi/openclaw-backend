@@ -2063,7 +2063,7 @@ def _attach_verdict_change(base, symbol):
 
 # ============ APEX Q ALPHA SCORE ============
 # Proprietary composite, 0 to 100, that folds momentum, fundamentals, insider and lawmaker
-# flow, sector strength, and news tone into one number. Educational only, never advice.
+# flow, sector strength, and news tone into one number.
 # Note on the ceiling: by the scoring rules, insider and congressional max at 12 each, so the
 # practical top score is about 84. A reading of 70 or higher is therefore genuinely strong.
 SECTOR_ETF = {
@@ -3798,7 +3798,7 @@ def compare_reason(best, items):
         msg += "Among the reasons: " + ", ".join(extras) + ". "
     if caveats:
         msg += "Worth noting: " + ", and ".join(caveats) + ". "
-    msg += "This weighs the same signals you see in each full report. Educational only, never advice."
+    msg += "This weighs the same signals you see in each full report."
     return msg
 
 
@@ -3833,7 +3833,7 @@ def compare():
                 reason += " The ETFs here are shown for context but are not ranked by the stock engine, since a fund is judged on what it costs to own and what it holds, not these signals."
         else:
             reason = ("These are all exchange traded funds. Apex Q does not rank funds with the stock engine, because a fund is judged on what it costs to own and what it holds. "
-                      "Open each one for its expense ratio, top holdings, and sector mix. Educational only, never advice.")
+                      "Open each one for its expense ratio, top holdings, and sector mix.")
     return jsonify({"items": items, "strongest": strongest, "reason": reason, "warnings": warnings})
 
 
@@ -4252,7 +4252,7 @@ def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None, history=N
                 "specific company. Do not invent or assume any facts that are not above, such as news, earnings details, or analyst actions. "
                 "If a question asks for a specific fact you do not have, say you do not have enough information to answer that. "
                 "Answer in 2 to 4 short, plain sentences with no jargon. Do not use any dashes or hyphens, use plain words. "
-                "Do not give financial advice. End every message with: This is educational, not advice. Return plain text only, no markdown."
+                "Never tell the reader what they personally should buy or sell. Return plain text only, no markdown."
             )
             convo = ""
             for m in history:
@@ -4268,7 +4268,7 @@ def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None, history=N
                 "Here are the engine's current facts for this stock: " + facts + " "
                 "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
                 "Do not use any dashes or hyphens, use plain words. "
-                "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
+                "Never tell the reader what they personally should buy or sell. Return plain text only, no markdown."
             )
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
         payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400}}
@@ -4303,7 +4303,7 @@ def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None, history
                 "specific company. Do not invent or assume any facts that are not above, such as news, earnings details, or analyst actions. "
                 "If a question asks for a specific fact you do not have, say you do not have enough information to answer that. "
                 "Answer in 2 to 4 short, plain sentences with no jargon. Do not use any dashes or hyphens, use plain words. "
-                "Do not give financial advice. End every message with: This is educational, not advice. Return plain text only, no markdown."
+                "Never tell the reader what they personally should buy or sell. Return plain text only, no markdown."
             )
             messages = [{"role": "system", "content": system_content}]
             for m in history:
@@ -4318,7 +4318,7 @@ def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None, history
                 "Here are the engine's current facts for this stock: " + facts + " "
                 "Answer in 2 to 4 short, plain sentences with no jargon, grounded only in these facts and basic investing ideas. "
                 "Do not use any dashes or hyphens, use plain words. "
-                "Do not give financial advice. End by reminding the reader this is educational, not advice. Return plain text only, no markdown."
+                "Never tell the reader what they personally should buy or sell. Return plain text only, no markdown."
             )
             messages = [{"role": "user", "content": prompt}]
         headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
@@ -4347,7 +4347,7 @@ def ask_fallback(symbol, q, d, ins, extra_news=None, extra_insider=None):
     if extra_news and any(w in ql for w in ["news", "headline", "article", "report", "press", "announce", "update"]):
         heads = "; ".join([n.get("headline", "") for n in extra_news if n.get("headline")])
         if heads:
-            return "Here are the most recent headlines for " + symbol + ". " + heads + ". Read the full articles in the News Feed section of the report. Educational only, never advice."
+            return "Here are the most recent headlines for " + symbol + ". " + heads + ". Read the full articles in the News Feed section of the report."
     # CHUNK: ETFs are funds, not stocks, so answer on cost and holdings rather than a stock verdict.
     if v == "ETF":
         ans = symbol + " is an exchange traded fund, a single ticker that holds a basket of many investments. "
@@ -4357,7 +4357,7 @@ def ask_fallback(symbol, q, d, ins, extra_news=None, extra_insider=None):
             ans += "Its expense ratio, the yearly cost to own it, is about " + str(er) + " percent. "
         if cat not in (None, "N/A"):
             ans += "Its category is " + str(cat) + ". "
-        ans += "Open the full report for its top holdings and sector mix. A fund is judged on what it costs and what it holds, not a stock style verdict. Educational only, never advice."
+        ans += "Open the full report for its top holdings and sector mix. A fund is judged on what it costs and what it holds, not a stock style verdict."
         return ans
     # CHUNK: answer 'why did it move' questions with available signals
     if any(p in ql for p in ["why did it drop", "why is it down", "why did it fall", "why is it falling", "why did it rise", "why is it up", "why did it jump", "why is it rising", "why did it move", "what happened", "what caused", "what changed", "what's new", "whats new", "what is new", "any news", "news today"]):
@@ -4376,8 +4376,8 @@ def ask_fallback(symbol, q, d, ins, extra_news=None, extra_insider=None):
         if move_bits:
             reasons = ", and ".join(move_bits)
             reasons = reasons[0].upper() + reasons[1:]
-            return "Here is what the engine can see. " + reasons + ". That said, the real reason for a daily move is usually news, an earnings report, an analyst call, or a broader market swing, which the numbers alone do not capture. Check the News Feed section in the full report for the real story. Educational only, never advice."
-        return "Here is what the engine can see. The numbers on this one do not explain today's move, which usually means it is being driven by news, earnings, or a broader market swing rather than the signals. Check the News Feed section in the full report for the real story. Educational only, never advice."
+            return "Here is what the engine can see. " + reasons + ". That said, the real reason for a daily move is usually news, an earnings report, an analyst call, or a broader market swing, which the numbers alone do not capture. Check the News Feed section in the full report for the real story."
+        return "Here is what the engine can see. The numbers on this one do not explain today's move, which usually means it is being driven by news, earnings, or a broader market swing rather than the signals. Check the News Feed section in the full report for the real story."
     parts = []
     if any(w in ql for w in ["why", "watch", "verdict", "call", "rating", "approve", "pass", "buy", "hold"]):
         if v == "WATCH":
@@ -4527,7 +4527,6 @@ def coach_answer(q, entities, private):
             parts.append("That leaves nothing public here to compare. Name a publicly traded company or a ticker and I can break it down.")
         else:
             parts.append("I could not match that to stocks I can read. Try naming the companies or tickers directly, like Bank of America, JPMorgan, and Exxon.")
-        parts.append("Educational only, never advice.")
         return " ".join(parts)
     if private:
         parts.append("Here is the one I can actually read." if len(scored) == 1 else "Here are the ones I can actually read.")
@@ -4550,7 +4549,7 @@ def coach_answer(q, entities, private):
             line += " It is " + ", ".join(bits) + "."
         parts.append(line)
     parts.append("How to think about it, without anyone deciding for you. The amount of money, including the figure you mentioned, does not change what the signals say about each name. What matters more is your own time horizon, how much risk you can sit with, and whether you spread money out rather than put it all in one place. Concentrating everything in a single stock is how beginners get hurt.")
-    parts.append("None of this is a recommendation. For a real decision with real money, your own homework and a licensed professional are the right next step. Educational only, never advice.")
+    parts.append("None of this is a recommendation. For a real decision with real money, your own homework and a licensed professional are the right next step.")
     return " ".join(parts)
 
 
@@ -4569,7 +4568,7 @@ def coach_gemini(q, entities):
         "STRICT RULES: You are not a financial advisor. Do not tell the user where to invest, do not recommend a specific stock to buy, and do not suggest how to split any amount of money. "
         "Instead, explain in simple plain language how each option looks based on the facts, what the differences mean, and how a beginner should think the decision through themselves, including risk, time horizon, and not concentrating money in one name. "
         "Make clear the dollar amount does not change what the signals say. "
-        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. End by clearly stating this is educational only, not advice, and that they should do their own research and consider a licensed professional. Return plain text only, no markdown."
+        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. Never tell the reader what they personally should buy or sell. Return plain text only, no markdown."
     )
     try:
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY
@@ -4599,7 +4598,7 @@ def ask_deepseek_coach(q, entities):
         "STRICT RULES: You are not a financial advisor. Do not tell the user where to invest, do not recommend a specific stock to buy, and do not suggest how to split any amount of money. "
         "Instead, explain in simple plain language how each option looks based on the facts, what the differences mean, and how a beginner should think the decision through themselves, including risk, time horizon, and not concentrating money in one name. "
         "Make clear the dollar amount does not change what the signals say. "
-        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. End by clearly stating this is educational only, not advice, and that they should do their own research and consider a licensed professional. Return plain text only, no markdown."
+        "Keep it to about 5 to 8 short sentences, no jargon. Do not use any dashes or hyphens, use plain words. Never tell the reader what they personally should buy or sell. Return plain text only, no markdown."
     )
     try:
         headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
@@ -4950,7 +4949,7 @@ def custom_signals():
     """Proprietary Apex Q Smart Money Composite Signal. Merges insider flow, congressional
     trading, analyst revision momentum, and price momentum into a single composite score
     with a plain-English read. Each component carries its own sub-score and direction so the
-    user can see exactly what is driving the composite. Educational only, never advice."""
+    user can see exactly what is driving the composite."""
     symbol = request.args.get("symbol", "").strip().upper()
     if not symbol:
         return jsonify({"error": "No symbol provided"}), 400
@@ -5076,16 +5075,14 @@ def custom_signals():
             summary += "Bullish signals from: " + ", ".join(c["name"] for c in bull) + ". "
         if bear:
             summary += "Partial caution from: " + ", ".join(c["name"] for c in bear) + ". "
-        summary += "Educational only, never advice."
     elif composite_score <= -2:
         summary = "The Smart Money Composite reads %s on %s. " % (rating, symbol)
         if bear:
             summary += "Bearish signals from: " + ", ".join(c["name"] for c in bear) + ". "
         if bull:
             summary += "Some support from: " + ", ".join(c["name"] for c in bull) + ". "
-        summary += "Educational only, never advice."
     else:
-        summary = "The Smart Money Composite reads %s on %s. Signals are mixed across insider flow, congressional trading, analyst momentum, and price action. Educational only, never advice." % (rating, symbol)
+        summary = "The Smart Money Composite reads %s on %s. Signals are mixed across insider flow, congressional trading, analyst momentum, and price action." % (rating, symbol)
 
     payload = {
         "symbol": symbol,
