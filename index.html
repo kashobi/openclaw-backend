@@ -903,6 +903,26 @@ body{transition:background-color .3s ease,color .3s ease;}
 .tradingview-widget-copyright a{color:var(--muted);text-decoration:none;}
 .tradingview-widget-copyright a:hover{color:var(--accent);}
 @media(max-width:700px){.tvHost{height:330px;}}
+/* Real Account card: SnapTrade read only brokerage connection on the Portfolio tab. */
+.stCard{border-left:3px solid var(--accent);margin-bottom:14px;}
+.stHead{font-size:13px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:8px;}
+.stBadge{background:var(--gbg);color:var(--green);border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:none;}
+.stNote{font-size:13px;color:var(--muted);line-height:1.55;margin-top:8px;}
+.stAcct{display:flex;justify-content:space-between;font-size:14px;font-weight:600;color:var(--text);padding:6px 0;}
+.stAcctV{font-family:var(--font-mono);}
+.stRow{display:grid;grid-template-columns:1.2fr 1fr 1.2fr 1fr;gap:8px;font-size:13px;padding:7px 0;border-bottom:1px solid var(--border);align-items:center;font-family:var(--font-mono);}
+.stRowHead{font-family:var(--font-sans);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);border-bottom:1px solid var(--border);}
+.stSym{cursor:pointer;font-weight:700;color:var(--text);}
+.stSym:hover{color:var(--accent);}
+.stDrift{color:var(--yellow);font-size:11px;font-weight:700;}
+.stTotal{font-size:13px;color:var(--muted);padding:10px 0 2px;font-family:var(--font-mono);}
+.stWarn{background:var(--ybg);color:var(--yellow);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;margin-top:10px;}
+.stFoot{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;}
+.stSynced{font-size:12px;color:var(--muted);margin-right:auto;}
+.stBtn{background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:7px 14px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;font-family:var(--font-sans);transition:border-color .2s ease;}
+.stBtn:hover{border-color:var(--accent);}
+.stBtnQuiet{color:var(--muted);}
+@media(max-width:520px){.stRow{grid-template-columns:1fr .8fr 1fr .9fr;font-size:12px;}}
 </style>
 </head>
 <body>
@@ -1235,6 +1255,13 @@ body{transition:background-color .3s ease,color .3s ease;}
     <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math.</div>
   </div>
   <div class="ic" id="portSpark" style="display:none"></div>
+  <div class="ic stCard" id="stCard">
+    <div class="stHead">&#128279; Real Account <span class="stBadge">Read only</span></div>
+    <div id="stBody">
+      <button class="cmpBtn" id="stConnectBtn">Connect your brokerage</button>
+      <div class="stNote">Link your real account to see your true holdings here. Read only: Apex Q can see balances and positions, and can never trade, move, or touch anything.</div>
+    </div>
+  </div>
   <div id="portSummary" style="display:none"></div>
   <div id="portConcentration" style="display:none"></div>
   <div class="portAdd">
@@ -4708,6 +4735,108 @@ if(ib){
       if(_tvBuilt){ setTimeout(buildTvChart, 60); }
     });
   }
+
+  // Real Account section on the Portfolio tab, powered by SnapTrade in read only mode. Loads when
+  // the tab opens, renders true holdings with a last synced timestamp, and runs the discrepancy
+  // check display: any position where the broker's price and Apex Q's own feed disagree by more
+  // than 1.5 percent gets flagged visibly, because the thirty day self test is about exactly one
+  // question, does the connection stay reliable and do the numbers match the broker.
+  function stAgo(ts){
+    var s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+    if(s < 60){ return "just now"; }
+    if(s < 3600){ return Math.floor(s/60) + " min ago"; }
+    return Math.floor(s/3600) + " hr ago";
+  }
+  function stRender(d){
+    var body = document.getElementById("stBody");
+    if(!body){ return; }
+    if(!d || d.error){
+      body.innerHTML = "<div class='stNote'>" + ((d && d.error) || "Could not load your connection.") + "</div><button class='cmpBtn' id='stRetryBtn'>Try again</button>";
+      var rb = document.getElementById("stRetryBtn");
+      if(rb){ rb.onclick = function(){ stLoad(true); }; }
+      return;
+    }
+    if(!d.connected){
+      body.innerHTML = "<button class='cmpBtn' id='stConnectBtn'>Connect your brokerage</button>" +
+        "<div class='stNote'>Link your real account to see your true holdings here. Read only: Apex Q can see balances and positions, and can never trade, move, or touch anything.</div>";
+      stWireConnect();
+      return;
+    }
+    var h = "";
+    for(var i = 0; i < (d.accounts || []).length; i++){
+      var a = d.accounts[i];
+      h += "<div class='stAcct'><span>" + (a.name || "Account") + (a.number ? " " + a.number : "") + "</span>" +
+           (typeof a.total === "number" ? "<span class='stAcctV'>$" + a.total.toLocaleString(undefined, {maximumFractionDigits: 0}) + "</span>" : "") + "</div>";
+    }
+    if((d.positions || []).length){
+      h += "<div class='stRow stRowHead'><span>Symbol</span><span>Shares</span><span>Price</span><span>Value</span></div>";
+      for(var j = 0; j < d.positions.length; j++){
+        var p = d.positions[j];
+        var drift = (p.drift_pct !== null && p.drift_pct > 1.5) ? " <span class='stDrift' title='Broker price and Apex Q price disagree'>&#9888; " + p.drift_pct + "%</span>" : "";
+        h += "<div class='stRow'><span class='stSym' data-sym='" + p.symbol + "'>" + p.symbol + "</span>" +
+             "<span>" + p.shares + "</span>" +
+             "<span>$" + p.broker_price.toLocaleString() + drift + "</span>" +
+             "<span>$" + p.value.toLocaleString(undefined, {maximumFractionDigits: 0}) + "</span></div>";
+      }
+      h += "<div class='stTotal'>Broker total $" + d.broker_total.toLocaleString(undefined, {maximumFractionDigits: 0}) +
+           " &middot; Apex Q pricing $" + d.our_total.toLocaleString(undefined, {maximumFractionDigits: 0}) + "</div>";
+    } else {
+      h += "<div class='stNote'>Connected, but no positions came back yet. If you just linked the account, give it a minute and refresh.</div>";
+    }
+    if((d.flagged || []).length){
+      h += "<div class='stWarn'>&#9888; Price check: " + d.flagged.join(", ") + " differ" + (d.flagged.length === 1 ? "s" : "") +
+           " between your broker and Apex Q's feed by more than 1.5%. Worth comparing against your brokerage app.</div>";
+    }
+    h += "<div class='stFoot'><span class='stSynced'>Last synced " + stAgo(d.last_synced) + "</span>" +
+         "<button class='stBtn' id='stRefreshBtn'>Refresh</button>" +
+         "<button class='stBtn stBtnQuiet' id='stDisconnectBtn'>Disconnect</button></div>";
+    body.innerHTML = h;
+    var rf = document.getElementById("stRefreshBtn");
+    if(rf){ rf.onclick = function(){ rf.textContent = "Refreshing..."; stLoad(true); }; }
+    var dc = document.getElementById("stDisconnectBtn");
+    if(dc){
+      dc.onclick = function(){
+        if(!confirm("Disconnect your brokerage from Apex Q? Your real account is not affected, this only removes the read only link.")){ return; }
+        fetch(API + "/snaptrade/disconnect", {method: "POST", credentials: "same-origin"}).then(function(){ stLoad(true); });
+      };
+    }
+  }
+  function stLoad(refresh){
+    var body = document.getElementById("stBody");
+    if(body && !body.dataset.loaded){ body.innerHTML = "<div class='stNote'>Checking your connection...</div>"; }
+    fetch(API + "/snaptrade/holdings" + (refresh ? "?refresh=1" : ""), {credentials: "same-origin"})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if(body){ body.dataset.loaded = "1"; } stRender(d); })
+      .catch(function(){ stRender(null); });
+  }
+  function stWireConnect(){
+    var btn = document.getElementById("stConnectBtn");
+    if(!btn){ return; }
+    btn.onclick = function(){
+      btn.textContent = "Opening portal...";
+      fetch(API + "/snaptrade/connect", {method: "POST", credentials: "same-origin"})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(d && d.url){
+            window.open(d.url, "_blank");
+            var body = document.getElementById("stBody");
+            if(body){
+              body.innerHTML = "<div class='stNote'>Finish linking your account in the tab that just opened, then come back and tap the button below.</div>" +
+                "<button class='cmpBtn' id='stDoneBtn'>I connected it</button>";
+              var db2 = document.getElementById("stDoneBtn");
+              if(db2){ db2.onclick = function(){ stLoad(true); }; }
+            }
+          } else {
+            btn.textContent = "Connect your brokerage";
+            alert((d && d.error) || "Could not open the connection portal.");
+          }
+        })
+        .catch(function(){ btn.textContent = "Connect your brokerage"; alert("Could not reach the server."); });
+    };
+  }
+  stWireConnect();
+  var portTab = document.querySelector('.tab[data-view="portfolio"]');
+  if(portTab){ portTab.addEventListener("click", function(){ setTimeout(function(){ stLoad(false); }, 50); }); }
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
