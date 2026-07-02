@@ -1331,8 +1331,8 @@ body{transition:background-color .3s ease,color .3s ease;}
       <li>CSV export of insider and congressional trades</li>
       <li>Unlimited portfolio holdings</li>
     </ul>
-    <div class="upgradePrice">$12.99 / month</div>
-    <button class="authSubmit" id="upgradeBtn">Upgrade to Premium</button>
+    <div class="upgradePrice">7 days free, then $12.99 / month</div>
+    <button class="authSubmit" id="upgradeBtn">Start Free Trial</button>
     <button class="upgradeLater" id="upgradeLater">Maybe later</button>
   </div>
 </div>
@@ -4280,12 +4280,19 @@ var _alertBannerEl = document.getElementById("alertBanner");
 if(_alertBannerEl){ _alertBannerEl.addEventListener("click", function(){ showView("watch"); }); }
 
 // ============ PREMIUM TIER UI ============
+// Master switch for the paid upgrade flow, the twin of FREE_LIMITS_ENABLED on the backend.
+// PAUSED FOR NOW while Apex Q is being built and tested. With this false, the header Upgrade
+// button never shows and the upgrade modal never opens, so nobody can start a subscription by
+// accident before launch. The Stripe wiring underneath stays fully intact and tested. When you
+// are ready to market, flip this to true and flip the backend switch, and payments are live.
+var UPGRADES_ENABLED = false;
+
 function applyPremiumUI(){
   var prem = (currentUser && currentUser.tier === "premium");
   var b = document.getElementById("premiumBadge");
   if(b){ b.style.display = prem ? "flex" : "none"; }
   var up = document.getElementById("headerUpgradeBtn");
-  if(up){ up.style.display = (currentUser && !prem) ? "inline-block" : "none"; }
+  if(up){ up.style.display = (UPGRADES_ENABLED && currentUser && !prem) ? "inline-block" : "none"; }
 }
 
 function renderUsageBar(id, label, info, prem){
@@ -4322,6 +4329,7 @@ function refreshUsage(){
 }
 
 function showUpgradeModal(reason){
+  if(!UPGRADES_ENABLED){ return; }
   var ov = document.getElementById("upgradeOverlay");
   if(!ov){ return; }
   var r = document.getElementById("upgradeReason");
