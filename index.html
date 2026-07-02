@@ -888,6 +888,18 @@ body{transition:background-color .3s ease,color .3s ease;}
 /* Back chip at the top of an open report, returns to the dashboard overview. */
 .backChip{background:var(--s2);border:1px solid var(--border);border-radius:999px;padding:8px 16px;font-size:13px;font-weight:700;color:var(--text);font-family:var(--font-sans);cursor:pointer;margin-bottom:14px;transition:border-color .2s ease,transform .15s ease;}
 .backChip:hover{border-color:var(--accent);transform:translateY(-1px);}
+/* Practice tab live chart card, quote preview, and tappable position symbols. */
+.ptTvCard{padding:14px;margin-bottom:14px;}
+.ptTvHead{font-size:13px;font-weight:800;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;}
+.ptTvSym{color:var(--accent);margin-left:6px;}
+.tvHost{height:430px;border-radius:12px;overflow:hidden;background:var(--s2);}
+.tvLoading{display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px;padding:20px;text-align:center;}
+.ptQuote{font-size:14px;font-weight:600;color:var(--text);padding:10px 4px 2px;}
+.ptQuote .pos{color:var(--green);}
+.ptQuote .neg{color:var(--red);}
+.ptSym{cursor:pointer;}
+.ptSym:hover{color:var(--accent);}
+@media(max-width:700px){.tvHost{height:330px;}}
 </style>
 </head>
 <body>
@@ -1283,9 +1295,13 @@ body{transition:background-color .3s ease,color .3s ease;}
 <div class="view" id="view-trade">
   <div class="vhead">
     <div class="vhead-t">Practice Trading</div>
-    <div class="vhead-s">Practice with 100000 in virtual cash. Buy and sell at live prices and track your performance against the S&P 500.</div>
+    <div class="vhead-s">Practice with $1,000,000 in virtual cash. Buy and sell at live prices and track your performance against the S&P 500.</div>
   </div>
-  <div class="ptGuard" id="ptGuard" style="display:none">Log in to practice trading with 100000 in virtual cash. No real money, ever.</div>
+  <div class="ic ptTvCard">
+    <div class="ptTvHead">&#128200; Live Chart <span class="ptTvSym" id="tvSymLabel">AAPL</span></div>
+    <div class="tvHost" id="tvHost"><div class="tvLoading">Open this tab to load the live chart.</div></div>
+  </div>
+  <div class="ptGuard" id="ptGuard" style="display:none">Log in to practice trading with $1,000,000 in virtual cash. No real money, ever.</div>
   <div id="ptMain" style="display:none">
     <div class="ptCashCard">
       <div class="ptCashL">Virtual cash</div>
@@ -1299,6 +1315,7 @@ body{transition:background-color .3s ease,color .3s ease;}
       <button class="cmpBtn" id="ptBuyBtn">Buy</button>
     </div>
     <div class="ptErr" id="ptErr" style="display:none"></div>
+    <div class="ptQuote" id="ptQuote" style="display:none"></div>
     <div class="btLegend"><span class="btLeg"><span class="btSw" style="background:#22c55e"></span>Your portfolio</span><span class="btLeg"><span class="btSw" style="background:#3b82f6"></span>S&P 500</span></div>
     <div class="btChartHost" id="ptChart"></div>
     <div class="ptSection"><div class="ptSecTitle">Open positions</div><div class="ptPositions" id="ptPositions"></div></div>
@@ -4212,7 +4229,7 @@ function renderPaper(d){
   var ph = "";
   for(var i=0;i<pos.length;i++){
     var p = pos[i];
-    ph += "<div class='ptRow'><span class='ptSym'>" + esc(p.symbol) + "</span><span class='ptCol'>" + p.shares + " sh &middot; " + money2(p.value) + "</span><span class='ptCol'>$" + p.buy_price.toLocaleString() + " &#8594; $" + p.current_price.toLocaleString() + "</span><span class='ptCol " + cls(p.pnl) + "'>" + signedMoney(p.pnl) + " (" + pc(p.return_pct) + ")</span><button class='ptSell' onclick='paperSell(" + p.trade_id + ")'>Sell</button></div>";
+    ph += "<div class='ptRow'><span class='ptSym' data-sym='" + esc(p.symbol) + "'>" + esc(p.symbol) + "</span><span class='ptCol'>" + p.shares + " sh &middot; " + money2(p.value) + "</span><span class='ptCol'>$" + p.buy_price.toLocaleString() + " &#8594; $" + p.current_price.toLocaleString() + "</span><span class='ptCol " + cls(p.pnl) + "'>" + signedMoney(p.pnl) + " (" + pc(p.return_pct) + ")</span><button class='ptSell' onclick='paperSell(" + p.trade_id + ")'>Sell</button></div>";
   }
   var posEl = document.getElementById("ptPositions");
   if(posEl){ posEl.innerHTML = ph || "<div class='btNote'>No open positions. Buy something above to start.</div>"; }
@@ -4220,11 +4237,11 @@ function renderPaper(d){
   var ch = "";
   for(var j=0;j<cl.length;j++){
     var c = cl[j];
-    ch += "<div class='ptRow'><span class='ptSym'>" + esc(c.symbol) + "</span><span class='ptCol'>" + c.shares + " sh</span><span class='ptCol'>$" + c.buy_price.toLocaleString() + " &#8594; $" + c.sell_price.toLocaleString() + "</span><span class='ptCol " + cls(c.pnl) + "'>" + signedMoney(c.pnl) + " (" + pc(c.return_pct) + ")</span></div>";
+    ch += "<div class='ptRow'><span class='ptSym' data-sym='" + esc(c.symbol) + "'>" + esc(c.symbol) + "</span><span class='ptCol'>" + c.shares + " sh</span><span class='ptCol'>$" + c.buy_price.toLocaleString() + " &#8594; $" + c.sell_price.toLocaleString() + "</span><span class='ptCol " + cls(c.pnl) + "'>" + signedMoney(c.pnl) + " (" + pc(c.return_pct) + ")</span></div>";
   }
   var clEl = document.getElementById("ptClosed");
   if(clEl){ clEl.innerHTML = ch || "<div class='btNote'>No closed trades yet.</div>"; }
-  renderPaperChart(d.chart_data, d.starting_cash || 100000);
+  renderPaperChart(d.chart_data, d.starting_cash || 1000000);
 }
 function renderPaperChart(data, baseline){
   var host = document.getElementById("ptChart");
@@ -4598,6 +4615,85 @@ if(ib){
       else { injectPortfolioContext(); }
     });
     symObs.observe(symNode, {childList: true, characterData: true, subtree: true});
+  }
+
+  // Live candlestick chart on the Practice tab, powered by TradingView's official free embed, the
+  // same charting engine the big investing apps license. Loaded lazily the first time the tab
+  // opens so it costs the rest of the app nothing. The chart follows whatever symbol is typed in
+  // the buy box, and a live quote line under the form confirms the company name and price before
+  // any purchase. Rebuilds itself when the theme flips so it always matches dark or light.
+  var _tvLoaded = false, _tvSymbol = "AAPL", _tvTimer = null, _qTimer = null;
+  function tvTheme(){ return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"; }
+  function buildTvChart(){
+    var host = document.getElementById("tvHost");
+    if(!host || typeof TradingView === "undefined"){ return; }
+    host.innerHTML = "<div id='tvWidget' style='height:100%'></div>";
+    try{
+      new TradingView.widget({
+        container_id: "tvWidget",
+        symbol: _tvSymbol,
+        interval: "D",
+        autosize: true,
+        style: "1",
+        theme: tvTheme(),
+        locale: "en",
+        hide_side_toolbar: window.innerWidth < 700,
+        allow_symbol_change: false,
+        save_image: false
+      });
+      var lab = document.getElementById("tvSymLabel");
+      if(lab){ lab.textContent = _tvSymbol; }
+    }catch(e){
+      host.innerHTML = "<div class='tvLoading'>The live chart could not load. Check your connection and reopen this tab.</div>";
+    }
+  }
+  function loadTvChart(){
+    if(_tvLoaded){ buildTvChart(); return; }
+    _tvLoaded = true;
+    var sc = document.createElement("script");
+    sc.src = "https://s3.tradingview.com/tv.js";
+    sc.onload = buildTvChart;
+    sc.onerror = function(){
+      var host = document.getElementById("tvHost");
+      if(host){ host.innerHTML = "<div class='tvLoading'>The live chart could not load. Check your connection and reopen this tab.</div>"; }
+    };
+    document.head.appendChild(sc);
+  }
+  var tradeTab = document.querySelector('.tab[data-view="trade"]');
+  if(tradeTab){ tradeTab.addEventListener("click", function(){ setTimeout(loadTvChart, 50); }); }
+  function fetchQuote(sym){
+    var q = document.getElementById("ptQuote");
+    if(!q){ return; }
+    fetch(API + "/quote?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || d.error || !d.price){ q.style.display = "none"; return; }
+      var chg = "";
+      if(typeof d.change_pct === "number"){
+        var up = d.change_pct >= 0;
+        chg = " <span class='" + (up ? "pos" : "neg") + "'>" + (up ? "+" : "") + d.change_pct.toFixed(2) + "% today</span>";
+      }
+      var nm = d.name ? d.name + " &middot; " : "";
+      q.innerHTML = nm + "$" + Number(d.price).toLocaleString(undefined, {maximumFractionDigits: 2}) + chg;
+      q.style.display = "block";
+    }).catch(function(){ q.style.display = "none"; });
+  }
+  var ptSymInput = document.getElementById("ptSym");
+  if(ptSymInput){
+    ptSymInput.addEventListener("input", function(){
+      var v = (ptSymInput.value || "").trim().toUpperCase();
+      clearTimeout(_qTimer);
+      clearTimeout(_tvTimer);
+      if(!v){ var q = document.getElementById("ptQuote"); if(q){ q.style.display = "none"; } return; }
+      _qTimer = setTimeout(function(){ fetchQuote(v); }, 500);
+      _tvTimer = setTimeout(function(){
+        if(v.length >= 1 && v !== _tvSymbol){ _tvSymbol = v; if(_tvLoaded){ buildTvChart(); } }
+      }, 900);
+    });
+  }
+  var themeBtnForTv = document.getElementById("themeToggle");
+  if(themeBtnForTv){
+    themeBtnForTv.addEventListener("click", function(){
+      if(_tvLoaded && document.getElementById("tvWidget")){ setTimeout(buildTvChart, 60); }
+    });
   }
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
