@@ -4614,12 +4614,82 @@ def coach_answer(q, entities, private):
     return " ".join(parts)
 
 
+def _ask_fact_line(tkr, label):
+    """One fact line for the Ask prompts. Prefers the cached full report, the same data the person
+    is looking at on the report screen, so Ask and the report can never disagree about a number.
+    Falls back to the light snapshot when no full report has been run recently. Only fields that
+    actually exist get included, so the model is never handed an invented figure."""
+    cached = CACHE.get("full_" + tkr)
+    if cached and (time.time() - cached[1]) < 900 and cached[0]:
+        d = cached[0]
+        bits = []
+        if d.get("name"):
+            bits.append("%s (%s)" % (d["name"], tkr))
+        else:
+            bits.append("%s (%s)" % (label, tkr))
+        if d.get("sector"):
+            bits.append("sector " + str(d["sector"]))
+        if d.get("verdict"):
+            bits.append("verdict " + str(d["verdict"]))
+        if d.get("price") is not None:
+            bits.append("price %s dollars" % d["price"])
+        if d.get("change_pct") is not None:
+            bits.append("%s percent today" % d["change_pct"])
+        mc = d.get("market_cap")
+        if mc:
+            try:
+                mcf = float(mc)
+                if mcf >= 1e12:
+                    bits.append("market cap %.2f trillion dollars" % (mcf / 1e12))
+                elif mcf >= 1e9:
+                    bits.append("market cap %.1f billion dollars" % (mcf / 1e9))
+                elif mcf >= 1e6:
+                    bits.append("market cap %.0f million dollars" % (mcf / 1e6))
+            except (TypeError, ValueError):
+                pass
+        if d.get("pe_ratio") is not None:
+            bits.append("PE %s" % d["pe_ratio"])
+        ac = d.get("analyst_consensus") or {}
+        if ac.get("consensus_rating"):
+            bits.append("analyst consensus %s from %s analysts" % (ac["consensus_rating"], ac.get("number_of_analysts", "several")))
+        if d.get("analyst_target"):
+            bits.append("average analyst target %s dollars" % d["analyst_target"])
+        if d.get("revenue_growth") is not None:
+            bits.append("revenue growth %s percent" % d["revenue_growth"])
+        if d.get("profit_margin") is not None:
+            bits.append("profit margin %s percent" % d["profit_margin"])
+        if d.get("debt_to_equity") is not None:
+            bits.append("debt to equity %s" % d["debt_to_equity"])
+        if d.get("roe") is not None:
+            bits.append("return on equity %s percent" % d["roe"])
+        if d.get("alpha_score") is not None:
+            bits.append("Apex Q Alpha Score %s out of 100" % d["alpha_score"])
+        moat = d.get("apex_moat") or {}
+        if moat.get("rating"):
+            bits.append("moat rating %s" % moat["rating"])
+        if d.get("conviction"):
+            bits.append("conviction %s" % d["conviction"])
+        if d.get("insider_sell_value"):
+            try:
+                isv = float(d["insider_sell_value"])
+                if isv >= 1e6:
+                    bits.append("recent insider selling %.1f million dollars" % (isv / 1e6))
+            except (TypeError, ValueError):
+                pass
+        return ", ".join(bits)
+    r = light_score(tkr)
+    if r:
+        return "%s (%s): verdict %s, %s percent today, analyst upside %s percent, PE %s" % (
+            label, tkr, r.get("verdict"), r.get("change_pct"), r.get("upside"), r.get("pe_ratio"))
+    return None
+
+
 def coach_gemini(q, entities):
     facts = []
     for tkr, label, is_sec in entities[:4]:
-        r = light_score(tkr)
-        if r:
-            facts.append("%s (%s): verdict %s, %s percent today, analyst upside %s percent, PE %s" % (label, tkr, r.get("verdict"), r.get("change_pct"), r.get("upside"), r.get("pe_ratio")))
+        line = _ask_fact_line(tkr, label)
+        if line:
+            facts.append(line)
     if not facts:
         return None
     prompt = (
@@ -4647,9 +4717,9 @@ def coach_gemini(q, entities):
 def ask_deepseek_coach(q, entities):
     facts = []
     for tkr, label, is_sec in entities[:4]:
-        r = light_score(tkr)
-        if r:
-            facts.append("%s (%s): verdict %s, %s percent today, analyst upside %s percent, PE %s" % (label, tkr, r.get("verdict"), r.get("change_pct"), r.get("upside"), r.get("pe_ratio")))
+        line = _ask_fact_line(tkr, label)
+        if line:
+            facts.append(line)
     if not facts:
         return None
     prompt = (
@@ -5674,6 +5744,280 @@ def snaptrade_disconnect():
     db.close()
     CACHE.pop("st_hold_%s" % u["id"], None)
     return jsonify({"ok": True})
+
+
+# ---------- Model Portfolio Builder and Stock Alternatives ----------
+# Educational tools for people who do not want to research one stock at a time. The builder scans
+# the same universe Discover uses, keeps only names the engine currently rates APPROVE (topping up
+# with the strongest WATCH names when needed), tilts the ranking to a chosen risk style, and lays
+# out an equal split of a dollar amount. Alternatives suggests higher conviction same sector names
+# when someone is viewing a PASS or WATCH stock. Everything is factual signal language, never a
+# directive: no output here ever tells anyone what they personally should do with money.
+#
+# DEVIATION FROM SPEC, DOCUMENTED: the risk tilts were specified on beta, revenue growth, and free
+# cash flow yield, but the light snapshot this scan runs on does not carry those fields, and
+# forcing 38 full reports per request would hammer the data providers. The tilts instead use real
+# signals the snapshot does carry: valuation (PE), dividend yield, and mega cap size for the
+# conservative style, and momentum, analyst upside, and higher PE tolerance for the aggressive
+# style. When a full report for a symbol is already cached, its Alpha Score is used directly.
+
+RISK_ETFS = {
+    "conservative": [
+        {"symbol": "SCHD", "name": "Schwab US Dividend Equity ETF", "note": "Steady dividend payers with a value tilt."},
+        {"symbol": "VTV", "name": "Vanguard Value ETF", "note": "Large established companies at lower valuations."},
+        {"symbol": "AGG", "name": "iShares Core US Aggregate Bond ETF", "note": "Broad bond exposure that cushions stock swings."},
+    ],
+    "moderate": [
+        {"symbol": "SPY", "name": "SPDR S&P 500 ETF", "note": "The 500 largest US companies in one fund."},
+        {"symbol": "QQQ", "name": "Invesco QQQ Trust", "note": "The Nasdaq 100, heavy on large technology names."},
+        {"symbol": "VTI", "name": "Vanguard Total Stock Market ETF", "note": "The entire US stock market in a single fund."},
+    ],
+    "aggressive": [
+        {"symbol": "QQQ", "name": "Invesco QQQ Trust", "note": "The Nasdaq 100, heavy on large technology names."},
+        {"symbol": "ARKK", "name": "ARK Innovation ETF", "note": "High growth innovation companies with big swings."},
+        {"symbol": "IWM", "name": "iShares Russell 2000 ETF", "note": "Small US companies, higher growth potential and higher risk."},
+    ],
+}
+
+
+def _builder_alpha(r, sym):
+    """Alpha Score for ranking. Uses the real Alpha Score when a full report for the symbol is
+    already cached, otherwise a documented fallback composite scaled from the light snapshot's own
+    engine score plus momentum and analyst upside. Clamped 5 to 95 so a fallback can never claim
+    perfect confidence."""
+    cached = CACHE.get("full_" + sym)
+    if cached and (time.time() - cached[1]) < 900 and cached[0] and cached[0].get("alpha_score") is not None:
+        try:
+            return int(cached[0]["alpha_score"]), True
+        except (TypeError, ValueError):
+            pass
+    base = 0.0
+    try:
+        base = float(r.get("score") or 0) * 12
+    except (TypeError, ValueError):
+        base = 0.0
+    try:
+        if float(r.get("change_pct") or 0) > 2:
+            base += 8
+    except (TypeError, ValueError):
+        pass
+    try:
+        if float(r.get("upside") or 0) > 15:
+            base += 6
+    except (TypeError, ValueError):
+        pass
+    return int(max(5, min(95, base))), False
+
+
+def _builder_reason(r, alpha):
+    """One factual sentence about what the engine sees, built only from fields that exist."""
+    bits = []
+    try:
+        up = float(r.get("upside") or 0)
+        if up >= 15:
+            bits.append("analysts see %s percent upside" % round(up, 1))
+    except (TypeError, ValueError):
+        pass
+    try:
+        chg = float(r.get("change_pct") or 0)
+        if chg > 2:
+            bits.append("strong momentum today at plus %s percent" % round(chg, 1))
+    except (TypeError, ValueError):
+        pass
+    try:
+        pe = float(r.get("pe_ratio") or 0)
+        if 0 < pe < 20:
+            bits.append("a reasonable valuation at %s times earnings" % round(pe, 1))
+    except (TypeError, ValueError):
+        pass
+    try:
+        dy = float(r.get("div_yield") or 0)
+        if dy > 1.5:
+            bits.append("a %s percent dividend" % round(dy, 2))
+    except (TypeError, ValueError):
+        pass
+    conv = (r.get("conviction") or "").lower()
+    if conv in ("high", "very high"):
+        bits.append("%s engine conviction" % conv)
+    if not bits:
+        bits.append("a positive overall signal mix with an Alpha Score of %s" % alpha)
+    return ("Currently rated %s with " % (r.get("verdict") or "APPROVE")) + ", ".join(bits[:2]) + "."
+
+
+def _builder_candidates(sector):
+    """Scored candidates from the scan universe, light snapshot per symbol, individually cached."""
+    out = []
+    for sym in SCAN_UNIVERSE:
+        r = light_score(sym)
+        if not r or not r.get("verdict"):
+            continue
+        if sector and sector.lower() != "all":
+            if (r.get("sector") or "").lower() != sector.lower():
+                continue
+        alpha, real_alpha = _builder_alpha(r, sym)
+        out.append((r, alpha, real_alpha))
+    return out
+
+
+@app.route("/portfolio/generate")
+def portfolio_generate():
+    risk = (request.args.get("risk") or "moderate").strip().lower()
+    if risk not in ("conservative", "moderate", "aggressive"):
+        risk = "moderate"
+    sector = (request.args.get("sector") or "all").strip()
+    amount_note = ""
+    try:
+        amount = float(request.args.get("amount") or 1000)
+        if amount <= 0:
+            amount = 1000.0
+            amount_note = "That amount did not look right, so the model used 1000 dollars."
+    except (TypeError, ValueError):
+        amount = 1000.0
+        amount_note = "That amount did not look right, so the model used 1000 dollars."
+    ck = "portfolio_gen_%s_%s_%s" % (risk, int(amount), sector.lower())
+    cached = CACHE.get(ck)
+    if cached and (time.time() - cached[1]) < 900:
+        return jsonify(cached[0])
+
+    cands = _builder_candidates(sector)
+    approve = [(r, a, ra) for (r, a, ra) in cands if r.get("verdict") == "APPROVE"]
+    pool = list(approve)
+    if len(pool) < 5:
+        watch = [(r, a, ra) for (r, a, ra) in cands if r.get("verdict") == "WATCH"]
+        watch.sort(key=lambda x: (float(x[0].get("score") or 0), x[1]), reverse=True)
+        for w in watch:
+            try:
+                if float(w[0].get("score") or 0) >= 3:
+                    pool.append(w)
+            except (TypeError, ValueError):
+                continue
+            if len(pool) >= 5:
+                break
+    if len(pool) < 5:
+        payload = {"error": "Not enough strong signals right now to build a balanced model. Try a broader sector or check back later."}
+        return jsonify(payload), 200
+
+    # Risk tilt: additive bonuses on real snapshot fields, then rank.
+    ranked = []
+    for (r, alpha, real_alpha) in pool:
+        adj = alpha
+        try:
+            pe = float(r.get("pe_ratio") or 0)
+        except (TypeError, ValueError):
+            pe = 0
+        try:
+            dy = float(r.get("div_yield") or 0)
+        except (TypeError, ValueError):
+            dy = 0
+        try:
+            mc = float(r.get("market_cap") or 0)
+        except (TypeError, ValueError):
+            mc = 0
+        try:
+            chg = float(r.get("change_pct") or 0)
+        except (TypeError, ValueError):
+            chg = 0
+        try:
+            up = float(r.get("upside") or 0)
+        except (TypeError, ValueError):
+            up = 0
+        if risk == "conservative":
+            if 0 < pe < 20:
+                adj += 5
+            if dy > 1.5:
+                adj += 5
+            if mc > 1e11:
+                adj += 5
+        elif risk == "aggressive":
+            if chg > 2:
+                adj += 5
+            if up > 20:
+                adj += 5
+            if pe > 30 or pe == 0:
+                adj += 3
+        ranked.append((adj, alpha, r))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+
+    count = min(len(ranked), 5 if amount < 500 else 8, 10)
+    picks = ranked[:count]
+    alloc_d = round(amount / count, 2)
+    alloc_p = round(100.0 / count, 1)
+    stocks = []
+    for (adj, alpha, r) in picks:
+        stocks.append({
+            "symbol": r.get("symbol"),
+            "name": r.get("name") or r.get("symbol"),
+            "price": r.get("price"),
+            "verdict": r.get("verdict"),
+            "alpha_score": alpha,
+            "sector": r.get("sector") or "",
+            "pe_ratio": r.get("pe_ratio") if r.get("pe_ratio") is not None else "N/A",
+            "dividend_yield": r.get("div_yield") if r.get("div_yield") is not None else "N/A",
+            "allocation_dollars": alloc_d,
+            "allocation_pct": alloc_p,
+            "reason": _builder_reason(r, alpha),
+        })
+    payload = {
+        "risk": risk,
+        "amount": amount,
+        "amount_note": amount_note,
+        "sector": sector,
+        "count": count,
+        "stocks": stocks,
+        "etf_suggestions": RISK_ETFS.get(risk, RISK_ETFS["moderate"]),
+        "generated_at": int(time.time()),
+        "disclaimer": "This is a computer generated educational model based on Apex Q's scoring engine. It is not personalized financial advice. All investments carry risk.",
+    }
+    CACHE[ck] = (payload, time.time())
+    return jsonify(payload)
+
+
+@app.route("/portfolio/alternatives")
+def portfolio_alternatives():
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    if not symbol:
+        return jsonify({"alternatives": []})
+    ck = "port_alt_" + symbol
+    cached = CACHE.get(ck)
+    if cached and (time.time() - cached[1]) < 900:
+        return jsonify(cached[0])
+    cur = light_score(symbol)
+    if not cur or not cur.get("verdict"):
+        payload = {"alternatives": []}
+        CACHE[ck] = (payload, time.time())
+        return jsonify(payload)
+    if cur.get("verdict") == "APPROVE":
+        payload = {"alternatives": []}
+        CACHE[ck] = (payload, time.time())
+        return jsonify(payload)
+    sector = cur.get("sector") or ""
+    cands = _builder_candidates("all")
+    same = [(r, a) for (r, a, ra) in cands
+            if r.get("verdict") == "APPROVE" and a > 50
+            and r.get("symbol") != symbol
+            and sector and (r.get("sector") or "") == sector]
+    same.sort(key=lambda x: x[1], reverse=True)
+    picks = same[:5]
+    used_sector = sector
+    if not picks:
+        allap = [(r, a) for (r, a, ra) in cands if r.get("verdict") == "APPROVE" and r.get("symbol") != symbol]
+        allap.sort(key=lambda x: x[1], reverse=True)
+        picks = allap[:5]
+        used_sector = ""
+    alts = []
+    for (r, a) in picks:
+        alts.append({
+            "symbol": r.get("symbol"),
+            "name": r.get("name") or r.get("symbol"),
+            "price": r.get("price"),
+            "verdict": r.get("verdict"),
+            "alpha_score": a,
+            "sector": r.get("sector") or "",
+            "reason": _builder_reason(r, a),
+        })
+    payload = {"alternatives": alts, "sector": used_sector, "for_symbol": symbol}
+    CACHE[ck] = (payload, time.time())
+    return jsonify(payload)
 
 
 @app.route("/quote")
