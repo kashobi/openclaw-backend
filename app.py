@@ -1289,6 +1289,18 @@ def portfolio_add():
         return jsonify({"error": "Shares must be greater than zero."}), 400
     if avg_cost < 0:
         return jsonify({"error": "Average cost cannot be negative."}), 400
+    # Verify the ticker is real before it ever reaches the table. A symbol that cannot produce a
+    # price would sit in the portfolio as a dead N/A row forever, so it gets rejected at the door
+    # with a pointer to the closest likely match when one exists.
+    if _paper_price(symbol) is None:
+        suggestion = ""
+        try:
+            alt = resolve_ticker(symbol)
+            if alt and alt.upper() != symbol and _paper_price(alt.upper()) is not None:
+                suggestion = " Did you mean " + alt.upper() + "?"
+        except Exception:
+            pass
+        return jsonify({"error": "No price data found for " + symbol + ". Check the ticker." + suggestion}), 400
     conn = get_db()
     if conn is None:
         return jsonify({"error": "Database not available."}), 500
