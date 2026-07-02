@@ -854,6 +854,12 @@ body{transition:background-color .3s ease,color .3s ease;}
 /* Why lines under each Alpha Score factor. */
 .alphaRowT{display:block;}
 .alphaWhy{display:block;font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5;font-weight:500;}
+/* In-your-portfolio context card at the top of a report for stocks the user holds. */
+.portCtxCard{border-left:3px solid var(--accent);margin-bottom:14px;}
+.portCtxT{font-size:12px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--accent);margin-bottom:6px;}
+.portCtxB{font-size:14px;color:var(--text);line-height:1.55;}
+.portCtxB .pos{color:var(--green);font-weight:700;}
+.portCtxB .neg{color:var(--red);font-weight:700;}
 </style>
 </head>
 <body>
@@ -1003,7 +1009,7 @@ body{transition:background-color .3s ease,color .3s ease;}
           </div>
           <div class="alphaSide">
             <div class="alphaLabel" id="alphaLabel">Composite Signal</div>
-            <div class="alphaSub">One number blending momentum, fundamentals, insider and lawmaker flow, sector strength, and news tone. Educational only, not advice.</div>
+            <div class="alphaSub">One number blending momentum, fundamentals, insider and lawmaker flow, sector strength, and news tone.</div>
             <button class="alphaToggle" id="alphaToggle" type="button" onclick="toggleAlphaBreak()">Show how this was calculated</button>
           </div>
         </div>
@@ -1100,7 +1106,7 @@ body{transition:background-color .3s ease,color .3s ease;}
     <div class="vhead-s">See what members of Congress are trading, then point the engine at the whole market through plain lenses. Tap a politician or any name for the full breakdown.</div>
   </div>
   <div class="stitle">&#127963;&#65039; Top Trading Members of Congress</div>
-  <div class="scanNote">Recent disclosures from US Senators and Representatives, ranked by how active they have been. The return figure is a rough estimate from prices since each purchase. Educational only, never advice, and never a suggestion to copy anyone.</div>
+  <div class="scanNote">Recent disclosures from US Senators and Representatives, ranked by how active they have been. The return figure is a rough estimate from prices since each purchase.</div>
   <div class="loading" id="congressLoad">Loading congressional data...</div>
   <div id="congressList"></div>
   <div id="congressDetail" style="display:none;"></div>
@@ -1113,7 +1119,7 @@ body{transition:background-color .3s ease,color .3s ease;}
     <button class="lens" data-lens="dividend">Dividend</button>
     <button class="lens" data-lens="insiders">Insiders Buying</button>
   </div>
-  <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names are coming as we expand the universe. Educational only, never advice.</div>
+  <div class="scanNote">These lenses scan a broad set of large, widely held US stocks. More names are coming as we expand the universe.</div>
   <div class="usageBar" id="scanUsage" style="display:none"></div>
   <div class="loading" id="scanLoad">Scanning the market...</div>
   <div id="scanResults"></div>
@@ -1177,7 +1183,7 @@ body{transition:background-color .3s ease,color .3s ease;}
 <div class="view" id="view-portfolio">
   <div class="vhead">
     <div class="vhead-t">Portfolio</div>
-    <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math. Educational only, never advice.</div>
+    <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math.</div>
   </div>
   <div class="ic" id="portSpark" style="display:none"></div>
   <div id="portSummary" style="display:none"></div>
@@ -1191,7 +1197,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="portMsg" id="portMsg" style="display:none"></div>
   <div class="loading" id="portLoad" style="display:none">Loading portfolio...</div>
   <div id="portTable"></div>
-  <div class="portNote">Prices refresh on the same 15 minute cycle as the rest of Apex Q, so they can be slightly delayed. Gain and loss is based on the average cost you enter. Educational only, never advice.</div>
+  <div class="portNote">Prices refresh on the same 15 minute cycle as the rest of Apex Q, so they can be slightly delayed. Gain and loss is based on the average cost you enter.</div>
 </div>
 <div class="view" id="view-ask">
   <div class="vhead">
@@ -1220,7 +1226,7 @@ body{transition:background-color .3s ease,color .3s ease;}
 <div class="view" id="view-backtest">
   <div class="vhead">
     <div class="vhead-t">Copy Congress</div>
-    <div class="vhead-s">Pick a member of Congress and a window, then see how copying their stock purchases would have performed against the S&P 500. Each pick gets an equal slice of your capital, bought at the trade date and held. Educational only, not advice.</div>
+    <div class="vhead-s">Pick a member of Congress and a window, then see how copying their stock purchases would have performed against the S&P 500. Each pick gets an equal slice of your capital, bought at the trade date and held.</div>
   </div>
   <div class="btForm">
     <select class="cmpInp" id="btPol"><option value="">Select a member of Congress</option></select>
@@ -1243,7 +1249,7 @@ body{transition:background-color .3s ease,color .3s ease;}
 <div class="view" id="view-trade">
   <div class="vhead">
     <div class="vhead-t">Paper Trading</div>
-    <div class="vhead-s">Practice with 100000 in virtual cash. Buy and sell at live prices and track your performance against the S&P 500. Educational simulation only.</div>
+    <div class="vhead-s">Practice with 100000 in virtual cash. Buy and sell at live prices and track your performance against the S&P 500.</div>
   </div>
   <div class="ptGuard" id="ptGuard" style="display:none">Log in to start paper trading with 100000 in virtual cash.</div>
   <div id="ptMain" style="display:none">
@@ -1680,7 +1686,7 @@ function renderAnalystConsensus(d){
     html += "<div class=\"itxt\">No recent rating changes on record.</div>";
   }
 
-  html += "<div class=\"iwhy\">Why it matters: the consensus and the spread between the high and low target show where the pros stand and how much they actually agree. A target is just a number, so the direction of recent moves is the live signal. Educational only, never advice.</div>";
+  html += "<div class=\"iwhy\">Why it matters: the consensus and the spread between the high and low target show where the pros stand and how much they actually agree. A target is just a number, so the direction of recent moves is the live signal.</div>";
   html += "</div>";
   box.innerHTML = html;
 }
@@ -1866,7 +1872,7 @@ function renderETFReport(d){
   vbdg.className = "vbdg etf";
   vbdg.innerHTML = "&#128202; ETF Report";
   document.getElementById("vsco").textContent = "Exchange Traded Fund";
-  document.getElementById("vconf").innerHTML = esc(d.name || d.symbol) + " is an exchange traded fund, a single ticker that holds a basket of many investments at once. Apex Q does not run a fund through the stock engine, because a fund is judged on what it costs to own, how widely it spreads risk, and what it actually holds. The cards below break that down in plain English. Educational only, never advice.";
+  document.getElementById("vconf").innerHTML = esc(d.name || d.symbol) + " is an exchange traded fund, a single ticker that holds a basket of many investments at once. Apex Q does not run a fund through the stock engine, because a fund is judged on what it costs to own, how widely it spreads risk, and what it actually holds. The cards below break that down in plain English.";
   document.getElementById("vconfidence").style.display = "none";
   document.getElementById("vflags").style.display = "none";
   document.getElementById("vmean").style.display = "none";
@@ -1910,7 +1916,7 @@ function renderETFReport(d){
     var qaum = fmt(q.total_assets);
     html += "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Quality Snapshot</div><div class=\"ibdg " + qcls + "\">" + esc(q.label) + "</div></div>"
       + "<div class=\"itxt\">Expense ratio " + qer + " | Assets " + qaum + " | Holdings " + (q.num_holdings || 0)
-      + "<div class=\"iwhy\">A quick read on cost, size, and how spread out the fund is. Lower cost, larger size, and more holdings generally point to a steadier, cheaper fund. Educational only, never advice.</div></div></div>";
+      + "<div class=\"iwhy\">A quick read on cost, size, and how spread out the fund is. Lower cost, larger size, and more holdings generally point to a steadier, cheaper fund.</div></div></div>";
   }
 
   // b. Top Holdings
@@ -2026,7 +2032,7 @@ function loadTheme(key){
         + "<div class=\"discMeta\">$" + (s.price || 0).toLocaleString() + " &#8226; <span class=\"" + (chg >= 0 ? "gp" : "gn") + "\">" + sgn + chg + "%</span></div>"
         + "<div class=\"discUp\">" + up + "</div></div></div>";
     }).join("");
-    box.innerHTML = head + "<div class=\"discList\">" + rows + "</div><div class=\"discFoot\">Ranked by the same engine that scores every stock on Apex Q. Tap any name for the full breakdown. Educational only, never advice.</div>";
+    box.innerHTML = head + "<div class=\"discList\">" + rows + "</div><div class=\"discFoot\">Ranked by the same engine that scores every stock on Apex Q. Tap any name for the full breakdown.</div>";
   }).catch(function(){ box.innerHTML = "<div class=\"discLoading\">Connection issue. Try again.</div>"; });
 }
 
@@ -3201,7 +3207,7 @@ function renderPortfolio(d){
     if(top){
       conc.className = "ic portWarn";
       conc.style.display = "block";
-      conc.innerHTML = "<div class=\"itxt\">&#9888;&#65039; " + esc(top.symbol) + " makes up " + top.allocation_pct + "% of your portfolio. Diversification spreads risk across more names. This is educational, not advice.</div>";
+      conc.innerHTML = "<div class=\"itxt\">&#9888;&#65039; " + esc(top.symbol) + " makes up " + top.allocation_pct + "% of your portfolio. Diversification spreads risk across more names.</div>";
     } else {
       conc.style.display = "none";
     }
@@ -3584,7 +3590,7 @@ function showCongressDetail(name){
         + "<div class=\"congSub\">" + (p.trade_count || 0) + " disclosed trades" + (p.state ? (" &middot; " + esc(p.state)) : "") + "</div></div>"
         + "<div class=\"congRight\"><div class=\"congRetLbl\">250 day</div><div class=\"congRet\">" + congReturnHtml(p.returns) + "</div></div>"
       + "</div>"
-      + "<div class=\"congTip\">Each row is a stock this member has disclosed trading. Tap any symbol for the full Apex Q report. Educational only, never advice.</div>"
+      + "<div class=\"congTip\">Each row is a stock this member has disclosed trading. Tap any symbol for the full Apex Q report.</div>"
       + table;
   }).catch(function(){
     detail.innerHTML = "<button class=\"congBack\" data-cong-back=\"1\">&#8592; Back</button><div class=\"scanEmpty\">Could not load this member's portfolio. Try again.</div>";
@@ -4461,11 +4467,66 @@ if(ib){
   // visibility change, so it never touches run(), the search logic, or any API or chart code.
   var ra = document.getElementById("reportArea");
   var hero = document.getElementById("heroSection");
+  // Your portfolio follows you into the report. When a report opens for a stock you hold, a card
+  // at the top shows your position: shares, value, gain, and how much of your portfolio it is.
+  // Heavy concentration gets called out right here, on the stock's own page, not only in the
+  // portfolio tab. Silently does nothing for visitors who are not logged in or do not hold it.
+  function injectPortfolioContext(){
+    var symEl = document.getElementById("sym");
+    var sym = symEl ? (symEl.textContent || "").trim().toUpperCase() : "";
+    if(!sym || sym === "APEX Q"){ return; }
+    fetch(API + "/portfolio", {credentials: "same-origin"}).then(function(r){
+      if(!r.ok){ throw new Error("no portfolio"); }
+      return r.json();
+    }).then(function(d){
+      var old = document.getElementById("portCtx");
+      var hold = null;
+      var hs = (d && d.holdings) || [];
+      for(var i = 0; i < hs.length; i++){
+        if((hs[i].symbol || "").toUpperCase() === sym){ hold = hs[i]; break; }
+      }
+      if(!hold){ if(old){ old.remove(); } return; }
+      var gl = (typeof hold.gain_loss === "number") ? hold.gain_loss : 0;
+      var glCls = gl > 0 ? "pos" : (gl < 0 ? "neg" : "");
+      var glTxt = (gl >= 0 ? "+$" : "-$") + Math.abs(gl).toLocaleString(undefined, {maximumFractionDigits: 0});
+      var pct = hold.allocation_pct || 0;
+      var mv = (typeof hold.market_value === "number") ? hold.market_value.toLocaleString(undefined, {maximumFractionDigits: 0}) : "";
+      var line = "You hold " + hold.shares + " shares here, worth $" + mv +
+                 ", which is <b>" + pct + "%</b> of your portfolio. " +
+                 "<span class=\"" + glCls + "\">" + glTxt + "</span> since you bought.";
+      if(pct >= 40){
+        line += " That is a heavy share of your money riding on one name. If it stumbles, your whole portfolio feels it.";
+      } else if(pct >= 25){
+        line += " That is a meaningful slice of your portfolio, worth keeping an eye on.";
+      }
+      var card = old;
+      if(!card){
+        card = document.createElement("div");
+        card.id = "portCtx";
+        card.className = "ic portCtxCard";
+        var host = document.getElementById("stockSections");
+        if(host){ host.insertBefore(card, host.firstChild); }
+      }
+      if(card){ card.innerHTML = "<div class=\"portCtxT\">&#128188; In your portfolio</div><div class=\"portCtxB\">" + line + "</div>"; }
+    }).catch(function(){});
+  }
   if(ra && hero){
     var obs = new MutationObserver(function(){
-      if(ra.style.display !== "none"){ hero.style.display = "none"; }
+      if(ra.style.display !== "none"){ hero.style.display = "none"; injectPortfolioContext(); }
     });
     obs.observe(ra, {attributes: true, attributeFilter: ["style"]});
+  } else if(ra){
+    var obs2 = new MutationObserver(function(){
+      if(ra.style.display !== "none"){ injectPortfolioContext(); }
+    });
+    obs2.observe(ra, {attributes: true, attributeFilter: ["style"]});
+  }
+  // The symbol heading changes with every new report, including when the report area is already
+  // open from a previous search, so watching it keeps the portfolio card current on every run.
+  var symNode = document.getElementById("sym");
+  if(symNode){
+    var symObs = new MutationObserver(function(){ injectPortfolioContext(); });
+    symObs.observe(symNode, {childList: true, characterData: true, subtree: true});
   }
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
