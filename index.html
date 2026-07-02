@@ -885,6 +885,9 @@ body{transition:background-color .3s ease,color .3s ease;}
 .footLinks .footLink{color:var(--text);text-decoration:none;font-weight:600;}
 .footLinks .footLink:hover{color:var(--accent);}
 .footLegal{font-family:var(--font-sans);font-size:11.5px;color:var(--muted);max-width:720px;margin:0 auto;line-height:1.7;}
+/* Back chip at the top of an open report, returns to the dashboard overview. */
+.backChip{background:var(--s2);border:1px solid var(--border);border-radius:999px;padding:8px 16px;font-size:13px;font-weight:700;color:var(--text);font-family:var(--font-sans);cursor:pointer;margin-bottom:14px;transition:border-color .2s ease,transform .15s ease;}
+.backChip:hover{border-color:var(--accent);transform:translateY(-1px);}
 </style>
 </head>
 <body>
@@ -4551,22 +4554,49 @@ if(ib){
       if(card){ card.innerHTML = "<div class=\"portCtxT\">&#128188; In your portfolio</div><div class=\"portCtxB\">" + line + "</div>"; }
     }).catch(function(){});
   }
-  if(ra && hero){
+  // When a report opens, it takes over: the hero and the dashboard cards step aside, the page
+  // jumps to the report itself, and a small back button restores the overview. A first time
+  // visitor who taps See an Example lands directly on the Apple report, nothing in front of it.
+  var dash = document.getElementById("dashGrid");
+  var _reportWasVisible = false;
+  function ensureBackChip(){
+    if(document.getElementById("backChip") || !ra){ return; }
+    var chip = document.createElement("button");
+    chip.id = "backChip";
+    chip.className = "backChip";
+    chip.innerHTML = "&#8592; Back to overview";
+    chip.onclick = function(){
+      ra.style.display = "none";
+      if(dash){ dash.style.display = ""; }
+      if(hero){ hero.style.display = ""; }
+      window.scrollTo({top: 0, behavior: "smooth"});
+    };
+    ra.insertBefore(chip, ra.firstChild);
+  }
+  function focusReport(){
+    if(hero){ hero.style.display = "none"; }
+    if(dash){ dash.style.display = "none"; }
+    injectPortfolioContext();
+    ensureBackChip();
+    var y = ra.getBoundingClientRect().top + window.pageYOffset - 64;
+    window.scrollTo({top: y > 0 ? y : 0, behavior: "smooth"});
+  }
+  if(ra){
     var obs = new MutationObserver(function(){
-      if(ra.style.display !== "none"){ hero.style.display = "none"; injectPortfolioContext(); }
+      var vis = ra.style.display !== "none";
+      if(vis && !_reportWasVisible){ focusReport(); }
+      _reportWasVisible = vis;
     });
     obs.observe(ra, {attributes: true, attributeFilter: ["style"]});
-  } else if(ra){
-    var obs2 = new MutationObserver(function(){
-      if(ra.style.display !== "none"){ injectPortfolioContext(); }
-    });
-    obs2.observe(ra, {attributes: true, attributeFilter: ["style"]});
   }
   // The symbol heading changes with every new report, including when the report area is already
-  // open from a previous search, so watching it keeps the portfolio card current on every run.
+  // open from a previous search, so watching it re-focuses the report on every run.
   var symNode = document.getElementById("sym");
   if(symNode){
-    var symObs = new MutationObserver(function(){ injectPortfolioContext(); });
+    var symObs = new MutationObserver(function(){
+      if(ra && ra.style.display !== "none"){ focusReport(); }
+      else { injectPortfolioContext(); }
+    });
     symObs.observe(symNode, {childList: true, characterData: true, subtree: true});
   }
 
