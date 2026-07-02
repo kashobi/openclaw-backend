@@ -962,6 +962,41 @@ body{transition:background-color .3s ease,color .3s ease;}
 .cmpInp:focus,.si:focus,#si:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.16);}
 /* Verdict badges and Alpha number get a soft glow in the neon dark theme. */
 [data-theme="dark"] .vbadge,[data-theme="dark"] .alphaNum{text-shadow:0 0 18px rgba(var(--accent-rgb),.35);}
+/* Portfolio Builder and Alternatives. */
+.buildLbl{font-size:12px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);margin:14px 0 8px;}
+.buildLbl:first-child{margin-top:0;}
+.riskRow{display:flex;gap:8px;flex-wrap:wrap;}
+.riskChip{flex:1;min-width:110px;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:13px 10px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;transition:all .18s ease;}
+.riskChip.active{background:rgba(var(--accent-rgb),.14);border-color:var(--accent);color:var(--accent);}
+.riskChip:hover{transform:translateY(-1px);}
+.buildSelect{width:100%;appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 18px) 55%,calc(100% - 13px) 55%;background-size:5px 5px;background-repeat:no-repeat;}
+.buildGo{width:100%;margin-top:16px;}
+.buildSpin{display:flex;align-items:center;gap:10px;justify-content:center;color:var(--muted);font-size:13px;padding:22px;}
+.spinDot{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spinq .8s linear infinite;}
+@keyframes spinq{to{transform:rotate(360deg);}}
+.buildSummary{font-size:14px;line-height:1.6;color:var(--text);}
+.buildReason{white-space:normal;min-width:220px;font-size:12px;color:var(--muted);}
+.bvd{display:inline-block;border-radius:7px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.4px;}
+.bva{background:var(--gbg);color:var(--green);}
+.bvw{background:var(--ybg);color:var(--yellow);}
+.bvp{background:var(--rbg);color:var(--red);}
+.buildEtfs{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;}
+.buildEtf{cursor:pointer;margin-bottom:0;transition:transform .18s ease,border-color .18s ease;}
+.buildEtf:hover{transform:translateY(-2px);border-color:var(--accent);}
+.buildEtf b{color:var(--accent);font-family:var(--font-mono);}
+.buildEtfN{font-size:13px;font-weight:600;color:var(--text);margin:4px 0 4px;}
+.buildDisc{font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:14px;}
+.altCard{border-left:3px solid var(--yellow);}
+.altT{font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;line-height:1.5;}
+.altRow{display:flex;gap:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+.altItem{flex:0 0 210px;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:12px;cursor:pointer;transition:transform .18s ease,border-color .18s ease;}
+.altItem:hover{transform:translateY(-2px);border-color:var(--accent);}
+.altTop{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+.altTop b{font-family:var(--font-mono);color:var(--text);}
+.altA{margin-left:auto;font-weight:800;font-family:var(--font-mono);}
+.altName{font-size:12px;color:var(--text);font-weight:600;margin-bottom:5px;}
+.altWhy{font-size:11.5px;color:var(--muted);line-height:1.5;}
+@media(max-width:600px){.altItem{flex-basis:180px;}}
 </style>
 </head>
 <body>
@@ -1296,6 +1331,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="portModeChips">
     <button class="pmChip active" data-mode="real" onclick="apexqPortMode('real')">Real Portfolio</button>
     <button class="pmChip" data-mode="paper" onclick="apexqPortMode('paper')">Paper Trading</button>
+    <button class="pmChip" data-mode="build" onclick="apexqPortMode('build')">Build for Me</button>
   </div>
   <div class="ic" id="portSpark" style="display:none"></div>
   <div class="ic stCard" id="stCard">
@@ -1317,6 +1353,53 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="loading" id="portLoad" style="display:none">Loading portfolio...</div>
   <div id="portTable"></div>
   <div class="portNote">Prices refresh on the same 15 minute cycle as the rest of Apex Q, so they can be slightly delayed. Gain and loss is based on the average cost you enter.</div>
+</div>
+<div class="view" id="view-build">
+  <div class="vhead">
+    <div class="vhead-t">Build a Model Portfolio</div>
+    <div class="vhead-s">Tell the engine your style and an amount, and it lays out a diversified educational model from the stocks it currently rates strongest. A starting point for your own research, never a directive.</div>
+  </div>
+  <div class="portModeChips">
+    <button class="pmChip" data-mode="real" onclick="apexqPortMode('real')">Real Portfolio</button>
+    <button class="pmChip" data-mode="paper" onclick="apexqPortMode('paper')">Paper Trading</button>
+    <button class="pmChip active" data-mode="build" onclick="apexqPortMode('build')">Build for Me</button>
+  </div>
+  <div class="ic" id="buildGate" style="display:none">
+    <div class="stNote">Log in to use the Portfolio Builder.</div>
+    <button class="cmpBtn" onclick="openAuth('login')" style="margin-top:10px">Log in</button>
+  </div>
+  <div id="buildMain">
+    <div class="ic">
+      <div class="buildLbl">Risk style</div>
+      <div class="riskRow">
+        <button class="riskChip" data-risk="conservative">&#128737;&#65039; Conservative</button>
+        <button class="riskChip active" data-risk="moderate">&#9878;&#65039; Moderate</button>
+        <button class="riskChip" data-risk="aggressive">&#128640; Aggressive</button>
+      </div>
+      <div class="buildLbl">Amount in dollars</div>
+      <input class="cmpInp" id="buildAmount" type="number" min="1" step="1" value="1000">
+      <div class="buildLbl">Sector</div>
+      <select class="cmpInp buildSelect" id="buildSector">
+        <option value="all" selected>All Sectors</option>
+        <option>Technology</option>
+        <option>Financial Services</option>
+        <option>Healthcare</option>
+        <option>Consumer Cyclical</option>
+        <option>Consumer Defensive</option>
+        <option>Communication Services</option>
+        <option>Industrials</option>
+        <option>Energy</option>
+        <option>Utilities</option>
+        <option>Real Estate</option>
+        <option>Basic Materials</option>
+      </select>
+      <button class="cmpBtn buildGo" id="buildGo">Generate Model</button>
+      <div class="stNote" id="buildNote" style="display:none"></div>
+    </div>
+    <div class="buildSpin" id="buildSpin" style="display:none"><div class="spinDot"></div>Scoring the universe...</div>
+    <div id="buildOut" style="display:none"></div>
+    <div class="ic buildDisc">This is a computer generated model based on Apex Q's scoring engine. It is not personalized financial advice. All investments carry risk. Always do your own research or consult a professional.</div>
+  </div>
 </div>
 <div class="view" id="view-ask">
   <div class="vhead">
@@ -1373,6 +1456,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="portModeChips">
     <button class="pmChip" data-mode="real" onclick="apexqPortMode('real')">Real Portfolio</button>
     <button class="pmChip active" data-mode="paper" onclick="apexqPortMode('paper')">Paper Trading</button>
+    <button class="pmChip" data-mode="build" onclick="apexqPortMode('build')">Build for Me</button>
   </div>
   <div class="ic ptTvCard">
     <div class="ptTvHead">&#128200; Live Chart <span class="ptTvSym" id="tvSymLabel">AAPL</span></div>
@@ -4683,6 +4767,7 @@ if(ib){
     if(dash){ dash.style.display = "none"; }
     injectPortfolioContext();
     ensureBackChip();
+    setTimeout(injectAlternatives, 300);
     var y = ra.getBoundingClientRect().top + window.pageYOffset - 64;
     window.scrollTo({top: y > 0 ? y : 0, behavior: "smooth"});
   }
@@ -4916,15 +5001,151 @@ if(ib){
     }
   }
   function apexqPortMode(mode){
-    if(typeof showView === "function"){ showView(mode === "paper" ? "trade" : "portfolio"); }
-    // Keep the Portfolio tab lit in the bottom bar for both modes, since Practice now lives under it.
+    var target = mode === "paper" ? "trade" : (mode === "build" ? "build" : "portfolio");
+    if(typeof showView === "function"){ showView(target); }
+    // Keep the Portfolio tab lit in the bottom bar for all three modes, since they live under it.
     var tabs = document.querySelectorAll(".tabbar .tab");
     for(var i = 0; i < tabs.length; i++){ tabs[i].classList.remove("active"); }
     var pt = document.querySelector('.tab[data-view="portfolio"]');
     if(pt){ pt.classList.add("active"); }
     syncPmChips(mode);
+    if(mode === "build"){ apexqBuildGate(); }
   }
   window.apexqPortMode = apexqPortMode;
+
+  // Portfolio Builder wiring. Gate for logged out visitors, risk chip toggling, generation, and
+  // rendering. Every symbol rendered carries data-sym, so the existing global tap handler opens
+  // the full report, and nothing here touches any existing function.
+  function apexqBuildGate(){
+    var gate = document.getElementById("buildGate");
+    var main = document.getElementById("buildMain");
+    var loggedIn = (typeof currentUser !== "undefined") && currentUser;
+    if(gate){ gate.style.display = loggedIn ? "none" : ""; }
+    if(main){ main.style.display = loggedIn ? "" : "none"; }
+  }
+  var riskChips = document.querySelectorAll(".riskChip");
+  for(var rc = 0; rc < riskChips.length; rc++){
+    riskChips[rc].addEventListener("click", function(){
+      for(var k = 0; k < riskChips.length; k++){ riskChips[k].classList.remove("active"); }
+      this.classList.add("active");
+    });
+  }
+  function buildAlphaColor(a){
+    if(a >= 70){ return "var(--green)"; }
+    if(a >= 40){ return "var(--yellow)"; }
+    return "var(--red)";
+  }
+  function buildVerdictBadge(v){
+    var cls = v === "APPROVE" ? "bva" : (v === "WATCH" ? "bvw" : "bvp");
+    return "<span class='bvd " + cls + "'>" + v + "</span>";
+  }
+  var buildGoBtn = document.getElementById("buildGo");
+  if(buildGoBtn){
+    buildGoBtn.addEventListener("click", function(){
+      var riskEl = document.querySelector(".riskChip.active");
+      var risk = riskEl ? riskEl.getAttribute("data-risk") : "moderate";
+      var amtEl = document.getElementById("buildAmount");
+      var amt = amtEl ? parseFloat(amtEl.value) : 1000;
+      var note = document.getElementById("buildNote");
+      if(!(amt > 0)){
+        amt = 1000;
+        if(amtEl){ amtEl.value = 1000; }
+        if(note){ note.textContent = "That amount did not look right, so 1000 dollars was used."; note.style.display = ""; }
+      } else if(note){ note.style.display = "none"; }
+      var sec = document.getElementById("buildSector");
+      var sector = sec ? sec.value : "all";
+      var spin = document.getElementById("buildSpin");
+      var out = document.getElementById("buildOut");
+      if(spin){ spin.style.display = "flex"; }
+      if(out){ out.style.display = "none"; }
+      buildGoBtn.disabled = true;
+      fetch(API + "/portfolio/generate?risk=" + encodeURIComponent(risk) + "&amount=" + encodeURIComponent(amt) + "&sector=" + encodeURIComponent(sector))
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          buildGoBtn.disabled = false;
+          if(spin){ spin.style.display = "none"; }
+          if(!out){ return; }
+          if(!d || d.error){
+            out.innerHTML = "<div class='ic'><div class='stNote'>" + ((d && d.error) || "Could not build a model right now. Try again in a moment.") + "</div></div>";
+            out.style.display = "";
+            return;
+          }
+          var h = "<div class='ic buildSummary'>Based on your <b>" + d.risk + "</b> style and <b>$" + Number(d.amount).toLocaleString() + "</b>, the engine lines up <b>" + d.count + "</b> stocks that currently show its strongest positive signals. An educational model, not a directive." + (d.amount_note ? " <span class='stNote'>" + d.amount_note + "</span>" : "") + "</div>";
+          h += "<div class='ptblWrap'><table class='ptbl'><thead><tr><th class='lft'>Symbol</th><th class='lft'>Company</th><th>Price</th><th>Verdict</th><th>Alpha</th><th class='lft'>Sector</th><th>Allocation</th><th class='lft'>What the engine sees</th></tr></thead><tbody>";
+          for(var i = 0; i < d.stocks.length; i++){
+            var st = d.stocks[i];
+            h += "<tr><td class='lft'><span class='psym' data-sym='" + st.symbol + "'>" + st.symbol + "</span></td>" +
+                 "<td class='lft'>" + st.name + "</td>" +
+                 "<td>$" + (typeof st.price === "number" ? st.price.toLocaleString() : st.price) + "</td>" +
+                 "<td>" + buildVerdictBadge(st.verdict) + "</td>" +
+                 "<td><b style='color:" + buildAlphaColor(st.alpha_score) + "'>" + st.alpha_score + "</b></td>" +
+                 "<td class='lft'>" + st.sector + "</td>" +
+                 "<td>$" + st.allocation_dollars.toLocaleString() + " (" + st.allocation_pct + "%)</td>" +
+                 "<td class='lft buildReason'>" + st.reason + "</td></tr>";
+          }
+          h += "</tbody></table></div>";
+          if(d.etf_suggestions && d.etf_suggestions.length){
+            h += "<div class='buildLbl' style='margin-top:16px'>Funds that match this style</div><div class='buildEtfs'>";
+            for(var j = 0; j < d.etf_suggestions.length; j++){
+              var e = d.etf_suggestions[j];
+              h += "<div class='ic buildEtf' data-sym='" + e.symbol + "'><b>" + e.symbol + "</b><div class='buildEtfN'>" + e.name + "</div><div class='stNote'>" + e.note + "</div></div>";
+            }
+            h += "</div>";
+          }
+          out.innerHTML = h;
+          out.style.display = "";
+        })
+        .catch(function(){
+          buildGoBtn.disabled = false;
+          if(spin){ spin.style.display = "none"; }
+          if(out){ out.innerHTML = "<div class='ic'><div class='stNote'>Could not reach the server. Check your connection and try again.</div></div>"; out.style.display = ""; }
+        });
+    });
+  }
+
+  // Alternatives card on PASS and WATCH reports. Reads the verdict the report itself shows, asks
+  // the engine for higher conviction names in the same sector, and injects a card under the top of
+  // the report. Removed on every new report, shown only when there are real alternatives.
+  var _altFor = "";
+  function injectAlternatives(){
+    var symEl = document.getElementById("sym");
+    var sym = symEl ? (symEl.textContent || "").trim().toUpperCase() : "";
+    if(!sym || sym === "APEX Q" || sym === _altFor){ return; }
+    _altFor = sym;
+    var old = document.getElementById("altCard");
+    if(old){ old.remove(); }
+    var vb = document.getElementById("vbox");
+    var vtext = vb ? (vb.textContent || "") : "";
+    var isPassOrWatch = vtext.indexOf("PASS") !== -1 || vtext.indexOf("WATCH") !== -1;
+    if(!isPassOrWatch){ return; }
+    fetch(API + "/portfolio/alternatives?symbol=" + encodeURIComponent(sym))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d || !d.alternatives || !d.alternatives.length){ return; }
+        var host = document.getElementById("stockSections");
+        if(!host){ return; }
+        var card = document.createElement("div");
+        card.id = "altCard";
+        card.className = "ic altCard";
+        var title = d.sector
+          ? "Looking for alternatives? The engine has higher conviction in these " + d.sector + " stocks right now:"
+          : "Looking for alternatives? The engine has higher conviction in these stocks right now:";
+        var h = "<div class='altT'>&#128269; " + title + "</div><div class='altRow'>";
+        for(var i = 0; i < d.alternatives.length; i++){
+          var a = d.alternatives[i];
+          h += "<div class='altItem' data-sym='" + a.symbol + "'>" +
+               "<div class='altTop'><b>" + a.symbol + "</b>" + buildVerdictBadge(a.verdict) + "<span class='altA' style='color:" + buildAlphaColor(a.alpha_score) + "'>" + a.alpha_score + "</span></div>" +
+               "<div class='altName'>" + a.name + "</div>" +
+               "<div class='altWhy'>" + a.reason + "</div></div>";
+        }
+        h += "</div>";
+        card.innerHTML = h;
+        var anchor = document.getElementById("portCtx");
+        if(anchor && anchor.parentNode === host){ host.insertBefore(card, anchor.nextSibling); }
+        else { host.insertBefore(card, host.firstChild); }
+      })
+      .catch(function(){});
+  }
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
