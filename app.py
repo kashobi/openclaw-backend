@@ -344,7 +344,20 @@ def ensure_db():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN DEFAULT false")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_cash NUMERIC DEFAULT 100000")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_cash NUMERIC DEFAULT 1000000")
+        # One time migration to the one million bankroll. The old default was 100000, and accounts
+        # that traded against that baseline would show nonsense profit math against the new number,
+        # so every practice account resets to a clean 1000000 and its practice trades clear. The
+        # app_meta marker makes this idempotent: it runs exactly once, never again on redeploys.
+        cur.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
+        cur.execute("SELECT 1 FROM app_meta WHERE key = 'paper_one_million'")
+        if cur.fetchone() is None:
+            # On a brand new database this runs before paper_trades exists, so check first.
+            cur.execute("SELECT to_regclass('paper_trades')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("DELETE FROM paper_trades")
+            cur.execute("UPDATE users SET paper_cash = 1000000")
+            cur.execute("INSERT INTO app_meta (key, value) VALUES ('paper_one_million', 'done')")
         cur.execute(
             "CREATE TABLE IF NOT EXISTS phone_verifications ("
             "id SERIAL PRIMARY KEY,"
@@ -658,7 +671,7 @@ def auth_signup():
         pw_hash = generate_password_hash(password)
         cur.execute(
             "INSERT INTO users (username, password_hash, email, first_name, last_name, phone, tier, paper_cash) "
-            "VALUES (%s, %s, %s, %s, %s, %s, 'free', 100000) RETURNING id",
+            "VALUES (%s, %s, %s, %s, %s, %s, 'free', 1000000) RETURNING id",
             (username, pw_hash, email, first_name or None, last_name or None, phone or None),
         )
         uid = cur.fetchone()[0]
@@ -5305,9 +5318,9 @@ def stripe_webhook():
 
 
 # ============ PAPER TRADING ============
-# Free for every logged in user. Each account starts with 100000 in virtual cash. Buys and sells
+# Free for every logged in user. Each account starts with 1000000 in virtual cash. Buys and sells
 # use the same realtime price source as the rest of the app. Educational simulation only.
-PAPER_START_CASH = 100000.0
+PAPER_START_CASH = 1000000.0
 
 
 def _paper_price(symbol):
@@ -5396,6 +5409,43 @@ def _paper_chart(rows, start_equity):
         spx = start_equity * (spy_map[d] / spy_first)
         out.append({"date": d.isoformat(), "portfolio_value": round(port, 2), "sp500_value": round(spx, 2)})
     return out
+
+
+@app.route("/quote")
+def quote():
+    """Light live quote for one symbol: company name, price, and day change. Used by the practice
+    view to confirm what a ticker is before buying it. Name comes from the yfinance symbol search
+    and is cached a day; the price rides the same realtime path as everything else."""
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    if not symbol or len(symbol) > 10:
+        return jsonify({"error": "Enter a ticker symbol."}), 400
+    name = ""
+    ckey = "qname_" + symbol
+    cached_name = CACHE.get(ckey)
+    if cached_name and (time.time() - cached_name[1]) < 86400:
+        name = cached_name[0]
+    else:
+        try:
+            s = yf.Search(symbol, max_results=3)
+            for x in s.quotes:
+                if (x.get("symbol") or "").upper() == symbol:
+                    name = x.get("longname") or x.get("shortname") or ""
+                    break
+            CACHE[ckey] = (name, time.time())
+        except Exception:
+            pass
+    rp = get_realtime_price(symbol)
+    if not rp or not rp.get("price"):
+        px = _paper_price(symbol)
+        if px is None:
+            return jsonify({"error": "No live price found for " + symbol + "."}), 404
+        return jsonify({"symbol": symbol, "name": name, "price": round(px, 2), "change_pct": None})
+    return jsonify({
+        "symbol": symbol,
+        "name": name,
+        "price": rp.get("price"),
+        "change_pct": rp.get("change_pct") if isinstance(rp.get("change_pct"), (int, float)) else None,
+    })
 
 
 @app.route("/paper/portfolio")
