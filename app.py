@@ -345,6 +345,7 @@ def ensure_db():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN DEFAULT false")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_cash NUMERIC DEFAULT 1000000")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_secret TEXT")
         # One time migration to the one million bankroll. The old default was 100000, and accounts
         # that traded against that baseline would show nonsense profit math against the new number,
         # so every practice account resets to a clean 1000000 and its practice trades clear. The
@@ -5409,6 +5410,235 @@ def _paper_chart(rows, start_equity):
         spx = start_equity * (spy_map[d] / spy_first)
         out.append({"date": d.isoformat(), "portfolio_value": round(port, 2), "sp500_value": round(spx, 2)})
     return out
+
+
+# ---------- SnapTrade: read only brokerage connections ----------
+# Lets a logged in user connect their real brokerage (Robinhood, Schwab, Fidelity, and so on)
+# through SnapTrade's connection portal and see their true holdings inside Apex Q. Strictly read
+# only: the connection is requested with read access, and no order or transfer endpoint exists
+# anywhere in this file. Signing uses only the standard library, no new dependency. Two things are
+# built in for the thirty day self test: a last_synced timestamp on every payload, and a
+# discrepancy check that prices every position through Apex Q's own feed and flags any position
+# where the two sources disagree by more than 1.5 percent.
+import hmac as _hmac
+import hashlib as _hashlib
+import base64 as _base64
+from urllib.parse import urlencode as _st_urlencode
+
+SNAPTRADE_CLIENT_ID = os.environ.get("SNAPTRADE_CLIENT_ID", "").strip()
+SNAPTRADE_CONSUMER_KEY = os.environ.get("SNAPTRADE_CONSUMER_KEY", "").strip()
+SNAPTRADE_BASE = "https://api.snaptrade.com/api/v1"
+
+
+def _snaptrade_request(method, path, query_extra=None, body=None):
+    """Signed SnapTrade call. Their scheme: HMAC SHA256 of a JSON object holding the request body,
+    the full path, and the exact query string, keyed with the consumer key, sent base64 encoded in
+    a Signature header. The same query string signed is the one sent on the URL."""
+    if not SNAPTRADE_CLIENT_ID or not SNAPTRADE_CONSUMER_KEY:
+        return None, "SnapTrade is not configured. Set SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY."
+    q = {"clientId": SNAPTRADE_CLIENT_ID, "timestamp": str(int(time.time()))}
+    if query_extra:
+        q.update(query_extra)
+    query_string = _st_urlencode(q)
+    sig_obj = {"content": body, "path": "/api/v1" + path, "query": query_string}
+    sig_data = json.dumps(sig_obj, separators=(",", ":"), sort_keys=True)
+    sig = _base64.b64encode(
+        _hmac.new(SNAPTRADE_CONSUMER_KEY.encode(), sig_data.encode(), _hashlib.sha256).digest()
+    ).decode()
+    url = SNAPTRADE_BASE + path + "?" + query_string
+    try:
+        if method == "GET":
+            r = requests.get(url, headers={"Signature": sig}, timeout=20)
+        elif method == "DELETE":
+            r = requests.delete(url, headers={"Signature": sig}, timeout=20)
+        else:
+            r = requests.post(url, headers={"Signature": sig, "Content-Type": "application/json"}, json=body, timeout=20)
+        if r.status_code >= 400:
+            logger.error("snaptrade %s %s -> %s %s" % (method, path, r.status_code, r.text[:300]))
+            return None, "SnapTrade returned an error (%s)." % r.status_code
+        return (r.json() if r.text else {}), None
+    except Exception as e:
+        logger.error("snaptrade request %s: %s" % (path, e))
+        return None, "Could not reach SnapTrade."
+
+
+def _snaptrade_creds(u):
+    """(userId, userSecret, error) for this user, registering with SnapTrade on first use and
+    storing the returned per user secret in the users table."""
+    db = get_db()
+    if db is None:
+        return None, None, "Database unavailable."
+    cur = db.cursor()
+    cur.execute("SELECT snaptrade_secret FROM users WHERE id = %s", (u["id"],))
+    row = cur.fetchone()
+    st_user_id = "apexq-user-%s" % u["id"]
+    if row and row[0]:
+        cur.close()
+        db.close()
+        return st_user_id, row[0], None
+    data, err = _snaptrade_request("POST", "/snapTrade/registerUser", body={"userId": st_user_id})
+    if err or not data or not data.get("userSecret"):
+        cur.close()
+        db.close()
+        return None, None, err or "Could not register with SnapTrade."
+    secret = data["userSecret"]
+    cur.execute("UPDATE users SET snaptrade_secret = %s WHERE id = %s", (secret, u["id"]))
+    db.commit()
+    cur.close()
+    db.close()
+    return st_user_id, secret, None
+
+
+def _st_position_symbol(p):
+    """Symbol string out of SnapTrade's nested position object, defensively."""
+    try:
+        s = p.get("symbol") or {}
+        inner = s.get("symbol") or {}
+        if isinstance(inner, dict):
+            return (inner.get("symbol") or inner.get("raw_symbol") or "").upper()
+        return str(inner).upper()
+    except Exception:
+        return ""
+
+
+@app.route("/snaptrade/connect", methods=["POST"])
+def snaptrade_connect():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "Log in first."}), 401
+    st_id, st_secret, err = _snaptrade_creds(u)
+    if err:
+        return jsonify({"error": err}), 502
+    data, err = _snaptrade_request(
+        "POST", "/snapTrade/login",
+        query_extra={"userId": st_id, "userSecret": st_secret},
+        body={"connectionType": "read", "immediateRedirect": False},
+    )
+    if err or not data or not data.get("redirectURI"):
+        return jsonify({"error": err or "Could not open the connection portal."}), 502
+    return jsonify({"url": data["redirectURI"]})
+
+
+@app.route("/snaptrade/holdings")
+def snaptrade_holdings():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "Log in first."}), 401
+    refresh = request.args.get("refresh") == "1"
+    ck = "st_hold_%s" % u["id"]
+    cached = CACHE.get(ck)
+    if cached and not refresh and (time.time() - cached[1]) < 600:
+        return jsonify(cached[0])
+    db = get_db()
+    if db is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = db.cursor()
+    cur.execute("SELECT snaptrade_secret FROM users WHERE id = %s", (u["id"],))
+    row = cur.fetchone()
+    cur.close()
+    db.close()
+    if not row or not row[0]:
+        return jsonify({"connected": False})
+    st_id = "apexq-user-%s" % u["id"]
+    secret = row[0]
+    accounts, err = _snaptrade_request("GET", "/accounts", query_extra={"userId": st_id, "userSecret": secret})
+    if err:
+        return jsonify({"error": err}), 502
+    if not accounts:
+        return jsonify({"connected": False})
+    out_accounts = []
+    agg = {}
+    broker_total = 0.0
+    for a in accounts:
+        acct_id = a.get("id")
+        name = a.get("name") or a.get("institution_name") or "Account"
+        number = str(a.get("number") or "")
+        masked = ("..." + number[-4:]) if len(number) >= 4 else ""
+        total_amt = None
+        try:
+            total_amt = ((a.get("balance") or {}).get("total") or {}).get("amount")
+        except Exception:
+            total_amt = None
+        out_accounts.append({"name": name, "number": masked, "total": total_amt})
+        if not acct_id:
+            continue
+        positions, perr = _snaptrade_request(
+            "GET", "/accounts/%s/positions" % acct_id,
+            query_extra={"userId": st_id, "userSecret": secret},
+        )
+        if perr or not isinstance(positions, list):
+            continue
+        for p in positions:
+            sym = _st_position_symbol(p)
+            if not sym:
+                continue
+            try:
+                units = float(p.get("units") or 0)
+                price = float(p.get("price") or 0)
+            except (TypeError, ValueError):
+                continue
+            if units == 0:
+                continue
+            if sym not in agg:
+                agg[sym] = {"symbol": sym, "shares": 0.0, "broker_price": price, "value": 0.0}
+            agg[sym]["shares"] += units
+            agg[sym]["broker_price"] = price
+            agg[sym]["value"] += units * price
+            broker_total += units * price
+    # Discrepancy check: price every position through Apex Q's own feed and flag disagreement.
+    flagged = []
+    our_total = 0.0
+    positions_out = []
+    for sym in sorted(agg.keys()):
+        h = agg[sym]
+        ours = _paper_price(sym)
+        drift_pct = None
+        if ours is not None and h["broker_price"] > 0:
+            drift_pct = round(abs(ours - h["broker_price"]) / h["broker_price"] * 100, 2)
+            if drift_pct > 1.5:
+                flagged.append(sym)
+        our_total += h["shares"] * (ours if ours is not None else h["broker_price"])
+        positions_out.append({
+            "symbol": sym,
+            "shares": round(h["shares"], 4),
+            "broker_price": round(h["broker_price"], 2),
+            "our_price": round(ours, 2) if ours is not None else None,
+            "value": round(h["value"], 2),
+            "drift_pct": drift_pct,
+        })
+    payload = {
+        "connected": True,
+        "accounts": out_accounts,
+        "positions": positions_out,
+        "broker_total": round(broker_total, 2),
+        "our_total": round(our_total, 2),
+        "flagged": flagged,
+        "last_synced": int(time.time()),
+    }
+    CACHE[ck] = (payload, time.time())
+    return jsonify(payload)
+
+
+@app.route("/snaptrade/disconnect", methods=["POST"])
+def snaptrade_disconnect():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "Log in first."}), 401
+    st_id = "apexq-user-%s" % u["id"]
+    db = get_db()
+    if db is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = db.cursor()
+    cur.execute("SELECT snaptrade_secret FROM users WHERE id = %s", (u["id"],))
+    row = cur.fetchone()
+    if row and row[0]:
+        _snaptrade_request("DELETE", "/snapTrade/deleteUser", query_extra={"userId": st_id})
+    cur.execute("UPDATE users SET snaptrade_secret = NULL WHERE id = %s", (u["id"],))
+    db.commit()
+    cur.close()
+    db.close()
+    CACHE.pop("st_hold_%s" % u["id"], None)
+    return jsonify({"ok": True})
 
 
 @app.route("/quote")
