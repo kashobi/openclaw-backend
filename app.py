@@ -214,6 +214,37 @@ def force_www():
         return redirect(request.url.replace("://apexq.io", "://www.apexq.io", 1), code=301)
 
 
+import gzip as _gzip
+
+
+# CHUNK: gzip every sizable text response when the browser accepts it. The single index.html is
+# 289KB raw and roughly 60KB gzipped, so this is the single biggest page load win. Registered
+# BEFORE the data_timestamp handler on purpose: Flask runs after_request hooks in reverse
+# registration order, so this one runs last, compressing only after the JSON has been stamped.
+@app.after_request
+def compress_response(response):
+    try:
+        if response.direct_passthrough or response.status_code != 200:
+            return response
+        if "gzip" not in (request.headers.get("Accept-Encoding") or "").lower():
+            return response
+        if response.headers.get("Content-Encoding"):
+            return response
+        ct = (response.content_type or "").lower()
+        if not any(t in ct for t in ("text/html", "application/json", "application/javascript", "text/css", "text/plain", "image/svg")):
+            return response
+        body = response.get_data()
+        if len(body) < 1024:
+            return response
+        response.set_data(_gzip.compress(body, 6))
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(response.get_data()))
+        response.headers["Vary"] = "Accept-Encoding"
+    except Exception as e:
+        logger.error("gzip compress error: %s" % e)
+    return response
+
+
 # CHUNK: stamp every JSON response with data_timestamp if it does not already carry one.
 # Cached endpoints embed their own fetch time, which is preserved here, so the frontend's
 # "Updated X ago" reflects when the data was actually pulled, not when it was served.
@@ -520,14 +551,26 @@ def score_to_conviction(score):
 def home():
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
     html = open(path, encoding="utf-8").read()
-    return Response(html, mimetype="text/html")
+    resp = Response(html, mimetype="text/html")
+    # Revalidate on every visit so a deploy is picked up immediately, but allow the browser to
+    # reuse its copy when nothing changed instead of re downloading the whole app shell.
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 def _serve_file(filename, mimetype, binary=False):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
     if binary:
-        return Response(open(path, "rb").read(), mimetype=mimetype)
-    return Response(open(path, encoding="utf-8").read(), mimetype=mimetype)
+        resp = Response(open(path, "rb").read(), mimetype=mimetype)
+    else:
+        resp = Response(open(path, encoding="utf-8").read(), mimetype=mimetype)
+    # Icons and the manifest change rarely; a week of browser cache removes them from every
+    # repeat load. The service worker stays at no-cache so updates roll out immediately.
+    if filename == "sw.js":
+        resp.headers["Cache-Control"] = "no-cache"
+    else:
+        resp.headers["Cache-Control"] = "public, max-age=604800"
+    return resp
 
 
 @app.route("/manifest.json")
@@ -5203,10 +5246,14 @@ def create_checkout():
         return jsonify({"error": "payments_unavailable", "message": "Payments are not set up yet."}), 503
     try:
         # Named checkout, not session, so it never shadows the Flask session object.
+        # Every new subscriber gets a 7 day free trial. The card is collected up front and the first
+        # $12.99 charge lands on day 8 unless they cancel, matching the pause style setup chosen in
+        # the Stripe dashboard. Change trial_period_days here if the trial length ever changes.
         checkout = _stripe.checkout.Session.create(
             payment_method_types=["card"],
             mode="subscription",
             line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+            subscription_data={"trial_period_days": 7},
             success_url=request.host_url + "?upgraded=true",
             cancel_url=request.host_url,
             client_reference_id=str(u["id"]),
