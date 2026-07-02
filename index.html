@@ -899,6 +899,9 @@ body{transition:background-color .3s ease,color .3s ease;}
 .ptQuote .neg{color:var(--red);}
 .ptSym{cursor:pointer;}
 .ptSym:hover{color:var(--accent);}
+.tradingview-widget-copyright{font-size:12px;text-align:center;padding-top:6px;font-family:var(--font-sans);}
+.tradingview-widget-copyright a{color:var(--muted);text-decoration:none;}
+.tradingview-widget-copyright a:hover{color:var(--accent);}
 @media(max-width:700px){.tvHost{height:330px;}}
 </style>
 </head>
@@ -4617,50 +4620,60 @@ if(ib){
     symObs.observe(symNode, {childList: true, characterData: true, subtree: true});
   }
 
-  // Live candlestick chart on the Practice tab, powered by TradingView's official free embed, the
-  // same charting engine the big investing apps license. Loaded lazily the first time the tab
-  // opens so it costs the rest of the app nothing. The chart follows whatever symbol is typed in
-  // the buy box, and a live quote line under the form confirms the company name and price before
-  // any purchase. Rebuilds itself when the theme flips so it always matches dark or light.
-  var _tvLoaded = false, _tvSymbol = "AAPL", _tvTimer = null, _qTimer = null;
+  // Live candlestick chart on the Practice tab, using TradingView's current official free embed,
+  // the same charting engine the big investing apps license. TradingView publishes these widgets
+  // for exactly this use, and the license has one hard condition: their attribution stays visible
+  // and unmodified. The copyright line below is their required credit, do not remove it. Loaded
+  // lazily the first time the tab opens, follows the symbol typed in the buy box, and rebuilds
+  // when the theme flips so it always matches dark or light.
+  var _tvSymbol = "AAPL", _tvBuilt = false, _tvTimer = null, _qTimer = null;
   function tvTheme(){ return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"; }
   function buildTvChart(){
     var host = document.getElementById("tvHost");
-    if(!host || typeof TradingView === "undefined"){ return; }
-    host.innerHTML = "<div id='tvWidget' style='height:100%'></div>";
-    try{
-      new TradingView.widget({
-        container_id: "tvWidget",
-        symbol: _tvSymbol,
-        interval: "D",
-        autosize: true,
-        style: "1",
-        theme: tvTheme(),
-        locale: "en",
-        hide_side_toolbar: window.innerWidth < 700,
-        allow_symbol_change: false,
-        save_image: false
-      });
-      var lab = document.getElementById("tvSymLabel");
-      if(lab){ lab.textContent = _tvSymbol; }
-    }catch(e){
-      host.innerHTML = "<div class='tvLoading'>The live chart could not load. Check your connection and reopen this tab.</div>";
-    }
-  }
-  function loadTvChart(){
-    if(_tvLoaded){ buildTvChart(); return; }
-    _tvLoaded = true;
+    if(!host){ return; }
+    _tvBuilt = true;
+    host.innerHTML = "";
+    var wrap = document.createElement("div");
+    wrap.className = "tradingview-widget-container";
+    wrap.style.height = "100%";
+    wrap.style.width = "100%";
+    var inner = document.createElement("div");
+    inner.className = "tradingview-widget-container__widget";
+    inner.style.height = "calc(100% - 32px)";
+    inner.style.width = "100%";
+    var credit = document.createElement("div");
+    credit.className = "tradingview-widget-copyright";
+    credit.innerHTML = "<a href=\"https://www.tradingview.com/\" rel=\"noopener nofollow\" target=\"_blank\"><span class=\"blue-text\">Track all markets on TradingView</span></a>";
     var sc = document.createElement("script");
-    sc.src = "https://s3.tradingview.com/tv.js";
-    sc.onload = buildTvChart;
+    sc.type = "text/javascript";
+    sc.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    sc.async = true;
+    sc.text = JSON.stringify({
+      autosize: true,
+      symbol: _tvSymbol,
+      interval: "D",
+      timezone: "America/New_York",
+      theme: tvTheme(),
+      style: "1",
+      locale: "en",
+      hide_side_toolbar: window.innerWidth < 700,
+      allow_symbol_change: false,
+      save_image: false,
+      support_host: "https://www.tradingview.com"
+    });
     sc.onerror = function(){
-      var host = document.getElementById("tvHost");
-      if(host){ host.innerHTML = "<div class='tvLoading'>The live chart could not load. Check your connection and reopen this tab.</div>"; }
+      host.innerHTML = "<div class='tvLoading'>The live chart could not load. Check your connection and reopen this tab.</div>";
     };
-    document.head.appendChild(sc);
+    wrap.appendChild(inner);
+    wrap.appendChild(credit);
+    wrap.appendChild(sc);
+    host.appendChild(wrap);
+    var lab = document.getElementById("tvSymLabel");
+    if(lab){ lab.textContent = _tvSymbol; }
   }
+  function loadTvChart(){ buildTvChart(); }
   var tradeTab = document.querySelector('.tab[data-view="trade"]');
-  if(tradeTab){ tradeTab.addEventListener("click", function(){ setTimeout(loadTvChart, 50); }); }
+  if(tradeTab){ tradeTab.addEventListener("click", function(){ if(!_tvBuilt){ setTimeout(loadTvChart, 50); } }); }
   function fetchQuote(sym){
     var q = document.getElementById("ptQuote");
     if(!q){ return; }
@@ -4685,14 +4698,14 @@ if(ib){
       if(!v){ var q = document.getElementById("ptQuote"); if(q){ q.style.display = "none"; } return; }
       _qTimer = setTimeout(function(){ fetchQuote(v); }, 500);
       _tvTimer = setTimeout(function(){
-        if(v.length >= 1 && v !== _tvSymbol){ _tvSymbol = v; if(_tvLoaded){ buildTvChart(); } }
+        if(v.length >= 1 && v !== _tvSymbol){ _tvSymbol = v; if(_tvBuilt){ buildTvChart(); } }
       }, 900);
     });
   }
   var themeBtnForTv = document.getElementById("themeToggle");
   if(themeBtnForTv){
     themeBtnForTv.addEventListener("click", function(){
-      if(_tvLoaded && document.getElementById("tvWidget")){ setTimeout(buildTvChart, 60); }
+      if(_tvBuilt){ setTimeout(buildTvChart, 60); }
     });
   }
 
