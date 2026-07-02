@@ -31,26 +31,28 @@
   --radius:18px;
 }
 [data-theme="dark"]{
-  --bg:#0c0f12;--surface:#1a1d23;--s2:#22262e;--border:#2a2d35;
-  --accent:#22c55e;--accent-d:#16a34a;--accent-rgb:34,197,94;
-  --green:#22c55e;--gbg:#13251b;
-  --red:#ef4444;--rbg:#2a1518;--yellow:#f59e0b;--ybg:#2a1f0a;
-  --text:#e2e8f0;--muted:#9ca3af;--navy:#15181e;
-  --shadow:0 8px 24px rgba(0,0,0,.35);
-  --shadow-hi:0 16px 38px rgba(0,0,0,.5);
-  --shadow-sm:0 2px 10px rgba(0,0,0,.28);
-  --hero-grad:linear-gradient(165deg,#181d3d 0%,#0c0f12 62%);
+  --bg:#080b0f;--surface:#0f1119;--s2:#161922;--border:#1e2430;
+  --accent:#00e676;--accent-d:#00c853;--accent-rgb:0,230,118;
+  --green:#00e676;--gbg:#0c1f16;
+  --red:#ff3d3d;--rbg:#26141a;--yellow:#f4b740;--ybg:#241c0d;
+  --text:#e0e4ed;--muted:#7d8596;--navy:#0a0d14;
+  --shadow:0 8px 32px rgba(0,0,0,.5);
+  --shadow-hi:0 14px 40px rgba(0,0,0,.7);
+  --shadow-sm:0 2px 12px rgba(0,0,0,.4);
+  --hero-grad:radial-gradient(1200px 600px at 50% -10%, rgba(0,230,118,.10), transparent 60%), linear-gradient(180deg,#0b1016 0%,#080b0f 70%);
+  --glass:rgba(12,15,22,.72);
 }
 [data-theme="light"]{
-  --bg:#f8fafc;--surface:#ffffff;--s2:#f1f5f9;--border:#e2e8f0;
-  --accent:#1a1f71;--accent-d:#141a5e;--accent-rgb:26,31,113;
-  --green:#0d7c4b;--gbg:#e7f5ee;
-  --red:#c0392b;--rbg:#fdeeec;--yellow:#b7791f;--ybg:#fdf6e3;
-  --text:#0f172a;--muted:#64748b;--navy:#1e293b;
-  --shadow:0 8px 24px rgba(15,23,42,.10);
-  --shadow-hi:0 16px 38px rgba(15,23,42,.16);
-  --shadow-sm:0 2px 10px rgba(15,23,42,.07);
-  --hero-grad:linear-gradient(165deg,#ffffff 0%,#eef2f7 72%);
+  --bg:#f5f6f8;--surface:#ffffff;--s2:#eef1f5;--border:#dce1e7;
+  --accent:#0f7b4e;--accent-d:#0b5f3c;--accent-rgb:15,123,78;
+  --green:#0f7b4e;--gbg:#e6f4ec;
+  --red:#c0392b;--rbg:#fdeeec;--yellow:#b8860b;--ybg:#fbf3df;
+  --text:#1a1d26;--muted:#5c6b85;--navy:#1e293b;
+  --shadow:0 6px 20px rgba(0,0,0,.06);
+  --shadow-hi:0 12px 30px rgba(0,0,0,.12);
+  --shadow-sm:0 2px 10px rgba(0,0,0,.05);
+  --hero-grad:radial-gradient(1200px 600px at 50% -10%, rgba(15,123,78,.08), transparent 60%), linear-gradient(180deg,#ffffff 0%,#eef1f5 75%);
+  --glass:rgba(255,255,255,.78);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{max-width:100%;overflow-x:hidden;}
@@ -923,6 +925,43 @@ body{transition:background-color .3s ease,color .3s ease;}
 .stBtn:hover{border-color:var(--accent);}
 .stBtnQuiet{color:var(--muted);}
 @media(max-width:520px){.stRow{grid-template-columns:1fr .8fr 1fr .9fr;font-size:12px;}}
+/* ===== 2026 refresh: five tab nav, glass, drawer, floaty polish ===== */
+/* Fold nine tabs into five. The extra views still exist and open from the More drawer and the
+   Portfolio chips, so nothing is deleted, only hidden from the bar. */
+.tab[data-view="discover"],.tab[data-view="insights"],.tab[data-view="compare"],.tab[data-view="backtest"],.tab[data-view="trade"]{display:none !important;}
+/* True glass nav, theme aware, floating just off the bottom. */
+.tabbar{background:var(--glass) !important;backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px);border-top:1px solid var(--border);box-shadow:0 -8px 34px rgba(0,0,0,.28) !important;}
+.tab{transition:color .18s ease,transform .18s ease;}
+.tab.active .tabi{transform:translateY(-1px);filter:drop-shadow(0 0 10px rgba(var(--accent-rgb),.65));}
+.tabMore .tabi{font-weight:700;}
+/* More drawer: slide up glass sheet. */
+.moreDrawer{position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.5);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .22s ease;display:flex;align-items:flex-end;justify-content:center;}
+.moreDrawer.open{opacity:1;pointer-events:auto;}
+.moreSheet{width:100%;max-width:560px;background:var(--surface);border:1px solid var(--border);border-bottom:none;border-radius:22px 22px 0 0;padding:14px 16px calc(24px + env(safe-area-inset-bottom));box-shadow:var(--shadow-hi);transform:translateY(24px);transition:transform .26s cubic-bezier(.2,.9,.3,1);}
+.moreDrawer.open .moreSheet{transform:translateY(0);}
+.moreGrip{width:40px;height:4px;border-radius:999px;background:var(--border);margin:2px auto 12px;}
+.moreTitle{font-size:12px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:0 6px 10px;}
+.moreItem{display:flex;align-items:center;gap:14px;width:100%;background:var(--s2);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:9px;cursor:pointer;text-align:left;transition:transform .16s ease,border-color .16s ease,background .16s ease;font-family:inherit;}
+.moreItem:hover{transform:translateY(-2px);border-color:var(--accent);}
+.moreItem:active{transform:scale(.99);}
+.moreIco{font-size:22px;line-height:1;}
+.moreLbl{display:flex;flex-direction:column;gap:2px;}
+.moreLbl b{font-size:15px;color:var(--text);font-weight:700;}
+.moreLbl small{font-size:12px;color:var(--muted);}
+/* Portfolio mode chips. */
+.portModeChips{display:flex;gap:8px;margin-bottom:14px;}
+.pmChip{flex:1;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:11px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;transition:all .18s ease;}
+.pmChip.active{background:rgba(var(--accent-rgb),.14);border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 1px rgba(var(--accent-rgb),.25) inset;}
+.pmChip:hover{transform:translateY(-1px);}
+/* Floaty system: cards lift, buttons press, inputs glow. */
+.ic,.rc,.dcard,.mcard{transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease,background .3s ease;}
+.dcard:hover,.mcard:hover{transform:translateY(-2px);box-shadow:var(--shadow-hi);}
+.cmpBtn,.authSubmit,.heroPrimary{transition:transform .16s ease,box-shadow .2s ease,background .2s ease,filter .2s ease;}
+.cmpBtn:hover,.authSubmit:hover,.heroPrimary:hover{transform:scale(1.02);}
+.cmpBtn:active,.authSubmit:active{transform:scale(.98);}
+.cmpInp:focus,.si:focus,#si:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.16);}
+/* Verdict badges and Alpha number get a soft glow in the neon dark theme. */
+[data-theme="dark"] .vbadge,[data-theme="dark"] .alphaNum{text-shadow:0 0 18px rgba(var(--accent-rgb),.35);}
 </style>
 </head>
 <body>
@@ -1254,6 +1293,10 @@ body{transition:background-color .3s ease,color .3s ease;}
     <div class="vhead-t">Portfolio</div>
     <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math.</div>
   </div>
+  <div class="portModeChips">
+    <button class="pmChip active" data-mode="real" onclick="apexqPortMode('real')">Real Portfolio</button>
+    <button class="pmChip" data-mode="paper" onclick="apexqPortMode('paper')">Paper Trading</button>
+  </div>
   <div class="ic" id="portSpark" style="display:none"></div>
   <div class="ic stCard" id="stCard">
     <div class="stHead">&#128279; Real Account <span class="stBadge">Read only</span></div>
@@ -1326,6 +1369,10 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="vhead">
     <div class="vhead-t">Practice Trading</div>
     <div class="vhead-s">Practice with $1,000,000 in virtual cash. Buy and sell at live prices and track your performance against the S&P 500.</div>
+  </div>
+  <div class="portModeChips">
+    <button class="pmChip" data-mode="real" onclick="apexqPortMode('real')">Real Portfolio</button>
+    <button class="pmChip active" data-mode="paper" onclick="apexqPortMode('paper')">Paper Trading</button>
   </div>
   <div class="ic ptTvCard">
     <div class="ptTvHead">&#128200; Live Chart <span class="ptTvSym" id="tvSymLabel">AAPL</span></div>
@@ -1400,12 +1447,23 @@ body{transition:background-color .3s ease,color .3s ease;}
   <button class="tab" data-view="discover"><span class="tabi">&#129517;</span><span class="tabt">Discover</span></button>
   <button class="tab" data-view="insights"><span class="tabi">&#127963;</span><span class="tabt">Congress</span></button>
   <button class="tab" data-view="compare"><span class="tabi">&#9878;&#65039;</span><span class="tabt">Compare</span></button>
-  <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Saved</span></button>
-  <button class="tab" data-view="portfolio"><span class="tabi">&#128200;</span><span class="tabt">Portfolio</span></button>
+  <button class="tab" data-view="watch"><span class="tabi">&#11088;</span><span class="tabt">Watchlist</span></button>
+  <button class="tab" data-view="portfolio"><span class="tabi">&#128188;</span><span class="tabt">Portfolio</span></button>
   <button class="tab" data-view="backtest"><span class="tabi">&#128202;</span><span class="tabt">What If</span></button>
   <button class="tab" data-view="trade"><span class="tabi">&#128181;</span><span class="tabt">Practice</span></button>
   <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
+  <button class="tab tabMore" id="tabMore" type="button"><span class="tabi">&#8943;</span><span class="tabt">More</span></button>
 </nav>
+<div class="moreDrawer" id="moreDrawer">
+  <div class="moreSheet">
+    <div class="moreGrip"></div>
+    <div class="moreTitle">More tools</div>
+    <button class="moreItem" onclick="showView('discover');apexqCloseMore();"><span class="moreIco">&#129517;</span><span class="moreLbl"><b>Discover</b><small>Movers, sectors, and market lenses</small></span></button>
+    <button class="moreItem" onclick="showView('insights');apexqCloseMore();"><span class="moreIco">&#127963;</span><span class="moreLbl"><b>Congress</b><small>Who in Congress is trading what</small></span></button>
+    <button class="moreItem" onclick="showView('compare');apexqCloseMore();"><span class="moreIco">&#9878;&#65039;</span><span class="moreLbl"><b>Compare</b><small>Put two or three stocks side by side</small></span></button>
+    <button class="moreItem" onclick="showView('backtest');apexqCloseMore();"><span class="moreIco">&#128202;</span><span class="moreLbl"><b>What If</b><small>What if you copied a lawmaker</small></span></button>
+  </div>
+</div>
 <div class="newsModalOverlay" id="newsModalOverlay">
   <div class="newsModal">
     <button class="newsModalClose" id="newsModalClose">&times;</button>
@@ -4837,6 +4895,36 @@ if(ib){
   stWireConnect();
   var portTab = document.querySelector('.tab[data-view="portfolio"]');
   if(portTab){ portTab.addEventListener("click", function(){ setTimeout(function(){ stLoad(false); }, 50); }); }
+
+  // Five tab navigation extras. New, isolated code: it opens the More drawer and switches the
+  // Portfolio tab between Real and Paper without touching showView or any existing handler.
+  function apexqCloseMore(){
+    var d = document.getElementById("moreDrawer");
+    if(d){ d.classList.remove("open"); }
+  }
+  window.apexqCloseMore = apexqCloseMore;
+  var moreBtn = document.getElementById("tabMore");
+  var moreDrawer = document.getElementById("moreDrawer");
+  if(moreBtn && moreDrawer){
+    moreBtn.addEventListener("click", function(){ moreDrawer.classList.add("open"); });
+    moreDrawer.addEventListener("click", function(e){ if(e.target === moreDrawer){ apexqCloseMore(); } });
+  }
+  function syncPmChips(mode){
+    var chips = document.querySelectorAll(".pmChip");
+    for(var i = 0; i < chips.length; i++){
+      chips[i].classList.toggle("active", chips[i].getAttribute("data-mode") === mode);
+    }
+  }
+  function apexqPortMode(mode){
+    if(typeof showView === "function"){ showView(mode === "paper" ? "trade" : "portfolio"); }
+    // Keep the Portfolio tab lit in the bottom bar for both modes, since Practice now lives under it.
+    var tabs = document.querySelectorAll(".tabbar .tab");
+    for(var i = 0; i < tabs.length; i++){ tabs[i].classList.remove("active"); }
+    var pt = document.querySelector('.tab[data-view="portfolio"]');
+    if(pt){ pt.classList.add("active"); }
+    syncPmChips(mode);
+  }
+  window.apexqPortMode = apexqPortMode;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
