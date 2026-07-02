@@ -957,24 +957,59 @@ def terms_page():
 @app.route("/privacy")
 def privacy_page():
     inner = """
-<p>This policy explains what Apex Q stores, why, and the control you have over it.</p>
-<h2>What we store</h2>
-<ul>
-<li>Your username and a secure one way hash of your password. We never store your password in plain text.</li>
-<li>The stocks you save to your watchlist.</li>
-<li>The holdings you choose to enter into the portfolio tracker, meaning the ticker, share count, and the cost you type in.</li>
-<li>If you opt in to email alerts, the email address and the alert preference you provide.</li>
-</ul>
-<h2>How we use it</h2>
-<p>We use this information only to run your account and to show you your own data. We do not sell it, and we do not share it with advertisers.</p>
+<p><b>Last updated July 2, 2026</b></p>
+<p>This Privacy Policy describes how Apex Q collects, uses, and protects your information when you use the service, and the rights and controls you have over your data. Apex Q is operated by Xfinity Holdings LLC of Trumbull, Connecticut, United States, referred to below as the Company, we, us, or our. By using Apex Q you agree to the practices described here.</p>
+
+<h2>Information we collect</h2>
+<p>Account information you provide: a username, a secure one way hash of your password (we never store your password in plain text), your email address, your first and last name, and your phone number if you provide one for verification.</p>
+<p>Content you create in the app: the stocks you save to your watchlist, the holdings you enter into the portfolio tracker, and your practice trades in the practice trading feature.</p>
+<p>Usage data collected automatically: standard technical information such as your device's IP address, browser type, the pages you visit, and the time and date of your visit. We use this to keep the service running, secure, and improving.</p>
+
+<h2>Payments</h2>
+<p>Subscriptions are processed by Stripe, Inc. Your card number and full payment details go directly to Stripe and never touch or rest on our servers. We receive only what is needed to manage your subscription, such as its status and tier. Stripe's privacy policy is at https://stripe.com/privacy.</p>
+
+<h2>Phone verification</h2>
+<p>If you verify your phone number, the verification text message is delivered by Twilio Inc. Your number is shared with Twilio only to deliver that message. Twilio's privacy policy is at https://www.twilio.com/legal/privacy.</p>
+
+<h2>AI features and data sharing</h2>
+<p>Apex Q's question and answer features are powered by third party artificial intelligence providers. When you use these features, the following is sent to the provider: the question you type, the ticker or tickers involved, and the live market context Apex Q assembles to ground the answer, such as current prices and fundamentals. We do not send your email address, your name, your account credentials, your payment information, or your device identifiers to any AI provider.</p>
+<p>Our current AI providers are DeepSeek, whose privacy policy is at https://platform.deepseek.com, and Google (Gemini), whose privacy policy is at https://policies.google.com/privacy. These providers may change over time and this policy will be updated when they do.</p>
+<p>By using the AI powered features you consent to this transmission. If you choose not to use those features, no data is shared with AI providers.</p>
+
+<h2>Brokerage connection and portfolio data</h2>
+<p>Apex Q offers an optional feature that lets you connect a brokerage account to see your real holdings inside the app. Connections are handled entirely by SnapTrade, a third party financial data provider. Apex Q never receives, processes, or stores your brokerage login credentials at any point. Where your brokerage supports it, SnapTrade uses OAuth, meaning you sign in directly with your brokerage and SnapTrade receives a secure token rather than your password. SnapTrade is SOC 2 Type II certified, and you can review its security practices at https://snaptrade.com/security.</p>
+<p>The connection is strictly read only. No trading, transfer, or write capability exists anywhere in Apex Q. We store a connection identifier and a per user connection secret so your link keeps working, and your holdings are fetched on demand and held briefly in a temporary cache to keep the app fast. Your brokerage positions are not written into our permanent database.</p>
+<p>You can disconnect at any time with the disconnect button in the app, which removes the link and the stored connection secret. Per SnapTrade's data policy, your data belongs to you, and we do not sell or share it.</p>
+
 <h2>Market data providers</h2>
-<p>When you look up a stock, the request goes to third party market data providers to fetch prices and figures. Those lookups are about the ticker, not about you, and your identity is not handed to them as part of normal use.</p>
-<h2>Cookies and session</h2>
-<p>We use a single session cookie to keep you logged in. It is not used to track you across other websites.</p>
+<p>When you look up a stock, the request goes to third party market data providers, currently Finnhub, Financial Modeling Prep, and Yahoo Finance, to fetch prices, fundamentals, and filings. Those lookups are about the ticker, not about you, and your identity is not handed to them as part of normal use.</p>
+
+<h2>How we use your information</h2>
+<p>To provide and maintain the service and show you your own data. To manage your account and subscription. To contact you about the service, such as verification codes, security notices, and, only if you opt in, product news you can unsubscribe from at any time. To power the AI features as described above. To understand usage and improve the product. We do not sell your personal information, we do not share it with advertisers, and we do not give it to data brokers.</p>
+
+<h2>Where your data lives</h2>
+<p>Apex Q runs on Railway infrastructure in the United States with a PostgreSQL database. Data moves between your device and our servers over encrypted connections. If you use the service from outside the United States, you consent to your information being processed in the United States.</p>
+
+<h2>Retention</h2>
+<p>We keep your personal data only as long as needed for the purposes above, to comply with legal obligations, to resolve disputes, and to enforce our agreements. Usage data is generally kept for a shorter period unless needed for security.</p>
+
 <h2>Your controls</h2>
-<p>You can export everything stored about you at any time, and you can delete your account and all of its data at any time. Deletion is permanent and removes your watchlist, your holdings, your verdict history, and any alert subscription.</p>
-<h2>Contact</h2>
-<p>If you have a question about your data, reach out through the app and we will help.</p>
+<p>You can export everything stored about you at any time from within the app. You can delete your account and all of its data at any time, and deletion is permanent: it removes your watchlist, your holdings, your practice trades, any brokerage connection, and any alert or email subscription. You can also contact us to request access, correction, or deletion.</p>
+
+<h2>Children's privacy</h2>
+<p>Apex Q is not directed at anyone under the age of 13, and we do not knowingly collect personal information from anyone under 13. If you believe a child has provided us personal information, contact us and we will remove it.</p>
+
+<h2>Links to other websites</h2>
+<p>The service may link to websites we do not operate, including news sources and provider pages. We are not responsible for their content or privacy practices, and we encourage you to review the privacy policy of every site you visit.</p>
+
+<h2>Security</h2>
+<p>We use industry standard measures to protect your data, including encryption in transit and hashed credentials. No method of transmission or storage is completely secure, and while we work hard to protect your information, we cannot guarantee absolute security.</p>
+
+<h2>Changes to this policy</h2>
+<p>We may update this policy from time to time. Changes are posted on this page with an updated date at the top, and material changes will be flagged prominently in the service or by email.</p>
+
+<h2>Contact us</h2>
+<p>Questions about this policy or your data: support@apexq.io. Apex Q, Trumbull, Connecticut, United States.</p>
 """
     return _legal_page("Privacy Policy", inner)
 
