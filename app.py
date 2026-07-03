@@ -6178,6 +6178,13 @@ def portfolio_alternatives():
     return jsonify(payload)
 
 
+@app.route("/api/user/premium-status")
+def api_premium_status():
+    """Single fact for the frontend paywall: is this account premium. Called on page load and after
+    login to decide whether the report blur applies. No other data leaves this route."""
+    return jsonify({"is_premium": is_premium(current_user())})
+
+
 @app.route("/quote")
 def quote():
     """Light live quote for one symbol: company name, price, and day change. Used by the practice
