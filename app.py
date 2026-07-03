@@ -5867,13 +5867,13 @@ def portfolio_generate():
     sector = (request.args.get("sector") or "all").strip()
     amount_note = ""
     try:
-        amount = float(request.args.get("amount") or 1000)
+        amount = float((request.args.get("amount") or "100000").replace(",", ""))
         if amount <= 0:
-            amount = 1000.0
-            amount_note = "That amount did not look right, so the model used 1000 dollars."
+            amount = 100000.0
+            amount_note = "That amount did not look right, so the model used 100,000 dollars."
     except (TypeError, ValueError):
-        amount = 1000.0
-        amount_note = "That amount did not look right, so the model used 1000 dollars."
+        amount = 100000.0
+        amount_note = "That amount did not look right, so the model used 100,000 dollars."
     ck = "portfolio_gen_%s_%s_%s" % (risk, int(amount), sector.lower())
     cached = CACHE.get(ck)
     if cached and (time.time() - cached[1]) < 900:
@@ -5940,10 +5940,49 @@ def portfolio_generate():
 
     count = min(len(ranked), 5 if amount < 500 else 8, 10)
     picks = ranked[:count]
-    alloc_d = round(amount / count, 2)
-    alloc_p = round(100.0 / count, 1)
-    stocks = []
+    # Conviction weighted, risk aware allocation, the way professional managers tilt a book:
+    # weight factor = (alpha / 100) * (1 / max(beta, 0.5)). Higher conviction and lower volatility
+    # earn a larger slice. Beta comes from the cached full report when one exists; when it is
+    # missing, that component is neutral 1.0, so the tilt still works on conviction alone. Any
+    # single position is capped at 20 percent with the excess redistributed proportionally, and if
+    # no usable factors exist at all, the split falls back to plain equal weight.
+    factors = []
     for (adj, alpha, r) in picks:
+        alpha_part = (alpha / 100.0) if alpha else 1.0
+        beta_part = 1.0
+        symq = r.get("symbol") or ""
+        cached_full = CACHE.get("full_" + symq)
+        if cached_full and (time.time() - cached_full[1]) < 900 and cached_full[0]:
+            try:
+                b = float(cached_full[0].get("beta"))
+                beta_part = 1.0 / max(b, 0.5)
+            except (TypeError, ValueError):
+                beta_part = 1.0
+        factors.append(alpha_part * beta_part)
+    total_f = sum(factors)
+    if total_f > 0:
+        weights = [f / total_f for f in factors]
+    else:
+        weights = [1.0 / count] * count
+    # Cap at 20 percent, redistribute the excess proportionally among the uncapped, repeat until
+    # stable. With five names the cap makes the split exactly equal, which is correct behavior.
+    cap = 0.20
+    for _ in range(10):
+        over = [i for i, w in enumerate(weights) if w > cap + 1e-9]
+        if not over:
+            break
+        excess = sum(weights[i] - cap for i in over)
+        for i in over:
+            weights[i] = cap
+        under = [i for i, w in enumerate(weights) if w < cap - 1e-9]
+        under_total = sum(weights[i] for i in under)
+        if not under or under_total <= 0:
+            break
+        for i in under:
+            weights[i] += excess * (weights[i] / under_total)
+    stocks = []
+    for idx, (adj, alpha, r) in enumerate(picks):
+        w = weights[idx]
         stocks.append({
             "symbol": r.get("symbol"),
             "name": r.get("name") or r.get("symbol"),
@@ -5953,8 +5992,8 @@ def portfolio_generate():
             "sector": r.get("sector") or "",
             "pe_ratio": r.get("pe_ratio") if r.get("pe_ratio") is not None else "N/A",
             "dividend_yield": r.get("div_yield") if r.get("div_yield") is not None else "N/A",
-            "allocation_dollars": alloc_d,
-            "allocation_pct": alloc_p,
+            "allocation_dollars": round(amount * w, 2),
+            "allocation_pct": round(w * 100, 1),
             "reason": _builder_reason(r, alpha),
         })
     payload = {
