@@ -5972,6 +5972,104 @@ def portfolio_generate():
     return jsonify(payload)
 
 
+def _alt_positive_signals(r, alpha, sym):
+    """Factual positive signals for one APPROVE alternative, only from fields that exist. The
+    cached full report enriches with moat and growth when available; the light snapshot supplies
+    the rest. Never invents a figure."""
+    sig = {}
+    cached = CACHE.get("full_" + sym)
+    full = cached[0] if cached and (time.time() - cached[1]) < 900 and cached[0] else None
+    if full:
+        moat = (full.get("apex_moat") or {}).get("rating")
+        if moat:
+            sig["moat"] = str(moat) + " moat"
+        try:
+            rg = float(full.get("revenue_growth"))
+            if rg > 10:
+                sig["growth"] = "Revenue growth %s percent" % round(rg, 1)
+        except (TypeError, ValueError):
+            pass
+    try:
+        up = float(r.get("upside") or 0)
+        if up >= 10:
+            sig["upside"] = "Analysts see %s percent upside" % round(up, 1)
+    except (TypeError, ValueError):
+        pass
+    try:
+        chg = float(r.get("change_pct") or 0)
+        if chg > 2:
+            sig["momentum"] = "Up %s percent today" % round(chg, 1)
+    except (TypeError, ValueError):
+        pass
+    try:
+        pe = float(r.get("pe_ratio") or 0)
+        if 0 < pe < 20:
+            sig["valuation"] = "Reasonable valuation at %s times earnings" % round(pe, 1)
+    except (TypeError, ValueError):
+        pass
+    try:
+        dy = float(r.get("div_yield") or 0)
+        if dy > 1.5:
+            sig["dividend"] = "Pays a %s percent dividend" % round(dy, 2)
+    except (TypeError, ValueError):
+        pass
+    conv = (r.get("conviction") or "").lower()
+    if conv in ("high", "very high"):
+        sig["conviction"] = "Engine conviction is " + conv
+    if not sig:
+        sig["signal"] = "Positive overall signal mix, Alpha Score %s" % alpha
+    return sig
+
+
+def _alt_current_negatives(symbol, cur):
+    """What is dragging on the stock being viewed, for the left side of the comparison. Pulls the
+    real warning flags and insider selling from the cached full report when present, otherwise
+    builds honest basics from the light snapshot."""
+    neg = []
+    cached = CACHE.get("full_" + symbol)
+    full = cached[0] if cached and (time.time() - cached[1]) < 900 and cached[0] else None
+    if full:
+        for f in (full.get("flags") or [])[:3]:
+            if isinstance(f, dict) and f.get("text"):
+                neg.append(f["text"])
+        try:
+            isv = float(full.get("insider_sell_value") or 0)
+            if isv >= 1e6:
+                neg.append("Recent insider selling of %.1f million dollars" % (isv / 1e6))
+        except (TypeError, ValueError):
+            pass
+        try:
+            rg = float(full.get("revenue_growth"))
+            if rg < 0:
+                neg.append("Revenue is shrinking, %s percent growth" % round(rg, 1))
+        except (TypeError, ValueError):
+            pass
+    try:
+        chg = float(cur.get("change_pct") or 0)
+        if chg < -2:
+            neg.append("Down %s percent today" % round(abs(chg), 1))
+    except (TypeError, ValueError):
+        pass
+    try:
+        pe = float(cur.get("pe_ratio") or 0)
+        if pe > 35:
+            neg.append("A rich valuation at %s times earnings" % round(pe, 1))
+    except (TypeError, ValueError):
+        pass
+    if not neg:
+        neg.append("Mixed signals with no clear positive edge right now")
+    # De-duplicate while keeping order, cap at four so the card stays readable.
+    seen = set()
+    out = []
+    for n in neg:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+        if len(out) >= 4:
+            break
+    return out
+
+
 @app.route("/portfolio/alternatives")
 def portfolio_alternatives():
     symbol = (request.args.get("symbol") or "").strip().upper()
@@ -5992,18 +6090,28 @@ def portfolio_alternatives():
         return jsonify(payload)
     sector = cur.get("sector") or ""
     cands = _builder_candidates("all")
-    same = [(r, a) for (r, a, ra) in cands
-            if r.get("verdict") == "APPROVE" and a > 50
-            and r.get("symbol") != symbol
-            and sector and (r.get("sector") or "") == sector]
+    # APPROVE only, never WATCH or PASS. Alpha above 50, or an engine score of 4 plus when the
+    # alpha is the fallback composite rather than a real cached Alpha Score.
+    def strong(r, a, real_alpha):
+        if r.get("verdict") != "APPROVE" or r.get("symbol") == symbol:
+            return False
+        if a > 50:
+            return True
+        if not real_alpha:
+            try:
+                return float(r.get("score") or 0) >= 4
+            except (TypeError, ValueError):
+                return False
+        return False
+    same = [(r, a) for (r, a, ra) in cands if strong(r, a, ra) and sector and (r.get("sector") or "") == sector]
     same.sort(key=lambda x: x[1], reverse=True)
     picks = same[:5]
-    used_sector = sector
-    if not picks:
-        allap = [(r, a) for (r, a, ra) in cands if r.get("verdict") == "APPROVE" and r.get("symbol") != symbol]
+    cross_sector = False
+    if len(picks) < 2:
+        allap = [(r, a) for (r, a, ra) in cands if strong(r, a, ra)]
         allap.sort(key=lambda x: x[1], reverse=True)
         picks = allap[:5]
-        used_sector = ""
+        cross_sector = True
     alts = []
     for (r, a) in picks:
         alts.append({
@@ -6013,9 +6121,20 @@ def portfolio_alternatives():
             "verdict": r.get("verdict"),
             "alpha_score": a,
             "sector": r.get("sector") or "",
-            "reason": _builder_reason(r, a),
+            "positive_signals": _alt_positive_signals(r, a, r.get("symbol") or ""),
         })
-    payload = {"alternatives": alts, "sector": used_sector, "for_symbol": symbol}
+    payload = {
+        "alternatives": alts,
+        "sector": "" if cross_sector else sector,
+        "cross_sector": cross_sector,
+        "for_symbol": symbol,
+        "current": {
+            "symbol": symbol,
+            "name": cur.get("name") or symbol,
+            "verdict": cur.get("verdict"),
+            "negatives": _alt_current_negatives(symbol, cur),
+        },
+    }
     CACHE[ck] = (payload, time.time())
     return jsonify(payload)
 
