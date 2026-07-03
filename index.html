@@ -1019,6 +1019,14 @@ body{transition:background-color .3s ease,color .3s ease;}
 @keyframes readPulse{0%,100%{box-shadow:0 8px 24px rgba(var(--accent-rgb),.4);}50%{box-shadow:0 8px 24px rgba(var(--accent-rgb),.4),0 0 0 12px rgba(var(--accent-rgb),.12);}}
 @media(min-width:769px){.readBtn{bottom:88px;}}
 .buildAllocNote{font-size:12px;color:var(--muted);line-height:1.6;padding:12px 4px 2px;}
+/* Mobile search bar. The input must be allowed to shrink (flex min-width auto blocks that by
+   default) and the button slims down, so ANALYZE always sits fully on screen. Desktop untouched. */
+@media(max-width:768px){
+  .swrap{padding:16px 14px 14px;}
+  .srow{width:100%;}
+  .sinp{min-width:0;font-size:16px;padding:15px 16px;}
+  .sbtn{flex-shrink:0;padding:15px 18px;font-size:14px;letter-spacing:.2px;}
+}
 </style>
 </head>
 <body>
@@ -5283,23 +5291,41 @@ if(ib){
       var parts = [];
       var raEl = document.getElementById("reportArea");
       var homeActive = document.getElementById("view-home") && document.getElementById("view-home").classList.contains("active");
-      if(homeActive && raEl && raEl.style.display !== "none"){
+      var askActive = document.getElementById("view-ask") && document.getElementById("view-ask").classList.contains("active");
+      if(askActive){
+        // On the Ask tab, read the newest answer, the one the person just received, not the whole
+        // chat history from the top.
+        var answers = document.querySelectorAll("#askChat .askA");
+        if(answers.length){
+          parts.push("Here is the latest answer. " + answers[answers.length - 1].innerText);
+        } else {
+          parts.push("Ask a question about a stock and I will read you the answer.");
+        }
+      } else if(homeActive && raEl && raEl.style.display !== "none"){
         var nm = document.getElementById("sfull");
         var symH = document.getElementById("sym");
         if(symH && symH.textContent.trim() && symH.textContent.trim() !== "APEX Q"){
           parts.push("Apex Q report for " + (nm && nm.textContent ? nm.textContent : symH.textContent) + ".");
         }
         var vb = document.getElementById("vbox");
-        if(vb){ parts.push(vb.innerText); }
+        if(vb && vb.offsetParent !== null){ parts.push(vb.innerText); }
         var pc = document.getElementById("portCtx");
         if(pc){ parts.push(pc.innerText); }
+        // ETF reports live in their own container with holdings tables that should not be read.
+        var etf = document.getElementById("etfSections");
+        if(etf && etf.style.display !== "none" && etf.innerText.trim()){
+          var eclone = etf.cloneNode(true);
+          var estrip = eclone.querySelectorAll("table, .ptblWrap, script, style");
+          for(var es = 0; es < estrip.length; es++){ estrip[es].remove(); }
+          parts.push(eclone.innerText || "");
+        }
         var ab = document.getElementById("aboutBody");
         if(ab && ab.textContent.trim()){ parts.push("About the company. " + ab.textContent); }
       } else {
         var av = document.querySelector(".view.active");
         if(av){
           var clone = av.cloneNode(true);
-          var strip = clone.querySelectorAll("table, .ptblWrap, .buildDisc, .ptDisc, .viewBack, .acx, .tvHost, .portModeChips, select, input, .stFoot, .newsList, .congTable, .altRow, script, style");
+          var strip = clone.querySelectorAll("table, .ptblWrap, .buildDisc, .ptDisc, .viewBack, .acx, .tvHost, .portModeChips, select, input, button, .stFoot, .newsList, .congTable, .altRow, script, style");
           for(var s = 0; s < strip.length; s++){ strip[s].remove(); }
           parts.push(clone.innerText || "");
         }
