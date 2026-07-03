@@ -1012,6 +1012,13 @@ body{transition:background-color .3s ease,color .3s ease;}
 .altSigs{margin:0;padding-left:16px;}
 .altSigs li{font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:4px;}
 @media(max-width:700px){.altGrid{grid-template-columns:1fr;}}
+/* Read aloud floating button, sits above the install button slot, clear of the tab bar. */
+.readBtn{position:fixed;bottom:calc(146px + env(safe-area-inset-bottom));right:16px;z-index:500;width:52px;height:52px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:22px;cursor:pointer;box-shadow:0 8px 24px rgba(var(--accent-rgb),.4);display:flex;align-items:center;justify-content:center;transition:transform .18s ease,box-shadow .2s ease;}
+.readBtn:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(var(--accent-rgb),.5);}
+.readBtn.reading{animation:readPulse 1.4s ease-in-out infinite;}
+@keyframes readPulse{0%,100%{box-shadow:0 8px 24px rgba(var(--accent-rgb),.4);}50%{box-shadow:0 8px 24px rgba(var(--accent-rgb),.4),0 0 0 12px rgba(var(--accent-rgb),.12);}}
+@media(min-width:769px){.readBtn{bottom:88px;}}
+.buildAllocNote{font-size:12px;color:var(--muted);line-height:1.6;padding:12px 4px 2px;}
 </style>
 </head>
 <body>
@@ -1392,7 +1399,7 @@ body{transition:background-color .3s ease,color .3s ease;}
         <button class="riskChip" data-risk="aggressive">&#128640; Aggressive</button>
       </div>
       <div class="buildLbl">Amount in dollars</div>
-      <input class="cmpInp" id="buildAmount" type="number" min="1" step="1" value="1000">
+      <input class="cmpInp" id="buildAmount" type="text" inputmode="numeric" value="100,000">
       <div class="buildLbl">Sector</div>
       <select class="cmpInp buildSelect" id="buildSector">
         <option value="all" selected>All Sectors</option>
@@ -1481,8 +1488,8 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div id="ptMain" style="display:none">
     <div class="ptCashCard">
       <div class="ptCashL">Virtual cash</div>
-      <div class="ptCashV" id="ptCash">$100,000</div>
-      <div class="ptTotals" id="ptTotals">Total value $100,000</div>
+      <div class="ptCashV" id="ptCash">$1,000,000</div>
+      <div class="ptTotals" id="ptTotals">Total value $1,000,000</div>
     </div>
     <div class="ptCards" id="ptCards"></div>
     <div class="ptBuy">
@@ -1540,6 +1547,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   </div>
 </div>
 <button id="installBtn" class="installBtn">&#9889; Install Apex Q</button>
+<button id="readBtn" class="readBtn" aria-label="Read this page aloud" style="display:none">&#127908;</button>
 <div id="toast" class="toast"></div>
 <nav class="tabbar" id="tabbar">
   <button class="tab active" data-view="home"><span class="tabi">&#128269;</span><span class="tabt">Home</span></button>
@@ -5060,12 +5068,12 @@ if(ib){
       var riskEl = document.querySelector(".riskChip.active");
       var risk = riskEl ? riskEl.getAttribute("data-risk") : "moderate";
       var amtEl = document.getElementById("buildAmount");
-      var amt = amtEl ? parseFloat(amtEl.value) : 1000;
+      var amt = amtEl ? parseFloat(String(amtEl.value).replace(/,/g, "")) : 100000;
       var note = document.getElementById("buildNote");
       if(!(amt > 0)){
-        amt = 1000;
-        if(amtEl){ amtEl.value = 1000; }
-        if(note){ note.textContent = "That amount did not look right, so 1000 dollars was used."; note.style.display = ""; }
+        amt = 100000;
+        if(amtEl){ amtEl.value = "100,000"; }
+        if(note){ note.textContent = "That amount did not look right, so 100,000 dollars was used."; note.style.display = ""; }
       } else if(note){ note.style.display = "none"; }
       var sec = document.getElementById("buildSector");
       var sector = sec ? sec.value : "all";
@@ -5099,6 +5107,7 @@ if(ib){
                  "<td class='lft buildReason'>" + st.reason + "</td></tr>";
           }
           h += "</tbody></table></div>";
+          h += "<div class='buildAllocNote'>Allocations are guided by conviction (Alpha Score) and risk (Beta). Stocks with stronger signals and lower volatility receive slightly larger positions, while still spreading risk across multiple names. This is an educational model, not a recommendation.</div>";
           if(d.etf_suggestions && d.etf_suggestions.length){
             h += "<div class='buildLbl' style='margin-top:16px'>Funds that match this style</div><div class='buildEtfs'>";
             for(var j = 0; j < d.etf_suggestions.length; j++){
@@ -5246,6 +5255,83 @@ if(ib){
       if(heroEl){ heroEl.style.display = ""; }
       if(typeof showView === "function"){ showView("home"); }
       window.scrollTo({top: 0, behavior: "smooth"});
+    });
+  }
+
+  // Read aloud. A floating microphone that speaks the current page using the browser's built in
+  // speech engine, no external service and no audio ever leaving the device. Prefers an English
+  // female voice when the device offers one. Reads only the main content: on a report it reads
+  // the company, the verdict story, and the about text; elsewhere it reads the active view minus
+  // tables, raw data lists, news, disclaimers, and controls. Hidden entirely on browsers without
+  // speech support. Stop and restart any time with the same button.
+  var readBtn = document.getElementById("readBtn");
+  if(readBtn && "speechSynthesis" in window){
+    readBtn.style.display = "";
+    var _voices = [];
+    function loadVoices(){ _voices = window.speechSynthesis.getVoices() || []; }
+    loadVoices();
+    if(typeof window.speechSynthesis.onvoiceschanged !== "undefined"){
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+    function pickVoice(){
+      var en = _voices.filter(function(v){ return (v.lang || "").toLowerCase().indexOf("en") === 0; });
+      var femaleHints = /female|samantha|zira|aria|jenny|victoria|karen|moira|tessa|susan|allison|ava|joanna|salli|kendra|kimberly/i;
+      for(var i = 0; i < en.length; i++){ if(femaleHints.test(en[i].name)){ return en[i]; } }
+      return en[0] || _voices[0] || null;
+    }
+    function gatherText(){
+      var parts = [];
+      var raEl = document.getElementById("reportArea");
+      var homeActive = document.getElementById("view-home") && document.getElementById("view-home").classList.contains("active");
+      if(homeActive && raEl && raEl.style.display !== "none"){
+        var nm = document.getElementById("sfull");
+        var symH = document.getElementById("sym");
+        if(symH && symH.textContent.trim() && symH.textContent.trim() !== "APEX Q"){
+          parts.push("Apex Q report for " + (nm && nm.textContent ? nm.textContent : symH.textContent) + ".");
+        }
+        var vb = document.getElementById("vbox");
+        if(vb){ parts.push(vb.innerText); }
+        var pc = document.getElementById("portCtx");
+        if(pc){ parts.push(pc.innerText); }
+        var ab = document.getElementById("aboutBody");
+        if(ab && ab.textContent.trim()){ parts.push("About the company. " + ab.textContent); }
+      } else {
+        var av = document.querySelector(".view.active");
+        if(av){
+          var clone = av.cloneNode(true);
+          var strip = clone.querySelectorAll("table, .ptblWrap, .buildDisc, .ptDisc, .viewBack, .acx, .tvHost, .portModeChips, select, input, .stFoot, .newsList, .congTable, .altRow, script, style");
+          for(var s = 0; s < strip.length; s++){ strip[s].remove(); }
+          parts.push(clone.innerText || "");
+        }
+      }
+      var text = parts.join(" ").replace(/\s+/g, " ").trim();
+      return text.slice(0, 6000);
+    }
+    var _speaking = false;
+    function resetReadBtn(){
+      _speaking = false;
+      readBtn.innerHTML = "&#127908;";
+      readBtn.classList.remove("reading");
+    }
+    readBtn.addEventListener("click", function(){
+      if(_speaking){
+        window.speechSynthesis.cancel();
+        resetReadBtn();
+        return;
+      }
+      var text = gatherText();
+      if(!text){ return; }
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      var v = pickVoice();
+      if(v){ u.voice = v; }
+      u.rate = 1;
+      u.onend = resetReadBtn;
+      u.onerror = resetReadBtn;
+      _speaking = true;
+      readBtn.innerHTML = "&#9209;&#65039;";
+      readBtn.classList.add("reading");
+      window.speechSynthesis.speak(u);
     });
   }
 
