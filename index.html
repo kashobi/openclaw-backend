@@ -997,6 +997,21 @@ body{transition:background-color .3s ease,color .3s ease;}
 .altName{font-size:12px;color:var(--text);font-weight:600;margin-bottom:5px;}
 .altWhy{font-size:11.5px;color:var(--muted);line-height:1.5;}
 @media(max-width:600px){.altItem{flex-basis:180px;}}
+/* Navigation: back chips in every view, and the logo as a Home button. */
+.viewBack{background:var(--s2);border:1px solid var(--border);border-radius:999px;padding:7px 15px;font-size:13px;font-weight:700;color:var(--text);font-family:var(--font-sans);cursor:pointer;margin-bottom:12px;transition:border-color .18s ease,transform .15s ease;display:inline-block;}
+.viewBack:hover{border-color:var(--accent);transform:translateY(-1px);}
+.logo{cursor:pointer;transition:opacity .18s ease,transform .15s ease;}
+.logo:hover{opacity:.85;transform:translateY(-1px);}
+/* Alternatives comparison: what drags the current stock, next to what the engine approves. */
+.altNote{font-size:12px;color:var(--muted);margin-bottom:10px;}
+.altGrid{display:grid;grid-template-columns:1fr 1.6fr;gap:12px;align-items:start;}
+.altCur{background:var(--rbg);border:1px solid var(--border);border-radius:12px;padding:12px;}
+.altCurT{font-weight:800;font-family:var(--font-mono);color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+.altNegs{margin:0;padding-left:18px;}
+.altNegs li{font-size:12px;color:var(--text);line-height:1.55;margin-bottom:5px;}
+.altSigs{margin:0;padding-left:16px;}
+.altSigs li{font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:4px;}
+@media(max-width:700px){.altGrid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -5127,24 +5142,111 @@ if(ib){
         var card = document.createElement("div");
         card.id = "altCard";
         card.className = "ic altCard";
-        var title = d.sector
-          ? "Looking for alternatives? The engine has higher conviction in these " + d.sector + " stocks right now:"
-          : "Looking for alternatives? The engine has higher conviction in these stocks right now:";
-        var h = "<div class='altT'>&#128269; " + title + "</div><div class='altRow'>";
-        for(var i = 0; i < d.alternatives.length; i++){
-          var a = d.alternatives[i];
+        var verdict = (d.current && d.current.verdict) ? d.current.verdict : "PASS";
+        var h = "<div class='altT'>&#9878;&#65039; Why this is a " + verdict + ", and what the engine approves instead</div>";
+        if(d.cross_sector){
+          h += "<div class='altNote'>No strong alternatives found in the same sector. Here are the top APPROVE stocks overall.</div>";
+        }
+        h += "<div class='altGrid'>";
+        // Left: what is dragging on the stock being viewed.
+        h += "<div class='altCur'><div class='altCurT'>" + sym + " " + buildVerdictBadge(verdict) + "</div><ul class='altNegs'>";
+        var negs = (d.current && d.current.negatives) || [];
+        for(var n = 0; n < negs.length; n++){ h += "<li>" + negs[n] + "</li>"; }
+        h += "</ul></div>";
+        // Right: the engine's APPROVE picks, top three, each with its factual signals.
+        h += "<div class='altRow'>";
+        var show = d.alternatives.slice(0, 3);
+        for(var i = 0; i < show.length; i++){
+          var a = show[i];
+          var sigs = a.positive_signals || {};
+          var bullets = "";
+          var count = 0;
+          for(var k in sigs){
+            if(count >= 3){ break; }
+            bullets += "<li>" + sigs[k] + "</li>";
+            count++;
+          }
           h += "<div class='altItem' data-sym='" + a.symbol + "'>" +
                "<div class='altTop'><b>" + a.symbol + "</b>" + buildVerdictBadge(a.verdict) + "<span class='altA' style='color:" + buildAlphaColor(a.alpha_score) + "'>" + a.alpha_score + "</span></div>" +
                "<div class='altName'>" + a.name + "</div>" +
-               "<div class='altWhy'>" + a.reason + "</div></div>";
+               "<ul class='altSigs'>" + bullets + "</ul></div>";
         }
-        h += "</div>";
+        h += "</div></div>";
         card.innerHTML = h;
         var anchor = document.getElementById("portCtx");
         if(anchor && anchor.parentNode === host){ host.insertBefore(card, anchor.nextSibling); }
         else { host.insertBefore(card, host.firstChild); }
       })
       .catch(function(){});
+  }
+
+  // Navigation system. New, isolated code that wraps the existing showView instead of editing it:
+  // the wrapper keeps a history stack, mirrors every view change into the browser history so the
+  // phone's back gesture walks backward through the app instead of exiting it, injects a Back
+  // chip into every view except Home, and makes the logo a Home button. The original showView is
+  // captured first and always does the actual switching, so existing behavior is untouched.
+  var viewHistory = [];
+  var _curView = "home";
+  var _navSilent = false;
+  var _origShowView = (typeof showView === "function") ? showView : null;
+  if(_origShowView){
+    try{ history.replaceState({view: "home"}, "", "#view-home"); }catch(e){}
+    window.showView = function(name){
+      if(name && name !== _curView && !_navSilent){
+        viewHistory.push(_curView);
+        try{ history.pushState({view: name}, "", "#view-" + name); }catch(e){}
+      }
+      if(name){ _curView = name; }
+      _origShowView(name);
+      updateBackChips();
+    };
+    window.addEventListener("popstate", function(e){
+      var target = (e.state && e.state.view) ? e.state.view : "home";
+      if(viewHistory.length && viewHistory[viewHistory.length - 1] === target){ viewHistory.pop(); }
+      _navSilent = true;
+      _curView = target;
+      _origShowView(target);
+      updateBackChips();
+      _navSilent = false;
+    });
+  }
+  function apexqGoBack(){
+    if(viewHistory.length){ history.back(); }
+    else if(typeof showView === "function"){ showView("home"); }
+  }
+  window.apexqGoBack = apexqGoBack;
+  function updateBackChips(){
+    var chips = document.querySelectorAll(".viewBack");
+    for(var i = 0; i < chips.length; i++){
+      chips[i].style.display = viewHistory.length ? "" : "none";
+    }
+  }
+  // One Back chip at the top of every view except Home.
+  var allViews = document.querySelectorAll(".view");
+  for(var vi = 0; vi < allViews.length; vi++){
+    if(allViews[vi].id === "view-home"){ continue; }
+    var bk = document.createElement("button");
+    bk.className = "viewBack";
+    bk.innerHTML = "&#8592; Back";
+    bk.style.display = "none";
+    bk.onclick = apexqGoBack;
+    allViews[vi].insertBefore(bk, allViews[vi].firstChild);
+  }
+  // The logo goes Home: clears the search, restores the overview, scrolls to the top.
+  var logoEl = document.querySelector(".hdr .logo") || document.querySelector(".logo");
+  if(logoEl){
+    logoEl.addEventListener("click", function(){
+      var si = document.getElementById("si");
+      if(si){ si.value = ""; }
+      var raEl = document.getElementById("reportArea");
+      if(raEl){ raEl.style.display = "none"; }
+      var dashEl = document.getElementById("dashGrid");
+      if(dashEl){ dashEl.style.display = ""; }
+      var heroEl = document.getElementById("heroSection");
+      if(heroEl){ heroEl.style.display = ""; }
+      if(typeof showView === "function"){ showView("home"); }
+      window.scrollTo({top: 0, behavior: "smooth"});
+    });
   }
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
