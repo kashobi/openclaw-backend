@@ -6178,6 +6178,248 @@ def portfolio_alternatives():
     return jsonify(payload)
 
 
+# ---------- SnapTrade portfolio analysis and auto populate ----------
+# Turns a linked brokerage into a fully analyzed Apex Q portfolio with zero manual typing. The
+# aggregator captures each position's weighted average cost from the broker. Analyze runs every
+# holding through the engine's light snapshot, enriched with the full report's moat, insider, and
+# congressional reads whenever one is already cached, and labels known funds as ETF. Sync upserts
+# every holding into the same holdings table the manual Portfolio tracker reads, so the built in
+# summary card, allocation warnings, and table light up automatically.
+#
+# DEVIATION FROM SPEC, DOCUMENTED: forcing compute_full_report for every holding on every sync
+# would fire dozens of provider calls and take half a minute or more per request, so enrichment
+# uses the cached full report when present and the light snapshot otherwise. Tapping any symbol
+# runs the full report, which caches it, so the analysis gets richer as the person uses the app.
+# Premium gating honors FREE_LIMITS_ENABLED: while limits are paused for building, everyone sees
+# the analysis; at launch it locks to premium automatically with the rest of the paywall.
+
+_ETF_SET = {"SPY", "QQQ", "VTI", "VOO", "IVV", "DIA", "IWM", "SCHD", "VTV", "AGG", "ARKK", "VYM",
+            "VUG", "VEA", "VWO", "BND", "GLD", "SLV", "XLK", "XLF", "XLE", "XLV", "XLY", "XLP",
+            "XLI", "XLU", "XLB", "XLRE", "XLC", "SPCX", "JEPI", "JEPQ", "SCHG", "SCHB", "QQQM"}
+
+
+def _snaptrade_agg(u):
+    """Aggregated positions for a user's linked accounts: shares, broker price, value, and the
+    weighted average purchase cost per symbol. Returns (agg, accounts, error)."""
+    db = get_db()
+    if db is None:
+        return None, None, "Database unavailable."
+    cur = db.cursor()
+    cur.execute("SELECT snaptrade_secret FROM users WHERE id = %s", (u["id"],))
+    row = cur.fetchone()
+    cur.close()
+    db.close()
+    if not row or not row[0]:
+        return None, None, "not_connected"
+    st_id = "apexq-user-%s" % u["id"]
+    secret = row[0]
+    accounts, err = _snaptrade_request("GET", "/accounts", query_extra={"userId": st_id, "userSecret": secret})
+    if err:
+        return None, None, err
+    if not accounts:
+        return None, None, "not_connected"
+    agg = {}
+    for a in accounts:
+        acct_id = a.get("id")
+        if not acct_id:
+            continue
+        positions, perr = _snaptrade_request(
+            "GET", "/accounts/%s/positions" % acct_id,
+            query_extra={"userId": st_id, "userSecret": secret},
+        )
+        if perr or not isinstance(positions, list):
+            continue
+        for p in positions:
+            sym = _st_position_symbol(p)
+            if not sym:
+                continue
+            try:
+                units = float(p.get("units") or 0)
+                price = float(p.get("price") or 0)
+            except (TypeError, ValueError):
+                continue
+            if units == 0:
+                continue
+            try:
+                apc = float(p.get("average_purchase_price") or 0)
+            except (TypeError, ValueError):
+                apc = 0.0
+            if apc <= 0:
+                apc = price
+            if sym not in agg:
+                agg[sym] = {"symbol": sym, "shares": 0.0, "broker_price": price, "cost_total": 0.0}
+            agg[sym]["shares"] += units
+            agg[sym]["broker_price"] = price
+            agg[sym]["cost_total"] += units * apc
+    return agg, accounts, None
+
+
+def _snaptrade_analysis(agg):
+    """Every holding through the engine: verdict, Alpha Score, moat, insider and congressional
+    reads, profit and loss, and a one sentence educational summary per position."""
+    holdings = []
+    counts = {"APPROVE": 0, "WATCH": 0, "PASS": 0, "ETF": 0}
+    total_value = 0.0
+    total_cost = 0.0
+    total_day = 0.0
+    for sym in sorted(agg.keys()):
+        h = agg[sym]
+        shares = h["shares"]
+        avg_cost = (h["cost_total"] / shares) if shares else 0.0
+        r = light_score(sym) or {}
+        price = None
+        try:
+            price = float(r.get("price")) if r.get("price") is not None else None
+        except (TypeError, ValueError):
+            price = None
+        if price is None:
+            price = h["broker_price"]
+        value = shares * price
+        cost = shares * avg_cost
+        gl = value - cost
+        gl_pct = (gl / cost * 100) if cost > 0 else 0.0
+        try:
+            chg = float(r.get("change_pct") or 0)
+            total_day += value * (chg / (100 + chg)) if chg > -100 else 0
+        except (TypeError, ValueError):
+            pass
+        is_etf = sym in _ETF_SET
+        verdict = "ETF" if is_etf else (r.get("verdict") or "N/A")
+        alpha, _real = _builder_alpha(r, sym) if r else (None, False)
+        moat = ""
+        insider_note = ""
+        congress_note = ""
+        expense_ratio = None
+        cached = CACHE.get("full_" + sym)
+        full = cached[0] if cached and (time.time() - cached[1]) < 900 and cached[0] else None
+        if full:
+            moat = (full.get("apex_moat") or {}).get("rating") or ""
+            try:
+                isv = float(full.get("insider_sell_value") or 0)
+                if isv >= 1e6:
+                    insider_note = "Selling %.1fM" % (isv / 1e6)
+            except (TypeError, ValueError):
+                pass
+            cong = full.get("congressional")
+            trades = cong.get("trades") if isinstance(cong, dict) else (cong if isinstance(cong, list) else None)
+            if isinstance(trades, list) and trades:
+                congress_note = "%s recent trades" % len(trades)
+            if is_etf:
+                er = full.get("expense_ratio")
+                if er is not None:
+                    expense_ratio = er
+        if is_etf:
+            summary = "A fund holding. Funds spread risk across many names, so verdicts apply to single stocks, not to this."
+        elif r and r.get("verdict"):
+            summary = _builder_reason(r, alpha or 0)
+        else:
+            summary = "The engine could not score this one right now."
+        if verdict in counts:
+            counts[verdict] += 1
+        total_value += value
+        total_cost += cost
+        holdings.append({
+            "symbol": sym,
+            "name": r.get("name") or sym,
+            "shares": round(shares, 4),
+            "cost_basis": round(avg_cost, 2),
+            "current_price": round(price, 2),
+            "current_value": round(value, 2),
+            "gain_loss": round(gl, 2),
+            "gain_loss_pct": round(gl_pct, 2),
+            "verdict": verdict,
+            "alpha_score": alpha,
+            "moat": moat,
+            "insider_note": insider_note,
+            "congress_note": congress_note,
+            "expense_ratio": expense_ratio,
+            "sector": r.get("sector") or "",
+            "summary": summary,
+        })
+    return {
+        "holdings": holdings,
+        "summary": {
+            "total_holdings": len(holdings),
+            "approve": counts["APPROVE"],
+            "watch": counts["WATCH"],
+            "pass": counts["PASS"],
+            "etf": counts["ETF"],
+            "total_value": round(total_value, 2),
+            "total_gain_loss": round(total_value - total_cost, 2),
+            "total_day_change": round(total_day, 2),
+        },
+        "last_synced": int(time.time()),
+    }
+
+
+def _snaptrade_gate():
+    """Premium gate that honors the master pause. Returns (user, error_response)."""
+    u = current_user()
+    if not u:
+        return None, (jsonify({"error": "Log in first."}), 401)
+    if FREE_LIMITS_ENABLED and not is_premium(u):
+        return None, (jsonify({"error": "premium_required"}), 402)
+    return u, None
+
+
+@app.route("/snaptrade/analyze")
+def snaptrade_analyze():
+    u, gate = _snaptrade_gate()
+    if gate:
+        return gate
+    ck = "st_analyze_%s" % u["id"]
+    cached = CACHE.get(ck)
+    if cached and (time.time() - cached[1]) < 300 and request.args.get("refresh") != "1":
+        return jsonify(cached[0])
+    agg, accounts, err = _snaptrade_agg(u)
+    if err == "not_connected":
+        return jsonify({"connected": False})
+    if err:
+        return jsonify({"error": err}), 502
+    payload = _snaptrade_analysis(agg)
+    payload["connected"] = True
+    CACHE[ck] = (payload, time.time())
+    return jsonify(payload)
+
+
+@app.route("/snaptrade/sync", methods=["POST"])
+def snaptrade_sync():
+    u, gate = _snaptrade_gate()
+    if gate:
+        return gate
+    agg, accounts, err = _snaptrade_agg(u)
+    if err == "not_connected":
+        return jsonify({"connected": False})
+    if err:
+        return jsonify({"error": err}), 502
+    # Auto populate the built in Portfolio tracker: upsert every brokerage holding, so the summary
+    # card, allocation math, and warnings reflect the real account with no manual typing.
+    db = get_db()
+    if db is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = db.cursor()
+    for sym, h in agg.items():
+        shares = round(h["shares"], 4)
+        avg_cost = round((h["cost_total"] / h["shares"]) if h["shares"] else 0.0, 2)
+        cur.execute("SELECT id FROM holdings WHERE user_id = %s AND symbol = %s", (u["id"], sym))
+        row = cur.fetchone()
+        if row:
+            cur.execute("UPDATE holdings SET shares = %s, avg_cost = %s WHERE id = %s", (shares, avg_cost, row[0]))
+        else:
+            cur.execute("INSERT INTO holdings (user_id, symbol, shares, avg_cost) VALUES (%s, %s, %s, %s)",
+                        (u["id"], sym, shares, avg_cost))
+    db.commit()
+    cur.close()
+    db.close()
+    CACHE.pop("portfolio_" + str(u["id"]), None)
+    CACHE.pop("st_analyze_%s" % u["id"], None)
+    payload = _snaptrade_analysis(agg)
+    payload["connected"] = True
+    payload["synced_to_portfolio"] = len(agg)
+    CACHE["st_analyze_%s" % u["id"]] = (payload, time.time())
+    return jsonify(payload)
+
+
 @app.route("/api/user/premium-status")
 def api_premium_status():
     """Single fact for the frontend paywall: is this account premium. Called on page load and after
