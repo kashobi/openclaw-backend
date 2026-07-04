@@ -1051,6 +1051,23 @@ body{transition:background-color .3s ease,color .3s ease;}
 .aq-lock-txt{font-size:13px;font-weight:600;color:var(--text);line-height:1.5;margin-bottom:12px;}
 .aq-lock-btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:transform .16s ease;}
 .aq-lock-btn:hover{transform:scale(1.03);}
+/* Brokerage Analysis rows. */
+.staCard{border-left:3px solid var(--accent);}
+.staSummary{font-size:14px;color:var(--text);line-height:1.6;margin-bottom:4px;}
+.staTotals{font-size:13px;color:var(--muted);font-family:var(--font-mono);margin-bottom:12px;}
+.staMut{color:var(--muted);font-size:11.5px;}
+.staRow{border-top:1px solid var(--border);padding:11px 0;}
+.staTop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.staVal{margin-left:auto;font-family:var(--font-mono);font-size:12px;color:var(--muted);}
+.staMid{font-size:12px;font-family:var(--font-mono);margin:5px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+.staSum{font-size:12px;color:var(--muted);line-height:1.55;}
+.staAltBtn{background:none;border:none;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;padding:0;font-family:inherit;text-decoration:underline;}
+.staAltHost{margin-top:8px;}
+.staAltItem{display:flex;align-items:center;gap:8px;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;margin-bottom:6px;cursor:pointer;font-size:12px;flex-wrap:wrap;transition:border-color .18s ease;}
+.staAltItem:hover{border-color:var(--accent);}
+.staAltItem b{font-family:var(--font-mono);color:var(--text);}
+.staAltWhy{color:var(--muted);font-size:11.5px;flex-basis:100%;}
+.bvetf{background:var(--s2);color:var(--muted);border:1px solid var(--border);}
 </style>
 </head>
 <body>
@@ -1404,6 +1421,10 @@ body{transition:background-color .3s ease,color .3s ease;}
       <button class="cmpBtn" id="stConnectBtn">Connect your brokerage</button>
       <div class="stNote">Link your real account to see your true holdings here. Read only: Apex Q can see balances and positions, and can never trade, move, or touch anything.</div>
     </div>
+  </div>
+  <div class="ic staCard" id="staCard" style="display:none">
+    <div class="stHead">&#129504; Brokerage Analysis <span class="stBadge">Every holding through the engine</span></div>
+    <div id="staBody"></div>
   </div>
   <div id="portSummary" style="display:none"></div>
   <div id="portConcentration" style="display:none"></div>
@@ -4981,11 +5002,15 @@ if(ib){
       return;
     }
     if(!d.connected){
+      var staC = document.getElementById("staCard");
+      if(staC){ staC.style.display = "none"; }
       body.innerHTML = "<button class='cmpBtn' id='stConnectBtn'>Connect your brokerage</button>" +
         "<div class='stNote'>Link your real account to see your true holdings here. Read only: Apex Q can see balances and positions, and can never trade, move, or touch anything.</div>";
       stWireConnect();
       return;
     }
+    // A confirmed link means the analysis section should light up too.
+    setTimeout(function(){ staLoad(false); }, 100);
     var h = "";
     for(var i = 0; i < (d.accounts || []).length; i++){
       var a = d.accounts[i];
@@ -5457,6 +5482,133 @@ if(ib){
     }
   }
   fetchPremiumStatus(applyPremiumBlur);
+
+  // Brokerage Analysis: every linked holding through the full engine, no manual typing. Loads
+  // when the connection card confirms a link, renders the verdict summary and the analyzed table,
+  // offers inline alternatives for any PASS or WATCH holding, and the Refresh Analysis button
+  // re-syncs from the broker, which also upserts every holding into the built in Portfolio
+  // tracker so its totals and allocation warnings reflect the real account automatically.
+  var _staLoading = false;
+  function staVerdictBadge(v){
+    if(v === "ETF"){ return "<span class='bvd bvetf'>ETF</span>"; }
+    if(v === "N/A"){ return "<span class='bvd bvetf'>N/A</span>"; }
+    return buildVerdictBadge(v);
+  }
+  function staRender(d){
+    var card = document.getElementById("staCard");
+    var body = document.getElementById("staBody");
+    if(!card || !body){ return; }
+    if(!d){
+      card.style.display = "";
+      body.innerHTML = "<div class='stNote'>Could not load the analysis.</div><button class='stBtn' onclick='window.staLoad(true)'>Try again</button>";
+      return;
+    }
+    if(d.error === "premium_required"){
+      card.style.display = "";
+      body.innerHTML = "<div class='stNote'>Brokerage analysis is a Premium feature. Upgrade to run every holding through the engine automatically.</div>" +
+        "<button class='cmpBtn' style='margin-top:10px' onclick='if(typeof showUpgradeModal===\"function\")showUpgradeModal(\"brokerage\")'>Unlock for $12.99/mo</button>";
+      return;
+    }
+    if(d.connected === false){ card.style.display = "none"; return; }
+    if(d.error){
+      card.style.display = "";
+      body.innerHTML = "<div class='stNote'>" + d.error + "</div><button class='stBtn' onclick='window.staLoad(true)'>Try again</button>";
+      return;
+    }
+    card.style.display = "";
+    var s = d.summary || {};
+    var h = "<div class='staSummary'>Your brokerage portfolio: <b>" + s.total_holdings + "</b> holdings &middot; " +
+      "<span class='pos'>" + s.approve + " APPROVE</span> &middot; " +
+      "<span style='color:var(--yellow)'>" + s.watch + " WATCH</span> &middot; " +
+      "<span class='neg'>" + s["pass"] + " PASS</span> &middot; " +
+      "<span class='staMut'>" + s.etf + " ETFs</span></div>";
+    h += "<div class='staTotals'>Value $" + Number(s.total_value).toLocaleString() +
+      " &middot; <span class='" + (s.total_gain_loss >= 0 ? "pos" : "neg") + "'>" + (s.total_gain_loss >= 0 ? "+" : "-") + "$" + Math.abs(s.total_gain_loss).toLocaleString() + " all time</span></div>";
+    for(var i = 0; i < (d.holdings || []).length; i++){
+      var p = d.holdings[i];
+      var glCls = p.gain_loss > 0 ? "pos" : (p.gain_loss < 0 ? "neg" : "");
+      var extra = "";
+      if(p.verdict === "ETF" && p.expense_ratio !== null && p.expense_ratio !== undefined){
+        extra = "<span class='staMut'>Expense ratio " + p.expense_ratio + "</span>";
+      } else {
+        if(p.moat){ extra += "<span class='staMut'>&#127984; " + p.moat + "</span> "; }
+        if(p.insider_note){ extra += "<span class='staMut'>&#128188; " + p.insider_note + "</span> "; }
+        if(p.congress_note){ extra += "<span class='staMut'>&#127963; " + p.congress_note + "</span>"; }
+      }
+      var altLink = (p.verdict === "PASS" || p.verdict === "WATCH")
+        ? "<button class='staAltBtn' data-alt='" + p.symbol + "'>See alternatives</button>" : "";
+      h += "<div class='staRow'>" +
+        "<div class='staTop'><span class='stSym' data-sym='" + p.symbol + "'>" + p.symbol + "</span>" + staVerdictBadge(p.verdict) +
+        (p.alpha_score !== null && p.alpha_score !== undefined ? "<span class='altA' style='color:" + buildAlphaColor(p.alpha_score) + "'>" + p.alpha_score + "</span>" : "") +
+        "<span class='staVal'>" + p.shares + " sh &middot; $" + Number(p.current_value).toLocaleString() + "</span></div>" +
+        "<div class='staMid'><span class='" + glCls + "'>" + (p.gain_loss >= 0 ? "+" : "-") + "$" + Math.abs(p.gain_loss).toLocaleString() + " (" + p.gain_loss_pct + "%)</span> " + extra + "</div>" +
+        "<div class='staSum'>" + p.summary + " " + altLink + "</div>" +
+        "<div class='staAltHost' id='staAlt_" + p.symbol + "'></div></div>";
+    }
+    h += "<div class='stFoot'><span class='stSynced'>Analyzed " + stAgo(d.last_synced) + "</span>" +
+      "<button class='stBtn' id='staSyncBtn'>&#8635; Refresh Analysis</button></div>";
+    body.innerHTML = h;
+    var sync = document.getElementById("staSyncBtn");
+    if(sync){
+      sync.onclick = function(){
+        sync.textContent = "Syncing...";
+        fetch(API + "/snaptrade/sync", {method: "POST", credentials: "same-origin"})
+          .then(function(r){ return r.json(); })
+          .then(function(nd){
+            staRender(nd);
+            if(typeof loadPortfolio === "function"){ loadPortfolio(); }
+          })
+          .catch(function(){ staRender(null); });
+      };
+    }
+    var altBtns = body.querySelectorAll(".staAltBtn");
+    for(var b = 0; b < altBtns.length; b++){
+      altBtns[b].onclick = function(){
+        var symA = this.getAttribute("data-alt");
+        var host = document.getElementById("staAlt_" + symA);
+        if(!host){ return; }
+        if(host.innerHTML){ host.innerHTML = ""; return; }
+        host.innerHTML = "<div class='stNote'>Finding alternatives...</div>";
+        fetch(API + "/portfolio/alternatives?symbol=" + encodeURIComponent(symA))
+          .then(function(r){ return r.json(); })
+          .then(function(ad){
+            if(!ad || !ad.alternatives || !ad.alternatives.length){ host.innerHTML = "<div class='stNote'>No stronger names to show right now.</div>"; return; }
+            var ah = "";
+            var show = ad.alternatives.slice(0, 3);
+            for(var k = 0; k < show.length; k++){
+              var alt = show[k];
+              var sig = alt.positive_signals || {};
+              var firstSig = "";
+              for(var key in sig){ firstSig = sig[key]; break; }
+              ah += "<div class='staAltItem' data-sym='" + alt.symbol + "'><b>" + alt.symbol + "</b>" + buildVerdictBadge(alt.verdict) +
+                "<span class='altA' style='color:" + buildAlphaColor(alt.alpha_score) + "'>" + alt.alpha_score + "</span>" +
+                "<span class='staAltWhy'>" + firstSig + "</span></div>";
+            }
+            host.innerHTML = ah;
+          })
+          .catch(function(){ host.innerHTML = "<div class='stNote'>Could not load alternatives.</div>"; });
+      };
+    }
+  }
+  function staLoad(refresh){
+    if(_staLoading){ return; }
+    _staLoading = true;
+    var card = document.getElementById("staCard");
+    var body = document.getElementById("staBody");
+    if(card && body && !body.innerHTML){
+      card.style.display = "";
+      body.innerHTML = "<div class='buildSpin'><div class='spinDot'></div>Running every holding through the engine...</div>";
+    }
+    fetch(API + "/snaptrade/analyze" + (refresh ? "?refresh=1" : ""), {credentials: "same-origin"})
+      .then(function(r){ return r.json().then(function(j){ j._st = r.status; return j; }); })
+      .then(function(d){
+        _staLoading = false;
+        if(d && d._st === 402){ d.error = "premium_required"; }
+        staRender(d);
+      })
+      .catch(function(){ _staLoading = false; staRender(null); });
+  }
+  window.staLoad = staLoad;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
