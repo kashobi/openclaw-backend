@@ -1443,6 +1443,17 @@ except Exception as _ake:
     logger.error("akshare unavailable: %s" % _ake)
 
 
+def _asset_class(symbol):
+    """crypto, macro, or stock. Crypto pairs end in a dash USD quote; macro covers futures (=F),
+    currency pairs (=X), yield indexes (^), and the commodity index."""
+    sym = (symbol or "").upper()
+    if sym.endswith("-USD") and len(sym) > 4:
+        return "crypto"
+    if "=F" in sym or "=X" in sym or sym.startswith("^") or sym == "BCOM":
+        return "macro"
+    return "stock"
+
+
 def _china_symbol(sym):
     """Yahoo form for a bare A share code, or the symbol unchanged."""
     if re.fullmatch(r"\d{6}", sym or ""):
@@ -1736,6 +1747,15 @@ def analyze():
     result = compute_full_report(symbol)
     if result is None:
         return jsonify({"error": f"Could not pull data for {symbol}."}), 404
+    ac = _asset_class(symbol)
+    if ac != "stock":
+        result = dict(result)
+        result["asset_class"] = ac
+        for k in ("insider", "congressional", "apex_moat", "revenue_growth", "profit_margin",
+                  "debt_to_equity", "roe", "fcf_yield", "peg", "pb", "ps", "ev_ebitda",
+                  "analyst_consensus", "sec_filings", "sector_guide"):
+            if k in result:
+                result[k] = None
     # Read only: flag a verdict flip against the stored baseline without acknowledging it. The
     # baseline advances only when the frontend calls /acknowledge-verdict, so the change keeps
     # surfacing in alerts and on the badge until the user has actually opened and seen it.
@@ -3101,6 +3121,48 @@ def context():
 
 
 THEMES = {
+  "crypto": {
+    "name": "Crypto Majors",
+    "explainer": "The largest cryptocurrencies by market value, priced in US dollars around the clock. Crypto trades every hour of every day, moves far more violently than stocks, and has no earnings, no CEO, and no balance sheet. The price is the entire story, driven by adoption, liquidity, and crowd conviction.",
+    "why": "Digital assets have become a real allocation in millions of portfolios, and the majors are where the liquidity lives. Watching them alongside stocks shows how risk appetite is shifting across the whole market.",
+    "unknown": "Most crypto tools show price and nothing else. Seeing the majors inside the same engine as stocks, with momentum and news in plain English, makes the volatility legible instead of terrifying.",
+    "tickers": ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD","AVAX-USD","DOT-USD","LINK-USD","LTC-USD","MATIC-USD"]
+  },
+  "macro": {
+    "name": "Macro: Forex, Commodities, and Rates",
+    "explainer": "The prices that move everything else: metals and energy futures, major currency pairs, the ten year Treasury yield, and the broad commodity index. These are not companies. They are the weather system the entire market lives inside.",
+    "why": "Stocks do not move in a vacuum. When the dollar, oil, copper, or interest rates shift, whole sectors reprice. Watching the macro board explains days when every stock moves together for no company specific reason.",
+    "unknown": "Everyday investors rarely look at futures and yields because the tickers look like hieroglyphics. Named and explained in plain English, they become the most useful dashboard in investing.",
+    "tickers": ["GC=F","SI=F","HG=F","CL=F","NG=F","EURUSD=X","USDJPY=X","GBPUSD=X","^TNX","BCOM"]
+  },
+  "japan": {
+    "name": "Japan Blue Chips",
+    "explainer": "Japan's flagship companies listed in Tokyo, from carmakers and game giants to the trading houses and chip equipment leaders. Prices are in yen and trade during Tokyo hours.",
+    "why": "Japan is the third largest stock market on earth and has been waking up after decades of quiet, with corporate reforms and famous value investors moving in. It offers world class businesses at valuations US markets rarely see.",
+    "unknown": "Most US investors could not name five Japanese stocks beyond Toyota and Sony, yet names like the trading houses quietly compound for decades.",
+    "tickers": ["7203.T","6758.T","9984.T","8306.T","7974.T","6501.T","8058.T","6902.T"]
+  },
+  "india": {
+    "name": "India Growth Leaders",
+    "explainer": "India's largest listed companies on the National Stock Exchange, spanning banking, technology services, energy, and consumer businesses. Prices are in rupees and trade during Mumbai hours.",
+    "why": "India is the fastest growing major economy with a young population moving into the middle class. Its market has compounded for years on domestic demand rather than exports, a different engine than the rest of Asia.",
+    "unknown": "The companies powering that growth are household names to a billion people and nearly unknown to US investors.",
+    "tickers": ["RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS","BHARTIARTL.NS","ITC.NS","LT.NS"]
+  },
+  "korea": {
+    "name": "South Korea Tech and Industry",
+    "explainer": "Korea's industrial and technology champions listed in Seoul, led by the memory chip giants that supply the world's AI buildout. Prices are in won and trade during Seoul hours.",
+    "why": "Korean memory makers sit directly inside the AI supply chain, and the market often prices them far below US peers doing similar work. When memory cycles turn, these names move first.",
+    "unknown": "Everyone knows the AI chip designers. Far fewer own the companies making the memory those chips cannot run without.",
+    "tickers": ["005930.KS","000660.KS","373220.KS","005380.KS","035420.KS","051910.KS"]
+  },
+  "australia": {
+    "name": "Australia Miners and Banks",
+    "explainer": "Australia's market leaders listed in Sydney: the iron ore and mining giants that feed global construction, the big banks, and the health care standout. Prices are in Australian dollars and trade during Sydney hours.",
+    "why": "Australia is the raw materials counter of the world economy. When China builds, these miners profit, and the big dividend paying banks anchor the other half of the market.",
+    "unknown": "The miners are among the highest dividend payers on earth in good commodity years, something US income investors rarely discover.",
+    "tickers": ["BHP.AX","RIO.AX","CBA.AX","CSL.AX","FMG.AX","WES.AX","NAB.AX"]
+  },
   "semi": {
     "name": "Semiconductor Equipment and Materials",
     "explainer": "These are the companies that build the machines and supply the special materials used to manufacture computer chips. They do not make the chips you hear about. They make the tools and the ingredients that every chipmaker needs to produce them.",
