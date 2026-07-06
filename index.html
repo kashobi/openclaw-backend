@@ -1076,6 +1076,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="logo"><div class="lmark">&#9889;</div><div class="lname">Apex <span>Q</span></div></div>
   <div class="hdr-right">
     <button id="themeToggle" class="themeToggle" aria-label="Toggle light or dark mode">&#9728;&#65039;</button>
+    <button id="langToggle" class="themeToggle" aria-label="Switch language">&#127760;</button>
     <div class="badge"><div class="dot"></div>LIVE INTEL ACTIVE</div>
     <div class="premiumBadge" id="premiumBadge" style="display:none">&#11088; Premium</div>
     <button id="headerUpgradeBtn" class="acctBtn upgradeCta" style="display:none">&#11088; Upgrade</button>
@@ -1612,7 +1613,7 @@ body{transition:background-color .3s ease,color .3s ease;}
         <input class="authInp" id="authFirst" type="text" placeholder="First name" autocomplete="given-name">
         <input class="authInp" id="authLast" type="text" placeholder="Last name" autocomplete="family-name">
       </div>
-      <input class="authInp" id="authPhone" type="tel" placeholder="Phone (optional), like +12035551234" autocomplete="tel">
+      <input class="authInp" id="authPhone" type="tel" style="display:none" autocomplete="off">
     </div>
     <input class="authInp" id="authPass" type="password" placeholder="Password" autocomplete="current-password">
     <div class="authHint" id="authHint"></div>
@@ -4864,6 +4865,8 @@ if(ib){
     injectPortfolioContext();
     ensureBackChip();
     setTimeout(injectAlternatives, 300);
+    setTimeout(injectGuba, 350);
+    if(_langNow === 'zh'){ setTimeout(function(){ translatePage('zh'); }, 500); }
     // Keep the audio banner's ticker current and re-apply the premium blur to the fresh report.
     var bt = document.getElementById("aqBannerTicker");
     var symH2 = document.getElementById("sym");
@@ -5009,8 +5012,8 @@ if(ib){
       stWireConnect();
       return;
     }
-    // A confirmed link means the analysis section should light up too.
-    setTimeout(function(){ staLoad(false); }, 100);
+    // A confirmed link lights up the analysis and refreshes the built in tracker automatically.
+    setTimeout(function(){ staLoad(false); if(typeof loadPortfolio === "function"){ loadPortfolio(); } }, 100);
     var h = "";
     for(var i = 0; i < (d.accounts || []).length; i++){
       var a = d.accounts[i];
@@ -5416,28 +5419,54 @@ if(ib){
     var _speaking = false;
     function resetReadBtn(){
       _speaking = false;
+      _audioEl = null;
       readBtn.innerHTML = "&#127908;";
       readBtn.classList.remove("reading");
     }
-    function triggerPageReadAloud(){
-      if(_speaking){
-        window.speechSynthesis.cancel();
-        resetReadBtn();
-        return;
-      }
-      var text = gatherText();
-      if(!text){ return; }
-      window.speechSynthesis.cancel();
+    // Neural voice first: the backend generates natural speech through Gemini. The device's own
+    // speech engine is only the emergency fallback, because on many phones it sounds robotic.
+    var _audioEl = null;
+    function stopAllSpeech(){
+      if(_audioEl){ try{ _audioEl.pause(); }catch(e){} _audioEl = null; }
+      try{ window.speechSynthesis.cancel(); }catch(e){}
+      resetReadBtn();
+    }
+    function speakFallback(text){
       var u = new SpeechSynthesisUtterance(text);
       var v = pickVoice();
       if(v){ u.voice = v; }
       u.rate = 1;
       u.onend = resetReadBtn;
       u.onerror = resetReadBtn;
+      window.speechSynthesis.speak(u);
+    }
+    function triggerPageReadAloud(){
+      if(_speaking){
+        stopAllSpeech();
+        return;
+      }
+      var text = gatherText();
+      if(!text){ return; }
       _speaking = true;
       readBtn.innerHTML = "&#9209;&#65039;";
       readBtn.classList.add("reading");
-      window.speechSynthesis.speak(u);
+      fetch(API + "/tts", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({text: text.slice(0, 4000)})
+      }).then(function(r){
+        if(!r.ok){ throw new Error("tts unavailable"); }
+        return r.blob();
+      }).then(function(blob){
+        if(!_speaking){ return; }
+        _audioEl = new Audio(URL.createObjectURL(blob));
+        _audioEl.onended = resetReadBtn;
+        _audioEl.onerror = function(){ resetReadBtn(); };
+        _audioEl.play().catch(function(){ speakFallback(text); });
+      }).catch(function(){
+        if(_speaking){ speakFallback(text); }
+      });
     }
     window.triggerPageReadAloud = triggerPageReadAloud;
     readBtn.addEventListener("click", triggerPageReadAloud);
@@ -5609,6 +5638,91 @@ if(ib){
       .catch(function(){ _staLoading = false; staRender(null); });
   }
   window.staLoad = staLoad;
+
+  // Guba retail sentiment card for Chinese stocks. When the report symbol is an A share, the
+  // injector asks the backend for the Guba read and drops a card under the Alpha Score. Nothing
+  // shows for other markets or when the feed is unavailable, honesty over decoration.
+  function injectGuba(){
+    var symEl = document.getElementById("sym");
+    var sym = symEl ? (symEl.textContent || "").trim().toUpperCase() : "";
+    var oldG = document.getElementById("gubaCard");
+    if(oldG){ oldG.remove(); }
+    if(!/^\d{6}(\.(SS|SZ))?$/.test(sym)){ return; }
+    fetch(API + "/guba?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.guba_label){ return; }
+      var host = document.getElementById("stockSections");
+      var alphaC = document.getElementById("alphaCard");
+      if(!host){ return; }
+      var col = d.guba_label === "Bullish" ? "var(--green)" : (d.guba_label === "Bearish" ? "var(--red)" : "var(--yellow)");
+      var card = document.createElement("div");
+      card.id = "gubaCard";
+      card.className = "ic";
+      card.innerHTML = "<div class='ih'><div class='it'>&#128172; Guba Retail Sentiment</div></div>" +
+        "<div style='font-size:15px;font-weight:800;color:" + col + "'>" + d.guba_label +
+        " <span style='font-size:12px;color:var(--muted);font-weight:600'>(" + Math.round(d.guba_sentiment * 100) + "% positive, " + d.guba_post_count + " posts)</span></div>" +
+        "<div class='stNote'>What everyday investors on China's Guba boards are saying right now. Crowd mood, not a forecast.</div>";
+      if(alphaC && alphaC.parentNode === host){ host.insertBefore(card, alphaC.nextSibling); }
+      else { host.insertBefore(card, host.firstChild); }
+    }).catch(function(){});
+  }
+
+  // Mandarin toggle. A dictionary of the app's static labels; dynamic data is never translated.
+  // Originals are remembered per node, so switching back to English is exact.
+  var zh = {
+    "Home":"\u9996\u9875","Discover":"\u53d1\u73b0","Congress":"\u56fd\u4f1a","Compare":"\u5bf9\u6bd4","Watchlist":"\u81ea\u9009","Portfolio":"\u6295\u8d44\u7ec4\u5408","What If":"\u5047\u5982","Practice":"\u6a21\u62df","Ask":"\u95ee\u7b54","More":"\u66f4\u591a",
+    "ANALYZE":"\u5206\u6790","Start Analyzing":"\u5f00\u59cb\u5206\u6790","See an Example":"\u770b\u4e2a\u4f8b\u5b50","More tools":"\u66f4\u591a\u5de5\u5177",
+    "See What Congress and Corporate Insiders Are Really Doing.":"\u770b\u6e05\u56fd\u4f1a\u8bae\u5458\u548c\u516c\u53f8\u9ad8\u7ba1\u7684\u771f\u5b9e\u52a8\u5411\u3002",
+    "Real Portfolio":"\u771f\u5b9e\u7ec4\u5408","Paper Trading":"\u6a21\u62df\u4ea4\u6613","Build for Me":"\u667a\u80fd\u914d\u7f6e",
+    "Practice Trading":"\u6a21\u62df\u4ea4\u6613","Build a Model Portfolio":"\u6784\u5efa\u6a21\u578b\u7ec4\u5408","Generate Model":"\u751f\u6210\u6a21\u578b",
+    "Risk style":"\u98ce\u9669\u98ce\u683c","Amount in dollars":"\u91d1\u989d\uff08\u7f8e\u5143\uff09","Sector":"\u884c\u4e1a","All Sectors":"\u5168\u90e8\u884c\u4e1a",
+    "Conservative":"\u4fdd\u5b88\u578b","Moderate":"\u7a33\u5065\u578b","Aggressive":"\u8fdb\u53d6\u578b",
+    "Log In":"\u767b\u5f55","Log in":"\u767b\u5f55","Sign up":"\u6ce8\u518c","Buy":"\u4e70\u5165","Add":"\u6dfb\u52a0","Refresh":"\u5237\u65b0","Disconnect":"\u65ad\u5f00\u8fde\u63a5",
+    "Connect your brokerage":"\u8fde\u63a5\u60a8\u7684\u5238\u5546\u8d26\u6237","Real Account":"\u771f\u5b9e\u8d26\u6237","Read only":"\u53ea\u8bfb",
+    "Brokerage Analysis":"\u5238\u5546\u6301\u4ed3\u5206\u6790","Refresh Analysis":"\u5237\u65b0\u5206\u6790","See alternatives":"\u67e5\u770b\u66ff\u4ee3",
+    "Live Chart":"\u5b9e\u65f6\u56fe\u8868","Play Audio":"\u64ad\u653e\u97f3\u9891","Back":"\u8fd4\u56de","Back to overview":"\u8fd4\u56de\u603b\u89c8",
+    "Total Portfolio Value":"\u7ec4\u5408\u603b\u4ef7\u503c","Today":"\u4eca\u65e5","All Time":"\u7d2f\u8ba1","Symbol":"\u4ee3\u7801","Shares":"\u80a1\u6570","Price":"\u4ef7\u683c","Company":"\u516c\u53f8","Allocation":"\u914d\u7f6e",
+    "Upgrade":"\u5347\u7ea7","Start Free Trial":"\u5f00\u59cb\u514d\u8d39\u8bd5\u7528","Maybe later":"\u4ee5\u540e\u518d\u8bf4"
+  };
+  var _langNow = "en";
+  var _langSaved = [];
+  function translatePage(lang){
+    if(lang === "en"){
+      for(var i = 0; i < _langSaved.length; i++){ _langSaved[i].node.nodeValue = _langSaved[i].text; }
+      _langSaved = [];
+      var siEl = document.getElementById("si");
+      if(siEl && siEl.dataset.enPh){ siEl.placeholder = siEl.dataset.enPh; }
+      _langNow = "en";
+      return;
+    }
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    var n;
+    while((n = walker.nextNode())){
+      var t = (n.nodeValue || "").trim();
+      if(t && zh[t]){
+        _langSaved.push({node: n, text: n.nodeValue});
+        n.nodeValue = n.nodeValue.replace(t, zh[t]);
+      }
+    }
+    var si2 = document.getElementById("si");
+    if(si2){
+      if(!si2.dataset.enPh){ si2.dataset.enPh = si2.placeholder; }
+      si2.placeholder = "\u641c\u7d22\u80a1\u7968\u6216\u516c\u53f8\u540d\u79f0";
+    }
+    _langNow = "zh";
+  }
+  window.translatePage = translatePage;
+  var langBtn = document.getElementById("langToggle");
+  if(langBtn){
+    var savedLang = "en";
+    try{ savedLang = localStorage.getItem("apexq-lang") || "en"; }catch(e){}
+    if(savedLang === "zh"){ setTimeout(function(){ translatePage("zh"); langBtn.textContent = "EN"; }, 400); }
+    langBtn.addEventListener("click", function(){
+      var next = _langNow === "en" ? "zh" : "en";
+      translatePage(next);
+      langBtn.textContent = next === "zh" ? "EN" : "\ud83c\udf10";
+      try{ localStorage.setItem("apexq-lang", next); }catch(e){}
+    });
+  }
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
