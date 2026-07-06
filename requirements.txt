@@ -8,3 +8,4 @@ requests==2.33.1
 gunicorn==26.0.0
 psycopg2-binary==2.9.12
 stripe==15.3.0
+akshare
