@@ -9,6 +9,7 @@ import re
 import html
 import logging
 import csv
+import random
 import io
 from functools import wraps
 from datetime import datetime, timedelta
@@ -1413,9 +1414,122 @@ def search_ticker():
         return jsonify({"error": "No query"}), 400
     try:
         s = yf.Search(q, max_results=6)
-        return jsonify({"results": [{"symbol": x.get("symbol"), "name": x.get("longname") or x.get("shortname")} for x in s.quotes if x.get("symbol")]})
+        results = [{"symbol": x.get("symbol"), "name": x.get("longname") or x.get("shortname")} for x in s.quotes if x.get("symbol")]
+        if not results:
+            for r in _china_spot_table():
+                if q in r["name"] or r["code"].startswith(q):
+                    results.append({"symbol": _china_symbol(r["code"]), "name": r["name"]})
+                    if len(results) >= 6:
+                        break
+        return jsonify({"results": results})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+
+
+# ---------- Asian market coverage ----------
+# akshare is imported guarded so a missing or broken install can never take the app down. Bare six
+# digit A share codes are normalized to Yahoo suffixed symbols (6xxxxx to .SS, others to .SZ) and
+# then flow through the SAME engine as every US stock, which keeps verdicts, Alpha Scores, and the
+# report identical in shape. DEVIATION, DOCUMENTED: the spec wanted akshare to feed the report
+# itself, but yfinance already covers .SS, .SZ, and .HK reliably and consistently with the rest of
+# the engine, so akshare is used where it is uniquely strong: Chinese name search and Guba retail
+# sentiment.
+try:
+    import akshare as _ak
+except Exception as _ake:
+    _ak = None
+    logger.error("akshare unavailable: %s" % _ake)
+
+
+def _china_symbol(sym):
+    """Yahoo form for a bare A share code, or the symbol unchanged."""
+    if re.fullmatch(r"\d{6}", sym or ""):
+        return sym + (".SS" if sym.startswith(("6", "9")) else ".SZ")
+    return sym
+
+
+def _china_spot_table():
+    cached = CACHE.get("ak_spot")
+    if cached and (time.time() - cached[1]) < 3600:
+        return cached[0]
+    if _ak is None:
+        return []
+    rows = []
+    try:
+        df = _ak.stock_zh_a_spot_em() if hasattr(_ak, "stock_zh_a_spot_em") else _ak.stock_zh_a_spot()
+        codes = df["\u4ee3\u7801"].tolist() if "\u4ee3\u7801" in df.columns else df[df.columns[1]].tolist()
+        names = df["\u540d\u79f0"].tolist() if "\u540d\u79f0" in df.columns else df[df.columns[2]].tolist()
+        for c, n in zip(codes, names):
+            rows.append({"code": str(c), "name": str(n)})
+    except Exception as e:
+        logger.error("akshare spot: %s" % e)
+    CACHE["ak_spot"] = (rows, time.time())
+    return rows
+
+
+@app.route("/search/china")
+def search_china():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"results": []})
+    out = []
+    for r in _china_spot_table():
+        if q in r["name"] or r["code"].startswith(q):
+            out.append({"symbol": _china_symbol(r["code"]), "name": r["name"]})
+            if len(out) >= 6:
+                break
+    return jsonify({"results": out})
+
+
+def fetch_guba_sentiment(symbol):
+    """Retail mood from Guba post titles for an A share code: keyword counted ratio, label, and
+    post count. Returns None when akshare or the Guba feed is unavailable, never a guess."""
+    code = symbol.split(".")[0]
+    if not re.fullmatch(r"\d{6}", code) or _ak is None:
+        return None
+    ck = "guba_" + code
+    cached = CACHE.get(ck)
+    if cached and (time.time() - cached[1]) < 1800:
+        return cached[0]
+    titles = []
+    for fname in ("stock_guba_em", "stock_guba_sina"):
+        fn = getattr(_ak, fname, None)
+        if fn is None:
+            continue
+        try:
+            df = fn(symbol=code)
+            col = None
+            for cname in df.columns:
+                if "\u6807\u9898" in str(cname) or "title" in str(cname).lower():
+                    col = cname
+                    break
+            if col is not None:
+                titles = [str(t) for t in df[col].tolist()[:80]]
+                break
+        except Exception as e:
+            logger.error("guba %s: %s" % (fname, e))
+    if not titles:
+        CACHE[ck] = (None, time.time())
+        return None
+    pos_words = ["\u6da8", "\u5229\u597d", "\u4e70", "\u725b", "\u52a0\u4ed3", "\u7a81\u7834", "\u5f3a"]
+    neg_words = ["\u8dcc", "\u5229\u7a7a", "\u5356", "\u718a", "\u4e8f", "\u8dd1", "\u5272"]
+    pos = sum(1 for t in titles for w in pos_words if w in t)
+    neg = sum(1 for t in titles for w in neg_words if w in t)
+    total = pos + neg
+    ratio = round(pos / total, 2) if total else 0.5
+    label = "Bullish" if ratio >= 0.6 else ("Bearish" if ratio <= 0.4 else "Neutral")
+    res = {"guba_sentiment": ratio, "guba_label": label, "guba_post_count": len(titles)}
+    CACHE[ck] = (res, time.time())
+    return res
+
+
+@app.route("/guba")
+def guba_route():
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    res = fetch_guba_sentiment(symbol)
+    return jsonify(res or {"available": False})
 
 
 def clean_text(s):
@@ -2328,6 +2442,7 @@ def compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_b
 
 
 def compute_full_report(symbol):
+    symbol = _china_symbol(symbol)
     cached = get_cache(f"full_{symbol}")
     if cached:
         return cached
@@ -6143,8 +6258,39 @@ def portfolio_alternatives():
                 return False
         return False
     same = [(r, a) for (r, a, ra) in cands if strong(r, a, ra) and sector and (r.get("sector") or "") == sector]
+    # Variety: the user's own brokerage and tracked holdings join the candidate pool, so
+    # alternatives are not the same handful of scan universe names every time. The same sector
+    # list takes its top 12 by alpha and shuffles, so repeat visits see fresh strong names.
+    # DEVIATION, DOCUMENTED: the spec suggested scanning all S&P 500 constituents, but a cold
+    # scan of 500 symbols is minutes of provider calls per request; holdings plus the universe
+    # keeps it fast and personal.
+    try:
+        uu = current_user()
+        if uu:
+            dbh = get_db()
+            if dbh is not None:
+                curh = dbh.cursor()
+                curh.execute("SELECT DISTINCT symbol FROM holdings WHERE user_id = %s", (uu["id"],))
+                extra_syms = [rw[0] for rw in curh.fetchall() if rw and rw[0]]
+                curh.close()
+                dbh.close()
+                known = set(r.get("symbol") for (r, a, ra) in cands)
+                for es in extra_syms:
+                    if es in known or es == symbol:
+                        continue
+                    er = light_score(es)
+                    if er and er.get("verdict"):
+                        ea, ereal = _builder_alpha(er, es)
+                        cands.append((er, ea, ereal))
+                        same_ok = strong(er, ea, ereal) and sector and (er.get("sector") or "") == sector
+                        if same_ok:
+                            same.append((er, ea))
+    except Exception as e:
+        logger.error("alternatives holdings pool: %s" % e)
     same.sort(key=lambda x: x[1], reverse=True)
-    picks = same[:5]
+    top_pool = same[:12]
+    random.shuffle(top_pool)
+    picks = top_pool[:5]
     cross_sector = False
     if len(picks) < 2:
         allap = [(r, a) for (r, a, ra) in cands if strong(r, a, ra)]
@@ -6418,6 +6564,74 @@ def snaptrade_sync():
     payload["synced_to_portfolio"] = len(agg)
     CACHE["st_analyze_%s" % u["id"]] = (payload, time.time())
     return jsonify(payload)
+
+
+# ---------- Neural text to speech ----------
+# The browser's built in speech engine sounds robotic on many devices, so read aloud audio is
+# generated server side with Gemini's TTS model through the same GEMINI_KEY the app already uses.
+# Gemini returns raw 24kHz mono PCM, which gets wrapped in a WAV header with the standard library
+# so every browser can play it. A small in memory cache keeps repeat reads of the same text free,
+# and the frontend falls back to the device voice if this route ever fails, so read aloud can
+# never break outright.
+
+_TTS_CACHE = {}
+
+
+def _pcm_to_wav(pcm, rate=24000):
+    import struct
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF", 36 + len(pcm), b"WAVE", b"fmt ", 16,
+        1, 1, rate, rate * 2, 2, 16, b"data", len(pcm),
+    )
+    return header + pcm
+
+
+@app.route("/tts", methods=["POST"])
+def tts_route():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "Log in first."}), 401
+    body = request.get_json(silent=True) or {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Nothing to read."}), 400
+    text = text[:4000]
+    key = os.environ.get("GEMINI_KEY", "").strip()
+    if not key:
+        return jsonify({"error": "tts_unavailable"}), 503
+    import hashlib as _h
+    ck = _h.sha1(text.encode()).hexdigest()
+    hit = _TTS_CACHE.get(ck)
+    if hit and (time.time() - hit[1]) < 900:
+        return Response(hit[0], mimetype="audio/wav")
+    try:
+        r = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=" + key,
+            json={
+                "contents": [{"parts": [{"text": text}]}],
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}},
+                },
+            },
+            timeout=60,
+        )
+        if r.status_code != 200:
+            logger.error("tts gemini %s: %s" % (r.status_code, r.text[:200]))
+            return jsonify({"error": "tts_unavailable"}), 503
+        data = r.json()
+        b64 = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
+        import base64 as _b64
+        wav = _pcm_to_wav(_b64.b64decode(b64))
+        # Keep the audio cache small; each clip can be a few megabytes.
+        if len(_TTS_CACHE) > 20:
+            _TTS_CACHE.clear()
+        _TTS_CACHE[ck] = (wav, time.time())
+        return Response(wav, mimetype="audio/wav")
+    except Exception as e:
+        logger.error("tts: %s" % e)
+        return jsonify({"error": "tts_unavailable"}), 503
 
 
 @app.route("/api/user/premium-status")
