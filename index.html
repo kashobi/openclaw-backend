@@ -1176,6 +1176,22 @@ body{transition:background-color .3s ease,color .3s ease;}
 .briefWhen{font-size:11px;color:var(--muted);font-weight:600;margin-left:6px;}
 .aqEduBadge{font-size:11px;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-top:10px;line-height:1.4;}
 .aqEduInline{margin-top:6px;max-width:85%;}
+/* Corporate cluster buy engine: conviction matrix and report accumulation card. */
+.cmRow{border-top:1px solid var(--border);padding:10px 0;cursor:pointer;transition:opacity .15s ease;}
+.cmRow:first-child{border-top:none;}
+.cmRow:hover{opacity:.82;}
+.cmTop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.cmTop b{font-family:var(--font-mono);color:var(--text);font-size:14px;}
+.cmCnt{margin-left:auto;font-size:11px;color:var(--muted);font-family:var(--font-mono);}
+.cmName{font-size:12px;color:var(--muted);margin-top:2px;}
+.cmMeta{font-size:11.5px;color:var(--muted);margin-top:3px;}
+.cmSev{font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;letter-spacing:.4px;}
+.cmSev.strong{background:rgba(var(--accent-rgb),.16);color:var(--accent);border:1px solid var(--accent);}
+.cmSev.crit{background:rgba(255,61,61,.14);color:var(--red);border:1px solid var(--red);}
+.clusterCard{border-left:3px solid var(--red);padding:16px;}
+.clusterT{font-weight:800;font-size:15px;color:var(--text);margin-bottom:8px;}
+.clusterBig{font-size:15px;line-height:1.5;color:var(--text);font-weight:600;}
+.clusterRoles{font-size:12.5px;color:var(--muted);margin-top:8px;}
 </style>
 </head>
 <body>
@@ -1256,6 +1272,10 @@ body{transition:background-color .3s ease,color .3s ease;}
     <div class="dcardTitle">&#9728;&#65039; Morning Briefing <span class="briefWhen" id="briefWhen"></span></div>
     <div class="briefBody" id="briefBody"></div>
     <div class="aqEduBadge">&#9888;&#65039; Educational research framework only. Not personalized financial advice.</div>
+  </div>
+  <div class="dcard" id="convictionCard">
+    <div class="dcardTitle">&#9889; Live Conviction Matrix</div>
+    <div id="convictionBody"><div class="stNote">Scanning for insider clusters...</div></div>
   </div>
   <div class="dcard" id="dashQuickCard">
     <div class="dcardTitle">&#9889; Quick Actions</div>
@@ -3257,6 +3277,7 @@ buildTicker();
 loadMarket();
 loadHomeContext();
 loadDashboard();
+setTimeout(function(){ if(typeof loadConvictionMatrix === "function"){ loadConvictionMatrix(); } }, 300);
 startDashPoll();
 
 var currentUser = null;
@@ -5127,6 +5148,7 @@ if(ib){
     setTimeout(injectAlternatives, 300);
     setTimeout(injectGuba, 350);
     setTimeout(injectPatterns, 400);
+    setTimeout(injectCluster, 250);
     // Interactive candlestick chart for real stocks (not funds, not crypto or macro).
     var symC = document.getElementById("sym");
     var symV = symC ? (symC.textContent || "").trim().toUpperCase() : "";
@@ -6388,6 +6410,61 @@ if(ib){
     }).catch(function(){});
   }
   window.loadBriefing = loadBriefing;
+
+  // Live Conviction Matrix: active corporate cluster buys across the market, on the home dashboard.
+  function loadConvictionMatrix(){
+    var body = document.getElementById("convictionBody");
+    if(!body){ return; }
+    fetch(API + "/signals/active-catalysts").then(function(r){ return r.json(); }).then(function(d){
+      var cats = (d && d.catalysts) || [];
+      if(!cats.length){ body.innerHTML = "<div class='stNote'>No active insider clusters detected right now.</div>"; return; }
+      var h = "";
+      for(var i = 0; i < cats.length; i++){
+        var c = cats[i];
+        var sev = c.severity === "CRITICAL" ? "<span class='cmSev crit'>CRITICAL</span>" : "<span class='cmSev strong'>STRONG</span>";
+        var roles = (c.executive_roles || []).slice(0, 4).join(", ");
+        var cap = c.total_capital_deployed > 0 ? "$" + Number(c.total_capital_deployed).toLocaleString() : (c.unique_insiders_count + " buys");
+        h += "<div class='cmRow' data-sym='" + c.ticker + "'>" +
+          "<div class='cmTop'><b>" + c.ticker + "</b> " + sev + "<span class='cmCnt'>" + c.unique_insiders_count + " execs</span></div>" +
+          "<div class='cmName'>" + (c.company_name || c.ticker) + "</div>" +
+          "<div class='cmMeta'>" + cap + (roles ? " &middot; " + roles : "") + "</div></div>";
+      }
+      body.innerHTML = h;
+      var rows = body.querySelectorAll(".cmRow");
+      for(var k = 0; k < rows.length; k++){
+        rows[k].onclick = function(){
+          var sy = this.getAttribute("data-sym");
+          var si = document.getElementById("si");
+          if(si && sy){ si.value = sy; run(); }
+        };
+      }
+    }).catch(function(){ body.innerHTML = "<div class='stNote'>Could not load clusters right now.</div>"; });
+  }
+  window.loadConvictionMatrix = loadConvictionMatrix;
+
+  // C Suite Accumulation card on the report, driven by the analyze response active_cluster.
+  function injectCluster(){
+    var old = document.getElementById("clusterCard");
+    if(old){ old.remove(); }
+    var d = window._lastReport;
+    if(!d || !d.active_cluster){ return; }
+    var ac = d.active_cluster;
+    var host = document.getElementById("stockSections");
+    if(!host){ return; }
+    var vb = document.getElementById("vbox");
+    var sym = (document.getElementById("sym") || {}).textContent || "";
+    var roles = (ac.executive_roles || []).join(", ");
+    var cap = ac.total_capital_deployed > 0 ? "$" + Number(ac.total_capital_deployed).toLocaleString() : "a notable amount";
+    var card = document.createElement("div");
+    card.id = "clusterCard";
+    card.className = "ic clusterCard";
+    card.innerHTML = "<div class='clusterT'>&#128293; C Suite Accumulation Detected</div>" +
+      "<div class='clusterBig'>" + ac.unique_insiders_count + " distinct executives have bought " + cap + " of " + sym + " within 14 days.</div>" +
+      (roles ? "<div class='clusterRoles'>Roles involved: " + roles + "</div>" : "") +
+      "<div class='aqEduBadge'>&#9888;&#65039; Educational research framework only. Not personalized financial advice.</div>";
+    if(vb && vb.parentNode === host){ host.insertBefore(card, vb.nextSibling); }
+    else { host.insertBefore(card, host.firstChild); }
+  }
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
