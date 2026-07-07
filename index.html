@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Apex Q">
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -1093,6 +1094,17 @@ body{transition:background-color .3s ease,color .3s ease;}
 .aqSkel::after{content:"";display:block;height:8px;margin-top:8px;border-radius:5px;background:linear-gradient(90deg,var(--s2) 25%,var(--border) 50%,var(--s2) 75%);background-size:200% 100%;animation:aqShimmer 1.4s ease-in-out infinite;}
 @keyframes aqShimmer{0%{background-position:200% 0;}100%{background-position:-200% 0;}}
 .mktStamp{font-size:10.5px;color:var(--muted);text-align:right;padding:2px 12px 0;opacity:.75;}
+/* Interactive Lightweight Charts card on the report. */
+.stChartCard{padding:14px;}
+.stChartHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+.stChartT{font-weight:800;color:var(--text);font-size:15px;}
+.stChartTf{display:flex;gap:5px;flex-wrap:wrap;}
+.tfBtn{background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:6px 11px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;transition:all .15s ease;}
+.tfBtn:hover{border-color:var(--accent);}
+.tfBtn.active{background:rgba(var(--accent-rgb),.14);border-color:var(--accent);color:var(--accent);}
+#chartContainer{height:450px;width:100%;display:none;}
+.stChartMsg{min-height:200px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);font-size:13px;padding:20px;}
+@media(max-width:700px){#chartContainer{height:340px;}}
 </style>
 </head>
 <body>
@@ -1222,6 +1234,20 @@ body{transition:background-color .3s ease,color .3s ease;}
         <div class="pb"><div class="sp" id="spx">--</div><div class="sc up" id="schg">--</div></div>
       </div>
       <div class="extRow" id="extRow" style="display:none"></div>
+      <div class="ic stChartCard" id="stChartCard" style="display:none">
+        <div class="stChartHead">
+          <span class="stChartT">&#128200; Interactive Chart</span>
+          <div class="stChartTf" id="stChartTf">
+            <button class="tfBtn" data-p="5d" data-i="15m">5D</button>
+            <button class="tfBtn" data-p="1mo" data-i="1d">1M</button>
+            <button class="tfBtn" data-p="3mo" data-i="1d">3M</button>
+            <button class="tfBtn" data-p="6mo" data-i="1d">6M</button>
+            <button class="tfBtn active" data-p="1y" data-i="1d">1Y</button>
+          </div>
+        </div>
+        <div id="chartContainer"></div>
+        <div class="stChartMsg" id="stChartMsg" style="display:none"></div>
+      </div>
       <div class="aqPrintBrand">Apex Q Intelligence Report</div>
       <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button><button class="shareBtn" id="pdfBtn">&#128196; PDF</button><button class="shareBtn" id="addPortBtn">&#43; Portfolio</button></div>
       <div class="addPortForm" id="addPortForm" style="display:none"><input class="cmpInp" id="addPortShares" type="number" step="any" min="0" placeholder="Shares" autocomplete="off"><input class="cmpInp" id="addPortCost" type="number" step="any" min="0" placeholder="Avg cost" autocomplete="off"><button class="cmpBtn" id="addPortSubmit">Add</button></div>
@@ -2573,6 +2599,7 @@ function run(){
 
     currentSymbol = d.symbol || val;
     currentName = d.name || "";
+    window._lastReport = d;
     updateSaveBtn();
     updateAskChips(d.suggested_questions);
 
@@ -4969,6 +4996,17 @@ if(ib){
     setTimeout(injectAlternatives, 300);
     setTimeout(injectGuba, 350);
     setTimeout(injectPatterns, 400);
+    // Interactive candlestick chart for real stocks (not funds, not crypto or macro).
+    var symC = document.getElementById("sym");
+    var symV = symC ? (symC.textContent || "").trim().toUpperCase() : "";
+    var isEtfC = window._lastReport && (window._lastReport.verdict === "ETF" || window._lastReport.quoteType === "ETF");
+    var isNonUs = /\.(T|NS|KS|AX|SS|SZ|HK)$/.test(symV) || /-USD$/.test(symV) || /=[FX]$/.test(symV) || symV.charAt(0) === "^";
+    if(symV && symV !== "APEX Q" && !isEtfC && !isNonUs){
+      setTimeout(function(){ renderStockChart(symV); }, 200);
+    } else {
+      var cc = document.getElementById("stChartCard");
+      if(cc){ cc.style.display = "none"; }
+    }
     // STABILIZATION: report re-translate disabled. if(_langNow === 'zh'){ translatePage('zh'); }
     // Keep the audio banner's ticker current and re-apply the premium blur to the fresh report.
     var bt = document.getElementById("aqBannerTicker");
@@ -5870,6 +5908,104 @@ if(ib){
       })
       .catch(function(){});
   }
+
+  // Interactive candlestick chart via Lightweight Charts: candles, volume, a 200 day SMA, live
+  // timeframe buttons, and a 60 second refresh on intraday views. Theme aware through the current
+  // data-theme attribute. Falls back to an honest message if the library or data is unavailable.
+  var _lwChart = null, _lwCandle = null, _lwVol = null, _lwSma = null, _lwTimer = null, _lwSym = null;
+  function _chartColors(){
+    var dark = (document.documentElement.getAttribute("data-theme") || "dark") !== "light";
+    return dark
+      ? {bg:"transparent", text:"#7d8596", grid:"rgba(255,255,255,.05)", up:"#00e676", down:"#ff3d3d", vol:"rgba(125,133,150,.35)", sma:"#f4b740"}
+      : {bg:"transparent", text:"#64748b", grid:"rgba(0,0,0,.06)", up:"#0f7b4e", down:"#dc2626", vol:"rgba(100,116,139,.3)", sma:"#d97706"};
+  }
+  function _sma(candles, len){
+    var out = [];
+    for(var i = len - 1; i < candles.length; i++){
+      var sum = 0;
+      for(var j = i - len + 1; j <= i; j++){ sum += candles[j].close; }
+      out.push({time: candles[i].time, value: +(sum / len).toFixed(2)});
+    }
+    return out;
+  }
+  function renderStockChart(symbol, period, interval){
+    var card = document.getElementById("stChartCard");
+    var cont = document.getElementById("chartContainer");
+    var msg = document.getElementById("stChartMsg");
+    if(!card || !cont){ return; }
+    card.style.display = "";
+    _lwSym = symbol;
+    if(typeof LightweightCharts === "undefined"){
+      cont.style.display = "none";
+      if(msg){ msg.style.display = "flex"; msg.textContent = "Chart data is unavailable for this stock right now."; }
+      return;
+    }
+    period = period || "1y";
+    interval = interval || "1d";
+    fetch(API + "/history/" + encodeURIComponent(symbol) + "?period=" + period + "&interval=" + interval)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d || d.error || !d.data || d.data.length < 2){
+          cont.style.display = "none";
+          if(msg){ msg.style.display = "flex"; msg.textContent = "Chart data is unavailable for this stock right now."; }
+          return;
+        }
+        if(msg){ msg.style.display = "none"; }
+        cont.style.display = "block";
+        var c = _chartColors();
+        if(_lwTimer){ clearInterval(_lwTimer); _lwTimer = null; }
+        cont.innerHTML = "";
+        _lwChart = LightweightCharts.createChart(cont, {
+          height: cont.clientHeight || 450,
+          layout: {background: {color: c.bg}, textColor: c.text},
+          grid: {vertLines: {color: c.grid}, horzLines: {color: c.grid}},
+          rightPriceScale: {borderColor: c.grid},
+          timeScale: {borderColor: c.grid, timeVisible: interval !== "1d", secondsVisible: false},
+          crosshair: {mode: 0},
+          handleScale: true, handleScroll: true
+        });
+        _lwCandle = _lwChart.addCandlestickSeries({upColor: c.up, downColor: c.down, borderUpColor: c.up, borderDownColor: c.down, wickUpColor: c.up, wickDownColor: c.down});
+        _lwCandle.setData(d.data);
+        _lwVol = _lwChart.addHistogramSeries({priceFormat: {type: "volume"}, priceScaleId: "vol"});
+        _lwChart.priceScale("vol").applyOptions({scaleMargins: {top: 0.82, bottom: 0}});
+        _lwVol.setData(d.data.map(function(x){ return {time: x.time, value: x.volume || 0, color: x.close >= x.open ? c.up : c.down}; }));
+        if(d.data.length >= 200){
+          _lwSma = _lwChart.addLineSeries({color: c.sma, lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false});
+          _lwSma.setData(_sma(d.data, 200));
+        }
+        _lwChart.timeScale().fitContent();
+        // Live refresh of the last candle on intraday views only.
+        if(interval !== "1d"){
+          _lwTimer = setInterval(function(){
+            if(_lwSym !== symbol){ return; }
+            fetch(API + "/history/" + encodeURIComponent(symbol) + "?period=" + period + "&interval=" + interval)
+              .then(function(r){ return r.json(); })
+              .then(function(nd){
+                if(nd && nd.data && nd.data.length && _lwCandle){
+                  _lwCandle.update(nd.data[nd.data.length - 1]);
+                }
+              }).catch(function(){});
+          }, 60000);
+        }
+      })
+      .catch(function(){
+        cont.style.display = "none";
+        if(msg){ msg.style.display = "flex"; msg.textContent = "Chart data is unavailable for this stock right now."; }
+      });
+  }
+  // Timeframe buttons re-fetch the chosen window.
+  var _tfWrap = document.getElementById("stChartTf");
+  if(_tfWrap){
+    _tfWrap.addEventListener("click", function(e){
+      var btn = e.target.closest(".tfBtn");
+      if(!btn || !_lwSym){ return; }
+      var btns = _tfWrap.querySelectorAll(".tfBtn");
+      for(var i = 0; i < btns.length; i++){ btns[i].classList.remove("active"); }
+      btn.classList.add("active");
+      renderStockChart(_lwSym, btn.getAttribute("data-p"), btn.getAttribute("data-i"));
+    });
+  }
+  window.renderStockChart = renderStockChart;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
