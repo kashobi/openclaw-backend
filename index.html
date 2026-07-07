@@ -12,6 +12,31 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Apex Q">
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+<script>
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  window.APEXQ_ONESIGNAL_APP_ID = "__ONESIGNAL_APP_ID__";
+  OneSignalDeferred.push(async function(OneSignal){
+    var appId = window.APEXQ_ONESIGNAL_APP_ID;
+    if(!appId || appId.indexOf("__") === 0){ return; }
+    try{
+      await OneSignal.init({appId: appId, allowLocalhostAsSecureOrigin: true});
+      OneSignal.User.PushSubscription.addEventListener("change", function(ev){
+        var id = ev && ev.current && ev.current.id;
+        if(id){
+          fetch("/auth/device", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({device_token: id})});
+        }
+      });
+    }catch(e){}
+  });
+  // Called after login to prompt for permission.
+  function apexqRequestPush(){
+    if(!window.OneSignalDeferred){ return; }
+    OneSignalDeferred.push(function(OneSignal){
+      try{ OneSignal.Slidedown.promptPush(); }catch(e){}
+    });
+  }
+</script>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -788,7 +813,6 @@ select.cmpInp{cursor:pointer;}
 .btNote{color:var(--muted);font-size:13px;padding:10px 2px;}
 .authRow2{display:flex;gap:8px;}
 .authRow2 .authInp{flex:1;min-width:0;}
-.verifyBanner{background:var(--ybg);border:1px solid var(--yellow);border-radius:12px;padding:11px 14px;margin-bottom:14px;}
 .vbMsg{font-size:13.5px;font-weight:700;color:var(--text);margin-bottom:8px;}
 .vbForm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 .vbInput{background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:8px 11px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:120px;letter-spacing:2px;}
@@ -1106,6 +1130,52 @@ body{transition:background-color .3s ease,color .3s ease;}
 #chartContainer{height:450px;width:100%;display:none;}
 .stChartMsg{min-height:200px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);font-size:13px;padding:20px;}
 @media(max-width:700px){#chartContainer{height:340px;}}
+/* Custom alerts UI. */
+.alSecTitle{font-size:13px;font-weight:800;color:var(--muted);margin:20px 0 10px;text-transform:uppercase;letter-spacing:.5px;}
+.alGate,.alEmpty{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;text-align:center;color:var(--muted);font-size:13px;}
+.alItem{display:flex;align-items:center;gap:11px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 15px;margin-bottom:9px;}
+.alItemIco{font-size:20px;}
+.alItemBody{flex:1;min-width:0;}
+.alItemT{font-weight:700;color:var(--text);font-size:13.5px;}
+.alItemD{font-size:12px;color:var(--muted);margin-top:2px;}
+.alToggle{background:var(--s2);border:1px solid var(--border);border-radius:999px;padding:5px 13px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;}
+.alToggle.on{background:rgba(var(--accent-rgb),.16);border-color:var(--accent);color:var(--accent);}
+.alDel{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1;padding:0 4px;}
+.alDel:hover{color:var(--red);}
+.alTrig{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:border-color .16s ease;}
+.alTrig:hover{border-color:var(--accent);}
+.alTrigT{font-weight:700;color:var(--text);font-size:13px;}
+.alTrigR{font-size:12px;color:var(--muted);line-height:1.5;margin:4px 0;}
+.alTrigW{font-size:11px;color:var(--muted);opacity:.8;}
+.alModalWrap{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;}
+.alModal{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:20px;width:100%;max-width:400px;box-shadow:var(--shadow-hi);}
+.alModalHead{display:flex;align-items:center;justify-content:space-between;font-weight:800;font-size:16px;color:var(--text);margin-bottom:16px;}
+.alClose{background:none;border:none;font-size:26px;color:var(--muted);cursor:pointer;line-height:1;}
+.alLbl{display:block;font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px;}
+.alOpt{font-weight:400;color:var(--muted);}
+.alDirChips{display:flex;gap:8px;margin-top:8px;}
+.alDir{flex:1;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:9px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;}
+.alDir.active{background:rgba(var(--accent-rgb),.14);border-color:var(--accent);color:var(--accent);}
+.alErr{color:var(--red);font-size:12px;margin-top:10px;}
+/* Click wrap Terms modal. Cannot be dismissed by backdrop click or escape. */
+.tosWrap{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:1200;display:flex;align-items:center;justify-content:center;padding:20px;}
+.tosModal{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:24px;max-width:420px;width:100%;box-shadow:var(--shadow-hi);}
+.tosT{font-size:19px;font-weight:800;color:var(--text);margin-bottom:8px;}
+.tosLead{font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:14px;}
+.tosList{margin:0 0 18px;padding-left:20px;}
+.tosList li{font-size:13px;color:var(--text);line-height:1.6;margin-bottom:10px;}
+/* Competitive moat features: clout badge, drift radar, briefing, education badge. */
+.cloutBadge{display:inline-block;background:rgba(var(--accent-rgb),.16);color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:800;margin-left:2px;cursor:help;}
+.cloutFilter{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);margin:0 0 12px;cursor:pointer;}
+.cloutFilter input{cursor:pointer;}
+.driftCard{padding:16px;}
+.driftLegend{display:flex;gap:14px;justify-content:center;font-size:12px;font-weight:700;margin:6px 0 4px;}
+.driftSvg{max-width:340px;margin:0 auto;display:block;}
+.driftSummary{font-size:13px;color:var(--text);line-height:1.6;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-top:10px;}
+.briefBody{font-size:13px;color:var(--text);line-height:1.65;white-space:pre-wrap;}
+.briefWhen{font-size:11px;color:var(--muted);font-weight:600;margin-left:6px;}
+.aqEduBadge{font-size:11px;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-top:10px;line-height:1.4;}
+.aqEduInline{margin-top:6px;max-width:85%;}
 </style>
 </head>
 <body>
@@ -1125,15 +1195,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   </div>
 </div>
 <div class="views">
-<div class="verifyBanner" id="verifyBanner" style="display:none">
-  <div class="vbMsg">&#128241; Verify your phone to enable alerts.</div>
-  <div class="vbForm">
-    <input class="vbInput" id="vbCode" type="text" inputmode="numeric" maxlength="6" placeholder="6 digit code">
-    <button class="vbBtn" id="vbVerify">Verify</button>
-    <button class="vbResend" id="vbResend">Resend code</button>
-  </div>
-  <div class="vbNote" id="vbNote"></div>
-</div>
+
 <div class="view active" id="view-home">
 <section class="hero" id="heroSection">
   <div class="heroInner">
@@ -1190,6 +1252,11 @@ body{transition:background-color .3s ease,color .3s ease;}
 </div>
 <div id="alertBanner" style="display:none"></div>
 <div id="dashGrid">
+  <div class="dcard" id="briefingCard" style="display:none">
+    <div class="dcardTitle">&#9728;&#65039; Morning Briefing <span class="briefWhen" id="briefWhen"></span></div>
+    <div class="briefBody" id="briefBody"></div>
+    <div class="aqEduBadge">&#9888;&#65039; Educational research framework only. Not personalized financial advice.</div>
+  </div>
   <div class="dcard" id="dashQuickCard">
     <div class="dcardTitle">&#9889; Quick Actions</div>
     <div class="qaWrap">
@@ -1401,6 +1468,7 @@ body{transition:background-color .3s ease,color .3s ease;}
     <div class="vhead-s">See what members of Congress are trading, then point the engine at the whole market through plain lenses. Tap a politician or any name for the full breakdown.</div>
   </div>
   <div class="stitle">&#127963;&#65039; Top Trading Members of Congress</div>
+  <label class="cloutFilter"><input type="checkbox" id="cloutOnly"> Show only high clout traders (committee aligned)</label>
   <div class="scanNote">Recent disclosures from US Senators and Representatives, ranked by how active they have been. The return figure is a rough estimate from prices since each purchase.</div>
   <div class="loading" id="congressLoad">Loading congressional data...</div>
   <div id="congressList"></div>
@@ -1475,6 +1543,53 @@ body{transition:background-color .3s ease,color .3s ease;}
       <div class="sgempty" id="panelEmpty">Analyze any stock and it appears here with its real verdict and price. Every signal shown is live, never a placeholder.</div>
     </div>
 </div>
+<div class="tosWrap" id="tosWrap" style="display:none">
+  <div class="tosModal">
+    <div class="tosT">Before you continue</div>
+    <p class="tosLead">Apex Q is an educational research tool. Please read and agree to continue to model portfolios and brokerage linking.</p>
+    <ul class="tosList">
+      <li>Apex Q is for education and research only. Nothing here is financial, investment, or trading advice.</li>
+      <li>All verdicts, scores, and models are informational. You make your own decisions and bear your own risk.</li>
+      <li>Brokerage links are strictly read only. Apex Q can never place trades or move your money.</li>
+      <li>Market data may be delayed or imperfect. Verify anything important against primary sources.</li>
+    </ul>
+    <button class="cmpBtn" id="tosAgree" style="width:100%">I Agree</button>
+  </div>
+</div>
+<div class="view" id="view-alerts">
+  <div class="vhead">
+    <div class="vhead-t">Custom Alerts</div>
+    <div class="vhead-s">Build personalized alerts on congressional trades, insider activity, verdict shifts, and price levels. Every alert is educational, never advice.</div>
+  </div>
+  <div class="alGate" id="alGate" style="display:none">Log in to build custom alerts.</div>
+  <div id="alMain" style="display:none">
+    <button class="cmpBtn" id="alAddBtn" style="width:100%;margin-bottom:16px">&#43; Add an alert</button>
+    <div class="alList" id="alList"></div>
+    <div class="alSecTitle">Recent triggers</div>
+    <div class="alFeed" id="alFeed"></div>
+  </div>
+</div>
+<div class="alModalWrap" id="alModalWrap" style="display:none">
+  <div class="alModal">
+    <div class="alModalHead">Build an alert <button class="alClose" id="alClose">&times;</button></div>
+    <label class="alLbl">Alert me</label>
+    <select class="cmpInp" id="alType"></select>
+    <div id="alSymRow"><label class="alLbl">Stock symbol <span class="alOpt">optional for some types</span></label>
+      <input class="cmpInp" id="alSym" type="text" placeholder="Like NVDA" autocapitalize="characters" spellcheck="false"></div>
+    <div id="alPolRow" style="display:none"><label class="alLbl">Politician <span class="alOpt">optional</span></label>
+      <input class="cmpInp" id="alPol" type="text" placeholder="Like Nancy Pelosi"></div>
+    <div id="alPriceRow" style="display:none">
+      <label class="alLbl">Price</label>
+      <input class="cmpInp" id="alPrice" type="number" step="any" min="0" placeholder="Threshold price">
+      <div class="alDirChips">
+        <button class="alDir active" data-dir="above">Crosses above</button>
+        <button class="alDir" data-dir="below">Crosses below</button>
+      </div>
+    </div>
+    <div class="alErr" id="alErr" style="display:none"></div>
+    <button class="cmpBtn" id="alSave" style="width:100%;margin-top:14px">Save alert</button>
+  </div>
+</div>
 <div class="view" id="view-portfolio">
   <div class="vhead">
     <div class="vhead-t">Portfolio</div>
@@ -1484,7 +1599,9 @@ body{transition:background-color .3s ease,color .3s ease;}
     <button class="pmChip active" data-mode="real" onclick="apexqPortMode('real')">Real Portfolio</button>
     <button class="pmChip" data-mode="paper" onclick="apexqPortMode('paper')">Paper Trading</button>
     <button class="pmChip" data-mode="build" onclick="apexqPortMode('build')">Build for Me</button>
+    <button class="pmChip" data-mode="drift" onclick="apexqPortMode('drift')">Drift Analysis</button>
   </div>
+  <div class="ic driftCard" id="driftCard" style="display:none"></div>
   <div class="ic" id="portSpark" style="display:none"></div>
   <div class="ic stCard" id="stCard">
     <div class="stHead">&#128279; Real Account <span class="stBadge">Read only</span></div>
@@ -1683,7 +1800,6 @@ body{transition:background-color .3s ease,color .3s ease;}
         <input class="authInp" id="authFirst" type="text" placeholder="First name" autocomplete="given-name">
         <input class="authInp" id="authLast" type="text" placeholder="Last name" autocomplete="family-name">
       </div>
-      <input class="authInp" id="authPhone" type="tel" style="display:none" autocomplete="off">
     </div>
     <input class="authInp" id="authPass" type="password" placeholder="Password" autocomplete="current-password">
     <div class="authHint" id="authHint"></div>
@@ -1709,6 +1825,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="moreSheet">
     <div class="moreGrip"></div>
     <div class="moreTitle">More tools</div>
+    <button class="moreItem" onclick="showView('alerts');apexqCloseMore();"><span class="moreIco">&#128276;</span><span class="moreLbl"><b>Alerts</b><small>Build custom alerts on trades and prices</small></span></button>
     <button class="moreItem" onclick="showView('discover');apexqCloseMore();"><span class="moreIco">&#129517;</span><span class="moreLbl"><b>Discover</b><small>Movers, sectors, and market lenses</small></span></button>
     <button class="moreItem" onclick="showView('insights');apexqCloseMore();"><span class="moreIco">&#127963;</span><span class="moreLbl"><b>Congress</b><small>Who in Congress is trading what</small></span></button>
     <button class="moreItem" onclick="showView('compare');apexqCloseMore();"><span class="moreIco">&#9878;&#65039;</span><span class="moreLbl"><b>Compare</b><small>Put two or three stocks side by side</small></span></button>
@@ -2131,7 +2248,8 @@ function renderCong(data){
   var bl = buys.length > sells.length ? "RECENT BUYING" : (sells.length > buys.length ? "RECENT SELLING" : "MIXED");
   var rows = data.map(function(t){
     var cls = (t.action && t.action.toLowerCase().indexOf("purchase") >= 0) ? "buy" : "sell";
-    return "<div class=\"tr\"><span class=\""+cls+"\">"+esc(t.action)+"</span><span>"+esc(t.politician)+"</span><span class=\"gray\">("+esc(t.party)+")</span><span class=\"gray\">"+esc(t.amount)+"</span><span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
+    var clout = t.high_clout ? "<span class='cloutBadge' title='This lawmaker sits on a committee tied to this stock&#39;s sector, an information edge worth noting.'>&#127919; High Clout</span>" : "";
+    return "<div class=\"tr\"><span class=\""+cls+"\">"+esc(t.action)+"</span><span>"+esc(t.politician)+"</span>"+clout+"<span class=\"gray\">("+esc(t.party)+")</span><span class=\"gray\">"+esc(t.amount)+"</span><span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
   }).join("");
   s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Congressional Trades</div><div class=\"ibdg "+bc+"\">"+bl+"</div></div><div class=\"itxt\">"+rows+"<div class=\"iwhy\">Why it matters: members of Congress must report trades by law. When several buy or sell the same name it can hint at policy moves coming that the wider market has not priced in yet.</div></div></div>";
 }
@@ -3187,7 +3305,6 @@ function submitAuth(){
     payload.email = em;
     payload.first_name = document.getElementById("authFirst").value.trim();
     payload.last_name = document.getElementById("authLast").value.trim();
-    payload.phone = document.getElementById("authPhone").value.trim();
   }
   var btn = document.getElementById("authSubmit");
   btn.disabled = true;
@@ -3204,6 +3321,7 @@ function submitAuth(){
       document.getElementById("authPass").value = "";
       closeAuth();
       refreshMe();
+      if(typeof apexqRequestPush === "function"){ setTimeout(apexqRequestPush, 1500); }
     } else {
       showAuthErr((res.body && res.body.error) ? res.body.error : "Something went wrong. Try again.");
     }
@@ -3234,6 +3352,7 @@ function refreshMe(){
     applyPremiumUI();
     refreshUsage();
     updateVerifyBanner();
+    if(typeof loadBriefing === "function"){ loadBriefing(); }
   }).catch(function(){});
 }
 
@@ -3938,6 +4057,8 @@ function loadCongressInsights(){
   });
 }
 
+var CLOUT_NAMES = ["Nancy Pelosi","Dan Crenshaw","Ro Khanna","Michael McCaul","Josh Gottheimer","Marjorie Taylor Greene","Tommy Tuberville","Sheldon Whitehouse","Ron Wyden","Mark Green","Virginia Foxx","Kathy Manning","Earl Blumenauer","John Boozman","Shelley Moore Capito","Thomas Carper","Susan Collins","Patrick Fallon","Bill Hagerty","Debbie Wasserman Schultz","Gilbert Cisneros","Katherine Clark","Lois Frankel","Garret Graves","David Rouzer"];
+(function(){ var cb = document.getElementById("cloutOnly"); if(cb){ cb.addEventListener("change", function(){ if(typeof renderCongressList === "function"){ renderCongressList(); } }); } })();
 function renderCongressList(){
   var list = document.getElementById("congressList");
   if(!list){ return; }
@@ -3945,7 +4066,15 @@ function renderCongressList(){
     list.innerHTML = "<div class=\"scanEmpty\">No congressional trading data is available right now. Check back later.</div>";
     return;
   }
-  list.innerHTML = _congressData.map(function(p){
+  // High clout filter: names known to sit on committees, a proxy for information edge, since the
+  // leaderboard aggregates across stocks and does not carry per trade sector alignment.
+  var cloutOnly = document.getElementById("cloutOnly");
+  var src = _congressData;
+  if(cloutOnly && cloutOnly.checked){
+    src = _congressData.filter(function(p){ return CLOUT_NAMES.some(function(n){ return n.toLowerCase() === (p.name || "").toLowerCase() || (p.name || "").toLowerCase().indexOf(n.toLowerCase()) >= 0; }); });
+    if(!src.length){ list.innerHTML = "<div class=\"scanEmpty\">No high clout traders in the current data. Uncheck the filter to see all.</div>"; return; }
+  }
+  list.innerHTML = src.map(function(p){
     var chips = (p.top_tickers || []).map(function(tk){ return "<span class=\"qp\">" + esc(tk) + "</span>"; }).join("");
     var st = p.state ? (" &middot; " + esc(p.state)) : "";
     return "<div class=\"congCard\" data-pol=\"" + esc(p.name) + "\">"
@@ -4204,6 +4333,12 @@ function addBotMsg(text, verdict, isErr){
   var row = document.createElement("div");
   row.className = "msgRow b";
   row.innerHTML = "<div class=\"msgBot" + (isErr ? " err" : "") + "\">" + badge + esc(text) + "</div>";
+  if(!isErr){
+    var eb = document.createElement("div");
+    eb.className = "aqEduBadge aqEduInline";
+    eb.innerHTML = "&#9888;&#65039; Educational research framework only. Not personalized financial advice.";
+    row.appendChild(eb);
+  }
   c.appendChild(row); askScrollBottom();
 }
 function addTyping(){
@@ -4484,49 +4619,8 @@ function renderBacktestChart(data, capital){
   host.ontouchmove = function(e){ if(e.touches && e.touches[0]){ moveTo(e.touches[0].clientX); } };
 }
 
-// ============ PHONE VERIFICATION ============
-var _verifySent = false;
-function updateVerifyBanner(){
-  var bn = document.getElementById("verifyBanner");
-  if(!bn) return;
-  if(currentUser && currentUser.phone && !currentUser.phone_verified){
-    bn.style.display = "block";
-    if(!_verifySent){ _verifySent = true; sendVerifyCode(); }
-  } else {
-    bn.style.display = "none";
-  }
-}
-function sendVerifyCode(){
-  var phone = currentUser && currentUser.phone;
-  if(!phone) return;
-  var note = document.getElementById("vbNote");
-  fetch(API + "/auth/send-verification", {method:"POST", headers:{"Content-Type":"application/json"}, credentials:"same-origin", body: JSON.stringify({phone: phone})})
-    .then(function(r){ return r.json(); }).then(function(d){
-      if(!note) return;
-      note.textContent = (d && d.ok) ? ("Code sent to " + phone + ".") : ((d && d.error) ? d.error : "Could not send a code.");
-    }).catch(function(){ if(note){ note.textContent = "Connection issue sending code."; } });
-}
-function verifyPhoneCode(){
-  var el = document.getElementById("vbCode");
-  var code = el ? el.value.trim() : "";
-  var note = document.getElementById("vbNote");
-  if(!code){ if(note){ note.textContent = "Enter the 6 digit code."; } return; }
-  fetch(API + "/auth/verify-phone", {method:"POST", headers:{"Content-Type":"application/json"}, credentials:"same-origin", body: JSON.stringify({code: code})})
-    .then(function(r){ return r.json(); }).then(function(d){
-      if(d && d.ok){
-        if(currentUser){ currentUser.phone_verified = true; }
-        if(note){ note.textContent = "Phone verified. Thank you."; }
-        setTimeout(updateVerifyBanner, 1200);
-      } else if(note){ note.textContent = (d && d.error) ? d.error : "Wrong or expired code."; }
-    }).catch(function(){ if(note){ note.textContent = "Connection issue. Try again."; } });
-}
-(function(){
-  var v = document.getElementById("vbVerify");
-  if(v){ v.addEventListener("click", verifyPhoneCode); }
-  var r = document.getElementById("vbResend");
-  if(r){ r.addEventListener("click", sendVerifyCode); }
-})();
-// ============ END PHONE VERIFICATION ============
+// Phone verification removed. Stub keeps the single caller safe.
+function updateVerifyBanner(){}
 
 // ============ PAPER TRADING ============
 var _tradeInit = false;
@@ -4771,6 +4865,7 @@ function showView(name){
   if(name === "home"){ loadHomeContext(); loadDashboard(); }
   if(name === "backtest"){ initBacktest(); }
   if(name === "trade"){ initTrade(); }
+  if(name === "alerts" && typeof loadAlerts === "function"){ loadAlerts(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
@@ -5242,6 +5337,10 @@ if(ib){
     var btn = document.getElementById("stConnectBtn");
     if(!btn){ return; }
     btn.onclick = function(){
+      if(typeof apexqRequireTos === "function" && currentUser && !currentUser.agreed_tos){
+        apexqRequireTos(function(){ btn.click(); });
+        return;
+      }
       btn.textContent = "Opening portal...";
       fetch(API + "/snaptrade/connect", {method: "POST", credentials: "same-origin"})
         .then(function(r){ return r.json(); })
@@ -5291,6 +5390,10 @@ if(ib){
     if(typeof showView === "function"){ showView(target); }
     // When the Paper Trading chip is chosen, make sure the performance chart loads right away.
     if(mode === "paper" && typeof loadPaperChart === "function"){ setTimeout(loadPaperChart, 120); }
+    // Drift Analysis shares the Portfolio view; toggle its card and load the comparison.
+    var dc = document.getElementById("driftCard");
+    if(dc){ dc.style.display = (mode === "drift") ? "block" : "none"; }
+    if(mode === "drift" && typeof loadDrift === "function"){ setTimeout(loadDrift, 120); }
     // Keep the Portfolio tab lit in the bottom bar for all three modes, since they live under it.
     var tabs = document.querySelectorAll(".tabbar .tab");
     for(var i = 0; i < tabs.length; i++){ tabs[i].classList.remove("active"); }
@@ -5330,6 +5433,10 @@ if(ib){
   var buildGoBtn = document.getElementById("buildGo");
   if(buildGoBtn){
     buildGoBtn.addEventListener("click", function(){
+      if(typeof apexqRequireTos === "function" && currentUser && !currentUser.agreed_tos){
+        apexqRequireTos(function(){ buildGoBtn.click(); });
+        return;
+      }
       var riskEl = document.querySelector(".riskChip.active");
       var risk = riskEl ? riskEl.getAttribute("data-risk") : "moderate";
       var amtEl = document.getElementById("buildAmount");
@@ -5373,6 +5480,7 @@ if(ib){
           }
           h += "</tbody></table></div>";
           h += "<div class='buildAllocNote'>Allocations are guided by conviction (Alpha Score) and risk (Beta). Stocks with stronger signals and lower volatility receive slightly larger positions, while still spreading risk across multiple names. This is an educational model, not a recommendation.</div>";
+          h += "<div class='aqEduBadge'>&#9888;&#65039; Educational research framework only. Not personalized financial advice.</div>";
           if(d.etf_suggestions && d.etf_suggestions.length){
             h += "<div class='buildLbl' style='margin-top:16px'>Funds that match this style</div><div class='buildEtfs'>";
             for(var j = 0; j < d.etf_suggestions.length; j++){
@@ -6042,6 +6150,244 @@ if(ib){
     });
   }
   window.renderStockChart = renderStockChart;
+
+  // Custom alert builder. Lists the user's rules with toggle and delete, opens a modal to create
+  // new ones with only the fields that matter for the chosen type, and shows recent triggers.
+  var ALERT_TYPES = [
+    ["congress_buy", "When a politician buys a stock"],
+    ["congress_sell", "When a politician sells a stock"],
+    ["insider_buy", "When a company insider buys"],
+    ["insider_sell", "When a company insider sells"],
+    ["verdict_change", "When a stock flips its verdict"],
+    ["price_cross", "When a stock crosses a price"],
+    ["earnings_tomorrow", "When earnings are coming up"],
+    ["alpha_change", "When the Alpha Score shifts"],
+    ["52week_high", "When a stock hits a 52 week high"],
+    ["52week_low", "When a stock hits a 52 week low"],
+    ["filing_new", "When a new SEC filing appears"]
+  ];
+  var _alDir = "above";
+  function alIcon(t){
+    if(t.indexOf("congress") === 0){ return "\uD83C\uDFDB\uFE0F"; }
+    if(t.indexOf("insider") === 0){ return "\uD83D\uDCBC"; }
+    if(t === "price_cross"){ return "\uD83D\uDCB2"; }
+    if(t === "verdict_change"){ return "\u2696\uFE0F"; }
+    if(t.indexOf("52week") === 0){ return "\uD83D\uDCC8"; }
+    if(t === "filing_new"){ return "\uD83D\uDCC4"; }
+    if(t === "earnings_tomorrow"){ return "\uD83D\uDCC5"; }
+    return "\uD83D\uDD14";
+  }
+  function loadAlerts(){
+    var gate = document.getElementById("alGate");
+    var main = document.getElementById("alMain");
+    if(!currentUser){ if(gate) gate.style.display = "block"; if(main) main.style.display = "none"; return; }
+    if(gate) gate.style.display = "none";
+    if(main) main.style.display = "block";
+    fetch(API + "/alerts/custom", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+      var list = document.getElementById("alList");
+      if(!list){ return; }
+      if(!d.alerts || !d.alerts.length){ list.innerHTML = "<div class='alEmpty'>No alerts yet. Add one above to get started.</div>"; return; }
+      var h = "";
+      for(var i = 0; i < d.alerts.length; i++){
+        var a = d.alerts[i];
+        var detail = a.symbol ? a.symbol : "Any stock";
+        if(a.politician_name){ detail += " &middot; " + a.politician_name; }
+        if(a.threshold_price){ detail += " &middot; " + a.direction + " $" + a.threshold_price; }
+        h += "<div class='alItem'><span class='alItemIco'>" + alIcon(a.alert_type) + "</span>" +
+          "<div class='alItemBody'><div class='alItemT'>" + a.label + "</div><div class='alItemD'>" + detail + "</div></div>" +
+          "<button class='alToggle " + (a.enabled ? "on" : "") + "' data-id='" + a.id + "'>" + (a.enabled ? "On" : "Off") + "</button>" +
+          "<button class='alDel' data-id='" + a.id + "'>&times;</button></div>";
+      }
+      list.innerHTML = h;
+      var tgs = list.querySelectorAll(".alToggle");
+      for(var t = 0; t < tgs.length; t++){
+        tgs[t].onclick = function(){
+          fetch(API + "/alerts/toggle", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: +this.getAttribute("data-id")})}).then(function(){ loadAlerts(); });
+        };
+      }
+      var dels = list.querySelectorAll(".alDel");
+      for(var x = 0; x < dels.length; x++){
+        dels[x].onclick = function(){
+          fetch(API + "/alerts/delete", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: +this.getAttribute("data-id")})}).then(function(){ loadAlerts(); });
+        };
+      }
+    }).catch(function(){});
+    fetch(API + "/alerts/log", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+      var feed = document.getElementById("alFeed");
+      if(!feed){ return; }
+      if(!d.log || !d.log.length){ feed.innerHTML = "<div class='alEmpty'>No alerts have triggered yet.</div>"; return; }
+      var h = "";
+      for(var i = 0; i < d.log.length; i++){
+        var l = d.log[i];
+        var when = l.triggered_at ? new Date(l.triggered_at).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"}) : "";
+        h += "<div class='alTrig' data-sym='" + (l.symbol || "") + "'><div class='alTrigT'>" + alIcon(l.alert_type) + " " + l.message + "</div>" +
+          "<div class='alTrigR'>" + (l.reason || "") + "</div><div class='alTrigW'>" + when + "</div></div>";
+      }
+      feed.innerHTML = h;
+      var trigs = feed.querySelectorAll(".alTrig");
+      for(var k = 0; k < trigs.length; k++){
+        trigs[k].onclick = function(){
+          var sy = this.getAttribute("data-sym");
+          if(sy){ var si = document.getElementById("si"); if(si){ si.value = sy; run(); } }
+        };
+      }
+    }).catch(function(){});
+  }
+  function alSyncFields(){
+    var t = document.getElementById("alType").value;
+    document.getElementById("alPriceRow").style.display = (t === "price_cross") ? "block" : "none";
+    document.getElementById("alPolRow").style.display = (t === "congress_buy" || t === "congress_sell") ? "block" : "none";
+  }
+  (function initAlertBuilder(){
+    var sel = document.getElementById("alType");
+    if(sel){
+      for(var i = 0; i < ALERT_TYPES.length; i++){
+        var o = document.createElement("option");
+        o.value = ALERT_TYPES[i][0]; o.textContent = ALERT_TYPES[i][1];
+        sel.appendChild(o);
+      }
+      sel.onchange = alSyncFields;
+    }
+    var add = document.getElementById("alAddBtn");
+    if(add){ add.onclick = function(){ if(!currentUser){ openAuth("login"); return; } document.getElementById("alModalWrap").style.display = "flex"; alSyncFields(); }; }
+    var close = document.getElementById("alClose");
+    if(close){ close.onclick = function(){ document.getElementById("alModalWrap").style.display = "none"; }; }
+    var dirs = document.querySelectorAll(".alDir");
+    for(var d = 0; d < dirs.length; d++){
+      dirs[d].onclick = function(){
+        _alDir = this.getAttribute("data-dir");
+        for(var j = 0; j < dirs.length; j++){ dirs[j].classList.remove("active"); }
+        this.classList.add("active");
+      };
+    }
+    var save = document.getElementById("alSave");
+    if(save){
+      save.onclick = function(){
+        var err = document.getElementById("alErr");
+        if(err){ err.style.display = "none"; }
+        var body = {
+          alert_type: document.getElementById("alType").value,
+          symbol: document.getElementById("alSym").value.trim(),
+          politician_name: document.getElementById("alPol").value.trim(),
+          threshold_price: document.getElementById("alPrice").value.trim(),
+          direction: _alDir
+        };
+        fetch(API + "/alerts/create", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
+          .then(function(r){ return r.json(); }).then(function(d){
+            if(d && d.ok){
+              document.getElementById("alModalWrap").style.display = "none";
+              document.getElementById("alSym").value = "";
+              document.getElementById("alPol").value = "";
+              document.getElementById("alPrice").value = "";
+              loadAlerts();
+            } else if(err){ err.textContent = (d && d.error) ? d.error : "Could not save."; err.style.display = "block"; }
+          }).catch(function(){ if(err){ err.textContent = "Connection issue."; err.style.display = "block"; } });
+      };
+    }
+  })();
+  window.loadAlerts = loadAlerts;
+
+  // Click wrap Terms gate. Runs the callback only once the user has agreed. Agreement persists in
+  // the database via agreed_tos, so the modal shows at most once per user. It cannot be dismissed
+  // by clicking outside or pressing escape; the only way forward is I Agree.
+  var _tosPending = null;
+  function apexqRequireTos(cb){
+    if(!currentUser){ if(typeof openAuth === "function"){ openAuth("login"); } return; }
+    if(currentUser.agreed_tos){ cb(); return; }
+    _tosPending = cb;
+    var w = document.getElementById("tosWrap");
+    if(w){ w.style.display = "flex"; }
+  }
+  (function initTos(){
+    var agree = document.getElementById("tosAgree");
+    if(agree){
+      agree.onclick = function(){
+        fetch(API + "/auth/agree-tos", {method: "POST", credentials: "same-origin"}).then(function(){
+          if(currentUser){ currentUser.agreed_tos = true; }
+          var w = document.getElementById("tosWrap");
+          if(w){ w.style.display = "none"; }
+          var cb = _tosPending; _tosPending = null;
+          if(cb){ cb(); }
+        }).catch(function(){});
+      };
+    }
+  })();
+  window.apexqRequireTos = apexqRequireTos;
+
+  // Portfolio Drift: an SVG radar chart comparing the user's sector weights against what Congress
+  // and corporate insiders have been buying. Read only observation, never advice.
+  function loadDrift(){
+    var card = document.getElementById("driftCard");
+    if(!card){ return; }
+    if(!currentUser){ card.innerHTML = "<div class='stNote'>Log in and link your brokerage to see your drift analysis.</div>"; return; }
+    card.innerHTML = "<div class='stHead'>&#128506;&#65039; Drift Analysis</div><div class='buildSpin'><div class='spinDot'></div>Comparing your sectors to Congress and insiders...</div>";
+    fetch(API + "/portfolio/drift", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || d.connected === false){
+        card.innerHTML = "<div class='stHead'>&#128506;&#65039; Drift Analysis</div><div class='stNote'>Link your brokerage to see how your sector allocation compares to Congress and corporate insiders.</div>";
+        return;
+      }
+      if(d.error){ card.innerHTML = "<div class='stHead'>&#128506;&#65039; Drift Analysis</div><div class='stNote'>Could not load drift right now.</div>"; return; }
+      var svg = drawRadar(d.sectors, [
+        {name: "You", data: d.portfolio, color: "#00e676"},
+        {name: "Congress", data: d.congress, color: "#3b82f6"},
+        {name: "Insiders", data: d.insiders, color: "#f4b740"}
+      ]);
+      card.innerHTML = "<div class='stHead'>&#128506;&#65039; Drift Analysis <span class='stBadge'>You vs Congress vs Insiders</span></div>" +
+        "<div class='driftLegend'><span style='color:#00e676'>&#9679; You</span> <span style='color:#3b82f6'>&#9679; Congress</span> <span style='color:#f4b740'>&#9679; Insiders</span></div>" +
+        svg + (d.summary ? "<div class='driftSummary'>" + d.summary + "</div>" : "") +
+        "<div class='aqEduBadge'>&#9888;&#65039; Educational research framework only. Not personalized financial advice.</div>";
+    }).catch(function(){ card.innerHTML = "<div class='stHead'>&#128506;&#65039; Drift Analysis</div><div class='stNote'>Could not load drift right now.</div>"; });
+  }
+  function drawRadar(labels, series){
+    var n = labels.length, cx = 160, cy = 160, R = 110;
+    var maxV = 1;
+    for(var s = 0; s < series.length; s++){ for(var i = 0; i < series[s].data.length; i++){ if(series[s].data[i] > maxV){ maxV = series[s].data[i]; } } }
+    function pt(i, val){
+      var ang = (Math.PI * 2 * i / n) - Math.PI / 2;
+      var rr = R * (val / maxV);
+      return [cx + rr * Math.cos(ang), cy + rr * Math.sin(ang)];
+    }
+    var g = "<svg viewBox='0 0 320 340' class='driftSvg' width='100%'>";
+    // grid rings
+    for(var ring = 1; ring <= 3; ring++){
+      var pts = [];
+      for(var i = 0; i < n; i++){ var p = pt(i, maxV * ring / 3); pts.push(p[0] + "," + p[1]); }
+      g += "<polygon points='" + pts.join(" ") + "' fill='none' stroke='var(--border)' stroke-width='1'/>";
+    }
+    // axes + labels
+    for(var i = 0; i < n; i++){
+      var e = pt(i, maxV);
+      g += "<line x1='" + cx + "' y1='" + cy + "' x2='" + e[0] + "' y2='" + e[1] + "' stroke='var(--border)' stroke-width='1'/>";
+      var lp = pt(i, maxV * 1.16);
+      var short = labels[i].length > 11 ? labels[i].slice(0, 10) + "." : labels[i];
+      g += "<text x='" + lp[0] + "' y='" + lp[1] + "' font-size='8' fill='var(--muted)' text-anchor='middle'>" + short + "</text>";
+    }
+    // series polygons
+    for(var s = 0; s < series.length; s++){
+      var pts2 = [];
+      for(var i = 0; i < n; i++){ var p2 = pt(i, series[s].data[i]); pts2.push(p2[0] + "," + p2[1]); }
+      g += "<polygon points='" + pts2.join(" ") + "' fill='" + series[s].color + "' fill-opacity='0.12' stroke='" + series[s].color + "' stroke-width='2'/>";
+    }
+    g += "</svg>";
+    return g;
+  }
+  window.loadDrift = loadDrift;
+
+  // Morning Briefing card on Home.
+  function loadBriefing(){
+    if(!currentUser){ return; }
+    fetch(API + "/briefing/latest", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.briefing){ return; }
+      var card = document.getElementById("briefingCard");
+      var body = document.getElementById("briefBody");
+      var when = document.getElementById("briefWhen");
+      if(!card || !body){ return; }
+      body.textContent = d.briefing.content;
+      if(when && d.briefing.created_at){ when.textContent = new Date(d.briefing.created_at).toLocaleDateString([], {month: "short", day: "numeric"}); }
+      card.style.display = "block";
+    }).catch(function(){});
+  }
+  window.loadBriefing = loadBriefing;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
