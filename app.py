@@ -9,6 +9,7 @@ import re
 import html
 import logging
 import csv
+import threading
 import random
 import io
 from functools import wraps
@@ -3121,6 +3122,10 @@ def context():
 
 
 THEMES = {
+  # STABILIZATION: global, crypto, and macro themes are disabled until rebuilt and tested.
+  # They caused slow loads, permanent WAITING blocks, and Mandarin leaks. Re-enable by
+  # removing the triple quotes below. Data preserved intact.
+  """
   "crypto": {
     "name": "Crypto Majors",
     "explainer": "The largest cryptocurrencies by market value, priced in US dollars around the clock. Crypto trades every hour of every day, moves far more violently than stocks, and has no earnings, no CEO, and no balance sheet. The price is the entire story, driven by adoption, liquidity, and crowd conviction.",
@@ -3163,6 +3168,7 @@ THEMES = {
     "unknown": "The miners are among the highest dividend payers on earth in good commodity years, something US income investors rarely discover.",
     "tickers": ["BHP.AX","RIO.AX","CBA.AX","CSL.AX","FMG.AX","WES.AX","NAB.AX"]
   },
+  """
   "semi": {
     "name": "Semiconductor Equipment and Materials",
     "explainer": "These are the companies that build the machines and supply the special materials used to manufacture computer chips. They do not make the chips you hear about. They make the tools and the ingredients that every chipmaker needs to produce them.",
@@ -5079,8 +5085,14 @@ def themes():
     return jsonify({"themes": out})
 
 
+_DISABLED_THEMES = {"crypto", "macro", "japan", "india", "korea", "australia", "south_korea"}
+
+
 @app.route("/discover")
 def discover():
+    # STABILIZATION: disabled global themes return empty until rebuilt.
+    if (request.args.get("theme") or "").strip().lower() in _DISABLED_THEMES:
+        return jsonify({"theme": None, "results": [], "disabled": True}), 404
     key = request.args.get("theme", "").strip()
     if key not in THEMES:
         return jsonify({"error": "Unknown theme"}), 404
@@ -5443,6 +5455,93 @@ def stream_prices():
 # CHUNK: historical OHLCV data for the interactive candlestick chart. Caches heavily so Yahoo is
 # not hit too often, with a shorter window for intraday intervals. Reads the cache tuple directly,
 # the same pattern the Finnhub and portfolio caches use, so the per interval TTL works correctly.
+def detect_patterns(candles):
+    """Scan OHLC candles for the ten most common candlestick patterns. Each candle is a dict with
+    open, high, low, close. Returns a list of detected patterns with the date of the most recent
+    occurrence and a plain English meaning, plus a one line summary. Only the last stretch of
+    candles is scanned, since old patterns are not actionable. All logic is standard candlestick
+    definitions, tolerance based so real world bars register without being sloppy."""
+    if not candles or len(candles) < 3:
+        return {"patterns": [], "summary": "Not enough price history to scan for patterns."}
+
+    def body(c):
+        return abs(c["close"] - c["open"])
+
+    def rng(c):
+        return max(c["high"] - c["low"], 1e-9)
+
+    def upper_wick(c):
+        return c["high"] - max(c["open"], c["close"])
+
+    def lower_wick(c):
+        return min(c["open"], c["close"]) - c["low"]
+
+    def is_green(c):
+        return c["close"] >= c["open"]
+
+    scan = candles[-20:]
+    found = {}  # name -> {date, meaning} keeping the most recent occurrence
+
+    meanings = {
+        "Doji": "A Doji shows indecision. Buyers and sellers ended in a near tie, which often precedes a reversal or pause.",
+        "Hammer": "A Hammer is a bullish reversal pattern that often forms at the bottom of a downtrend, with a long lower wick showing buyers rejected lower prices.",
+        "Shooting Star": "A Shooting Star is a bearish reversal pattern that often forms at the top of an uptrend, with a long upper wick showing sellers rejected higher prices.",
+        "Bullish Engulfing": "A Bullish Engulfing pattern is a strong bullish signal where a green candle fully swallows the prior red candle, showing buyers taking control.",
+        "Bearish Engulfing": "A Bearish Engulfing pattern is a strong bearish signal where a red candle fully swallows the prior green candle, showing sellers taking control.",
+        "Morning Star": "A Morning Star is a three candle bullish reversal, a small indecision candle bridging a red candle and a strong green one.",
+        "Evening Star": "An Evening Star is a three candle bearish reversal, a small indecision candle bridging a green candle and a strong red one.",
+        "Bullish Harami": "A Bullish Harami is a potential bullish reversal where a small green candle sits inside the prior large red candle, hinting the downtrend is stalling.",
+        "Bearish Harami": "A Bearish Harami is a potential bearish reversal where a small red candle sits inside the prior large green candle, hinting the uptrend is stalling.",
+        "Piercing Line": "A Piercing Line is a bullish reversal where a green candle opens below the prior red candle's low but closes back above its midpoint.",
+    }
+
+    def stamp(name, c):
+        d = c.get("date") or ""
+        found[name] = {"pattern": name, "date": d, "meaning": meanings[name]}
+
+    for i in range(len(scan)):
+        c = scan[i]
+        b = body(c)
+        r = rng(c)
+        # Single candle patterns.
+        if b <= 0.1 * r:
+            stamp("Doji", c)
+        if b <= 0.35 * r and lower_wick(c) >= 2 * b and upper_wick(c) <= 0.35 * b + 1e-9:
+            stamp("Hammer", c)
+        if b <= 0.35 * r and upper_wick(c) >= 2 * b and lower_wick(c) <= 0.35 * b + 1e-9:
+            stamp("Shooting Star", c)
+        # Two candle patterns.
+        if i >= 1:
+            p = scan[i - 1]
+            pb = body(p)
+            if is_green(c) and not is_green(p) and c["close"] >= p["open"] and c["open"] <= p["close"] and b > pb:
+                stamp("Bullish Engulfing", c)
+            if not is_green(c) and is_green(p) and c["open"] >= p["close"] and c["close"] <= p["open"] and b > pb:
+                stamp("Bearish Engulfing", c)
+            if is_green(c) and not is_green(p) and b < pb * 0.6 and max(c["open"], c["close"]) <= max(p["open"], p["close"]) and min(c["open"], c["close"]) >= min(p["open"], p["close"]):
+                stamp("Bullish Harami", c)
+            if not is_green(c) and is_green(p) and b < pb * 0.6 and max(c["open"], c["close"]) <= max(p["open"], p["close"]) and min(c["open"], c["close"]) >= min(p["open"], p["close"]):
+                stamp("Bearish Harami", c)
+            if is_green(c) and not is_green(p) and c["open"] < p["low"] and c["close"] > (p["open"] + p["close"]) / 2 and c["close"] < p["open"]:
+                stamp("Piercing Line", c)
+        # Three candle patterns.
+        if i >= 2:
+            a = scan[i - 2]
+            m = scan[i - 1]
+            if not is_green(a) and body(m) <= 0.4 * rng(m) and is_green(c) and c["close"] > (a["open"] + a["close"]) / 2 and body(a) > body(m):
+                stamp("Morning Star", c)
+            if is_green(a) and body(m) <= 0.4 * rng(m) and not is_green(c) and c["close"] < (a["open"] + a["close"]) / 2 and body(a) > body(m):
+                stamp("Evening Star", c)
+
+    patterns = sorted(found.values(), key=lambda x: x["date"], reverse=True)
+    n = len(patterns)
+    if n == 0:
+        summary = "No significant patterns detected in the last %d candles." % len(scan)
+    else:
+        summary = "%d pattern%s detected in the last %d candles." % (n, "" if n == 1 else "s", len(scan))
+    return {"patterns": patterns, "summary": summary}
+
+
 @app.route("/history/<symbol>")
 def history(symbol):
     symbol = symbol.strip().upper()
@@ -5471,7 +5570,14 @@ def history(symbol):
                 "close": round(float(row["Close"]), 2),
                 "volume": int(row["Volume"]),
             })
-        payload = {"symbol": symbol, "data": data, "period": period, "interval": interval}
+        # Human readable date on each candle for the pattern scanner, then detect patterns on the
+        # daily series only (intraday bars are too noisy for candlestick reversal signals).
+        import datetime as _dt
+        for cd in data:
+            cd["date"] = _dt.datetime.utcfromtimestamp(cd["time"]).strftime("%b %d, %Y")
+        pat = detect_patterns(data) if interval == "1d" else {"patterns": [], "summary": "Pattern scan runs on the daily chart."}
+        payload = {"symbol": symbol, "data": data, "period": period, "interval": interval,
+                   "patterns": pat["patterns"], "pattern_summary": pat["summary"]}
         set_cache(cache_key, payload)
         return jsonify(payload)
     except Exception as e:
@@ -6937,6 +7043,49 @@ def paper_sell():
     finally:
         conn.close()
 # ============ END PAPER TRADING ============
+
+
+
+# ---------- Cache warmer ----------
+# Pre-fills the in-memory cache for the scan universe so common tickers never show a spinner.
+# Runs once at startup and every 30 minutes after, on a background thread. Any failure is logged
+# and skipped so a provider outage or missing database can never take the app down.
+def warm_cache():
+    warmed = 0
+    for sym in SCAN_UNIVERSE:
+        try:
+            light_score(sym)
+            compute_full_report(sym)
+            warmed += 1
+        except Exception as e:
+            logger.error("warm_cache %s: %s" % (sym, e))
+    logger.info("warm_cache: %d of %d tickers warmed" % (warmed, len(SCAN_UNIVERSE)))
+
+
+@app.route("/admin/warm-cache")
+def admin_warm_cache():
+    threading.Thread(target=warm_cache, daemon=True).start()
+    return jsonify({"warming": True, "universe": len(SCAN_UNIVERSE)})
+
+
+def _schedule_warm():
+    try:
+        threading.Thread(target=warm_cache, daemon=True).start()
+    except Exception as e:
+        logger.error("schedule_warm: %s" % e)
+    finally:
+        t = threading.Timer(1800, _schedule_warm)
+        t.daemon = True
+        t.start()
+
+
+# Kick the first warm shortly after boot so it never blocks startup or health checks.
+try:
+    _boot_timer = threading.Timer(8, _schedule_warm)
+    _boot_timer.daemon = True
+    _boot_timer.start()
+except Exception as _e:
+    logger.error("warm boot: %s" % _e)
 
 
 if __name__ == "__main__":
