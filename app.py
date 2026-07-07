@@ -6925,6 +6925,46 @@ def paper_portfolio():
     sp500_return = 0.0
     if chart_data and chart_data[-1].get("sp500_value"):
         sp500_return = (chart_data[-1]["sp500_value"] / PAPER_START_CASH - 1) * 100
+    # Guarantee at least two points so a line can always draw. When there are no trades yet, show
+    # a flat baseline from the account creation date to today: the portfolio still sits at starting
+    # cash, and the S&P line is a buy and hold of SPY with that same cash from the creation date.
+    if not chart_data or len(chart_data) < 2:
+        try:
+            cur2 = None
+            conn2 = get_db()
+            created = None
+            if conn2 is not None:
+                c2 = conn2.cursor()
+                c2.execute("SELECT created_at FROM users WHERE id = %s", (uid,))
+                cr = c2.fetchone()
+                c2.close()
+                conn2.close()
+                if cr and cr[0]:
+                    created = cr[0].date()
+            today = datetime.now().date()
+            if not created or created >= today:
+                created = today - timedelta(days=30)
+            spy_pairs = _price_pairs("SPY", created, today + timedelta(days=1))
+            start_str = created.isoformat()
+            end_str = today.isoformat()
+            if spy_pairs and len(spy_pairs) >= 2:
+                spy_first = spy_pairs[0][1]
+                spy_last = spy_pairs[-1][1]
+                sp_start = PAPER_START_CASH
+                sp_end = round(PAPER_START_CASH * (spy_last / spy_first), 2) if spy_first else PAPER_START_CASH
+                start_str = spy_pairs[0][0].isoformat()
+                end_str = spy_pairs[-1][0].isoformat()
+            else:
+                sp_start = PAPER_START_CASH
+                sp_end = PAPER_START_CASH
+            chart_data = [
+                {"date": start_str, "portfolio_value": PAPER_START_CASH, "sp500_value": sp_start},
+                {"date": end_str, "portfolio_value": round(total_value, 2), "sp500_value": sp_end},
+            ]
+            if sp_start:
+                sp500_return = (sp_end / sp_start - 1) * 100
+        except Exception as e:
+            logger.error("paper baseline chart: %s" % e)
 
     result = {
         "cash": round(cash, 2),
