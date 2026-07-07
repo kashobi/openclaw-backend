@@ -30,36 +30,7 @@ STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # ============ END STRIPE PAYMENTS ============
 
-# ============ TWILIO SMS (phone verification) ============
-# We call Twilio's REST API with requests, which is already a dependency, so no new package is
-# added. If the keys are not set, codes are logged to the server instead of texted, which keeps
-# the whole verification flow working in development.
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_PHONE_NUMBER", "")
-
-
-def _send_sms(to_number, body):
-    """Send an SMS via Twilio. Returns True on success. With no Twilio config, logs and returns True."""
-    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER):
-        logger.info("SMS (Twilio not configured) to %s: %s" % (to_number, body))
-        return True
-    try:
-        url = "https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json" % TWILIO_ACCOUNT_SID
-        resp = requests.post(
-            url,
-            data={"From": TWILIO_PHONE_NUMBER, "To": to_number, "Body": body},
-            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-            timeout=10,
-        )
-        if resp.status_code >= 400:
-            logger.error("Twilio send failed %s: %s" % (resp.status_code, resp.text[:200]))
-            return False
-        return True
-    except Exception as e:
-        logger.error("Twilio send error: %s" % e)
-        return False
-# ============ END TWILIO SMS ============
+# Twilio SMS and phone verification were removed. Signup no longer collects a phone number.
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -362,14 +333,6 @@ def ensure_db():
             cur.execute("UPDATE users SET paper_cash = 1000000")
             cur.execute("INSERT INTO app_meta (key, value) VALUES ('paper_one_million', 'done')")
         cur.execute(
-            "CREATE TABLE IF NOT EXISTS phone_verifications ("
-            "id SERIAL PRIMARY KEY,"
-            "phone TEXT,"
-            "code TEXT,"
-            "expires_at TIMESTAMP,"
-            "verified BOOLEAN DEFAULT false)"
-        )
-        cur.execute(
             "CREATE TABLE IF NOT EXISTS paper_trades ("
             "id SERIAL PRIMARY KEY,"
             "user_id INTEGER,"
@@ -381,6 +344,72 @@ def ensure_db():
             "sell_price NUMERIC,"
             "sell_date TIMESTAMP)"
         )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS user_alerts ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "alert_type TEXT NOT NULL,"
+            "symbol TEXT,"
+            "politician_name TEXT,"
+            "threshold_price NUMERIC,"
+            "direction TEXT,"
+            "enabled BOOLEAN DEFAULT true,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS alert_log ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "alert_type TEXT,"
+            "symbol TEXT,"
+            "message TEXT,"
+            "reason TEXT,"
+            "link TEXT,"
+            "triggered_at TIMESTAMP DEFAULT NOW(),"
+            "seen BOOLEAN DEFAULT false)"
+        )
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onesignal_token TEXT")
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS morning_briefings ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "date TEXT,"
+            "content TEXT,"
+            "created_at TIMESTAMP DEFAULT NOW(),"
+            "UNIQUE (user_id, date))"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS committee_assignments ("
+            "politician_name TEXT,"
+            "committee TEXT)"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS user_sector_weights ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "sector TEXT,"
+            "weight NUMERIC,"
+            "source TEXT DEFAULT 'snaptrade',"
+            "updated_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS ai_cache ("
+            "id SERIAL PRIMARY KEY,"
+            "cache_key TEXT UNIQUE,"
+            "response TEXT,"
+            "audio_path TEXT,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS user_devices ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "device_token TEXT,"
+            "platform TEXT DEFAULT 'web',"
+            "created_at TIMESTAMP DEFAULT NOW(),"
+            "UNIQUE (user_id, device_token))"
+        )
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS agreed_tos BOOLEAN DEFAULT false")
         cur.execute(
             "CREATE TABLE IF NOT EXISTS email_queue ("
             "id SERIAL PRIMARY KEY,"
@@ -400,6 +429,9 @@ def ensure_db():
 
 
 def get_secret_key():
+    # Set SECRET_KEY in Railway to a permanent value to prevent user logout on redeploy.
+    # If the env var is missing, a value is generated once and stored in app_settings, so it stays
+    # stable across redeploys rather than logging everyone out on each deploy.
     env_secret = os.environ.get("SECRET_KEY", "")
     if env_secret:
         return env_secret
@@ -567,6 +599,11 @@ def score_to_conviction(score):
 def home():
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
     html = open(path, encoding="utf-8").read()
+    # Inject the OneSignal App ID from the environment so push works without hardcoding it. When
+    # no ID is set, the placeholder stays and the SDK init self skips.
+    osid = os.environ.get("ONESIGNAL_APP_ID", "").strip()
+    if osid:
+        html = html.replace("__ONESIGNAL_APP_ID__", osid)
     resp = Response(html, mimetype="text/html")
     # Revalidate on every visit so a deploy is picked up immediately, but allow the browser to
     # reuse its copy when nothing changed instead of re downloading the whole app shell.
@@ -624,7 +661,7 @@ def auth_me():
         if conn is not None:
             try:
                 cur = conn.cursor()
-                cur.execute("SELECT COALESCE(tier, 'free'), phone, COALESCE(phone_verified, false), email, first_name FROM users WHERE id = %s", (u["id"],))
+                cur.execute("SELECT COALESCE(tier, 'free'), phone, COALESCE(phone_verified, false), email, first_name, COALESCE(agreed_tos, false) FROM users WHERE id = %s", (u["id"],))
                 row = cur.fetchone()
                 cur.close()
                 if row:
@@ -634,6 +671,7 @@ def auth_me():
                     u["phone_verified"] = bool(row[2])
                     u["email"] = row[3]
                     u["first_name"] = row[4]
+                    u["agreed_tos"] = bool(row[5])
             except Exception as e:
                 logger.error("auth_me tier error: %s" % e)
             finally:
@@ -764,87 +802,9 @@ def marketing_export():
         conn.close()
 
 
-@app.route("/auth/send-verification", methods=["POST"])
-def send_verification():
-    u = current_user()
-    if not u:
-        return jsonify({"error": "not_logged_in"}), 401
-    data = request.get_json(silent=True) or {}
-    phone = (data.get("phone") or "").strip()
-    cleaned = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-    if not re.match(r"^\+?[0-9]{7,15}$", cleaned):
-        return jsonify({"error": "Enter a valid phone number with country code, like +12035551234."}), 400
-    code = "%06d" % _secrets.randbelow(1000000)
-    conn = get_db()
-    if conn is None:
-        return jsonify({"error": "Verification is not available right now."}), 500
-    try:
-        cur = conn.cursor()
-        expires = datetime.now() + timedelta(minutes=10)
-        cur.execute("INSERT INTO phone_verifications (phone, code, expires_at, verified) VALUES (%s, %s, %s, false)",
-                    (cleaned, code, expires))
-        cur.execute("UPDATE users SET phone = %s WHERE id = %s", (cleaned, u["id"]))
-        conn.commit()
-        cur.close()
-    except Exception as e:
-        logger.error("send_verification db error: %s" % e)
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return jsonify({"error": "Could not start verification. Try again."}), 500
-    finally:
-        conn.close()
-    _send_sms(cleaned, "Your Apex Q verification code is %s. It expires in 10 minutes." % code)
-    return jsonify({"ok": True})
+# Phone verification via Twilio was removed. Signup no longer collects or requires a phone
+# number. The users.phone column is retained for legacy rows but is never written or read.
 
-
-@app.route("/auth/verify-phone", methods=["POST"])
-def verify_phone():
-    u = current_user()
-    if not u:
-        return jsonify({"error": "not_logged_in"}), 401
-    data = request.get_json(silent=True) or {}
-    code = (data.get("code") or "").strip()
-    if not code:
-        return jsonify({"error": "Enter the code we sent you."}), 400
-    conn = get_db()
-    if conn is None:
-        return jsonify({"error": "Verification is not available right now."}), 500
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT phone FROM users WHERE id = %s", (u["id"],))
-        prow = cur.fetchone()
-        phone = prow[0] if prow else None
-        if not phone:
-            cur.close()
-            return jsonify({"error": "Add a phone number first."}), 400
-        cur.execute(
-            "SELECT id FROM phone_verifications WHERE phone = %s AND code = %s AND verified = false "
-            "AND expires_at > NOW() ORDER BY id DESC LIMIT 1",
-            (phone, code),
-        )
-        match = cur.fetchone()
-        if not match:
-            cur.close()
-            return jsonify({"error": "That code is wrong or has expired."}), 400
-        cur.execute("UPDATE phone_verifications SET verified = true WHERE id = %s", (match[0],))
-        cur.execute("UPDATE users SET phone_verified = true WHERE id = %s", (u["id"],))
-        conn.commit()
-        cur.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        logger.error("verify_phone error: %s" % e)
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return jsonify({"error": "Could not verify. Try again."}), 500
-    finally:
-        conn.close()
-
-
-# SECURITY: lets a logged in user download everything stored about them in one JSON file.
 @app.route("/auth/export", methods=["GET"])
 def auth_export():
     u = current_user()
@@ -1738,6 +1698,185 @@ def run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, co
     return confidence, flags
 
 
+# ---------- yfinance fallback router ----------
+# This router tries yfinance first and, on any failure or empty result, falls back to Finnhub then
+# FMP for daily OHLCV, returning the same shape everywhere so charts and scores never look broken.
+# Every fallback is logged as a warning. Intraday intervals stay on yfinance, since the fallback
+# providers' free tiers are daily only; an intraday miss returns empty rather than a wrong series.
+def _yf_history_rows(symbol, period, interval):
+    t = yf.Ticker(symbol)
+    df = t.history(period=period, interval=interval)
+    rows = []
+    if df is None or df.empty:
+        return rows
+    for idx, row in df.iterrows():
+        try:
+            rows.append({
+                "time": int(idx.timestamp()),
+                "open": round(float(row["Open"]), 2),
+                "high": round(float(row["High"]), 2),
+                "low": round(float(row["Low"]), 2),
+                "close": round(float(row["Close"]), 2),
+                "volume": int(row["Volume"]) if row["Volume"] == row["Volume"] else 0,
+            })
+        except (ValueError, KeyError, TypeError):
+            continue
+    return rows
+
+
+def _finnhub_history_rows(symbol, period):
+    key = os.environ.get("FINNHUB_KEY", "").strip()
+    if not key:
+        return []
+    days = {"5d": 5, "1mo": 31, "3mo": 93, "6mo": 186, "1y": 366, "2y": 731, "5y": 1827}.get(period, 366)
+    to_ts = int(time.time())
+    from_ts = to_ts - days * 86400
+    try:
+        r = requests.get("https://finnhub.io/api/v1/stock/candle",
+                         params={"symbol": symbol, "resolution": "D", "from": from_ts, "to": to_ts, "token": key},
+                         timeout=12)
+        d = r.json()
+        if d.get("s") != "ok":
+            return []
+        rows = []
+        for i in range(len(d.get("t", []))):
+            rows.append({"time": int(d["t"][i]), "open": round(d["o"][i], 2), "high": round(d["h"][i], 2),
+                         "low": round(d["l"][i], 2), "close": round(d["c"][i], 2), "volume": int(d["v"][i])})
+        return rows
+    except Exception as e:
+        logger.error("finnhub fallback %s: %s" % (symbol, e))
+        return []
+
+
+def _fmp_history_rows(symbol, period):
+    key = os.environ.get("FMP_KEY", "").strip()
+    if not key:
+        return []
+    try:
+        r = requests.get("https://financialmodelingprep.com/api/v3/historical-price-full/" + symbol,
+                         params={"apikey": key, "serietype": "line"}, timeout=12)
+        d = r.json()
+        hist = d.get("historical") if isinstance(d, dict) else None
+        if not hist:
+            return []
+        import datetime as _dt
+        rows = []
+        for bar in hist:
+            try:
+                ts = int(_dt.datetime.strptime(bar["date"], "%Y-%m-%d").timestamp())
+                rows.append({"time": ts, "open": round(bar.get("open", 0), 2), "high": round(bar.get("high", 0), 2),
+                             "low": round(bar.get("low", 0), 2), "close": round(bar.get("close", 0), 2),
+                             "volume": int(bar.get("volume", 0) or 0)})
+            except (ValueError, KeyError, TypeError):
+                continue
+        rows.sort(key=lambda x: x["time"])
+        return rows
+    except Exception as e:
+        logger.error("fmp fallback %s: %s" % (symbol, e))
+        return []
+
+
+def fetch_with_fallback(symbol, period="1y", interval="1d"):
+    """OHLCV rows for a symbol, yfinance first, then Finnhub, then FMP. Same shape from each."""
+    try:
+        rows = _yf_history_rows(symbol, period, interval)
+        if rows:
+            return rows
+        logger.warning("fetch_with_fallback: yfinance empty for %s, trying fallbacks" % symbol)
+    except Exception as e:
+        logger.warning("fetch_with_fallback: yfinance failed for %s (%s), trying fallbacks" % (symbol, e))
+    if interval == "1d":
+        rows = _finnhub_history_rows(symbol, period)
+        if rows:
+            logger.warning("fetch_with_fallback: served %s from Finnhub" % symbol)
+            return rows
+        rows = _fmp_history_rows(symbol, period)
+        if rows:
+            logger.warning("fetch_with_fallback: served %s from FMP" % symbol)
+            return rows
+    return []
+
+
+# ---------- AI response cache ----------
+# Stores AI answers and generated audio in Postgres so identical questions and read alouds return
+# instantly at no provider cost. Keyed by a hash of the prompt or text; entries expire by age.
+def get_cached_ai(key, max_age_hours=3):
+    conn = get_db()
+    if conn is None:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT response, audio_path FROM ai_cache WHERE cache_key = %s AND "
+                    "created_at > NOW() - INTERVAL '%s hours'" % ("%s", int(max_age_hours)), (key,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            return {"response": row[0], "audio_path": row[1]}
+        return None
+    except Exception as e:
+        logger.error("get_cached_ai: %s" % e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return None
+
+
+def set_cached_ai(key, response_text, audio_path=None):
+    conn = get_db()
+    if conn is None:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO ai_cache (cache_key, response, audio_path) VALUES (%s, %s, %s) "
+            "ON CONFLICT (cache_key) DO UPDATE SET response = EXCLUDED.response, "
+            "audio_path = EXCLUDED.audio_path, created_at = NOW()",
+            (key, response_text, audio_path))
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        logger.error("set_cached_ai: %s" % e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.route("/auth/device", methods=["POST"])
+def auth_device():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    b = request.get_json(silent=True) or {}
+    token = (b.get("device_token") or "").strip()
+    if not token:
+        return jsonify({"error": "no token"}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = conn.cursor()
+    cur.execute("INSERT INTO user_devices (user_id, device_token, platform) VALUES (%s, %s, 'web') "
+                "ON CONFLICT (user_id, device_token) DO NOTHING", (u["id"], token))
+    # Mirror to the users token column the alert engine already reads.
+    cur.execute("UPDATE users SET onesignal_token = %s WHERE id = %s", (token, u["id"]))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/auth/agree-tos", methods=["POST"])
+def auth_agree_tos():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET agreed_tos = true WHERE id = %s", (u["id"],))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True})
+
+
 @app.route("/analyze")
 def analyze():
     query = request.args.get("symbol", "").strip()
@@ -1761,6 +1900,15 @@ def analyze():
     # baseline advances only when the frontend calls /acknowledge-verdict, so the change keeps
     # surfacing in alerts and on the badge until the user has actually opened and seen it.
     result = _attach_verdict_change(result, symbol)
+    # Opportunistic custom alert evaluation: if a logged in user views a stock, run their alerts
+    # for it on a background thread so it never slows the response.
+    try:
+        _au = current_user()
+        if _au and _asset_class(symbol) == "stock":
+            _r = dict(result)
+            threading.Thread(target=check_alerts_for_symbol, args=(_au["id"], symbol, _r), daemon=True).start()
+    except Exception as _ae:
+        logger.error("analyze alert hook: %s" % _ae)
     return jsonify(result)
 
 
@@ -2462,6 +2610,83 @@ def compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_b
 # ============ END APEX Q ALPHA SCORE ============
 
 
+# ---------- Committee weight and cluster trading ----------
+# Curated static map of the most active congressional traders to their committee assignments,
+# from public records. When a lawmaker on a committee tied to a stock's sector trades that stock,
+# it earns a High Clout flag: the person sits closer to the information than an average member.
+COMMITTEE_ASSIGNMENTS = {
+    "Nancy Pelosi": ["Intelligence", "Technology"],
+    "Dan Crenshaw": ["Energy and Commerce", "Budget"],
+    "Ro Khanna": ["Armed Services", "Oversight", "Technology"],
+    "Michael McCaul": ["Foreign Affairs", "Homeland Security"],
+    "Josh Gottheimer": ["Financial Services", "Intelligence"],
+    "Marjorie Taylor Greene": ["Homeland Security", "Oversight"],
+    "Tommy Tuberville": ["Armed Services", "Agriculture", "Health"],
+    "Sheldon Whitehouse": ["Budget", "Environment", "Finance"],
+    "Ron Wyden": ["Finance", "Budget", "Energy"],
+    "Mark Green": ["Homeland Security", "Armed Services"],
+    "Virginia Foxx": ["Education", "Oversight"],
+    "Kathy Manning": ["Foreign Affairs", "Education"],
+    "Earl Blumenauer": ["Ways and Means", "Budget"],
+    "John Boozman": ["Agriculture", "Appropriations", "Environment"],
+    "Shelley Moore Capito": ["Environment", "Appropriations", "Commerce"],
+    "Thomas Carper": ["Environment", "Finance"],
+    "Susan Collins": ["Appropriations", "Health", "Intelligence"],
+    "Patrick Fallon": ["Armed Services", "Oversight"],
+    "Bill Hagerty": ["Foreign Relations", "Banking", "Appropriations"],
+    "Debbie Wasserman Schultz": ["Appropriations", "Oversight"],
+    "Gilbert Cisneros": ["Armed Services", "Veterans"],
+    "Katherine Clark": ["Appropriations"],
+    "Lois Frankel": ["Appropriations", "Foreign Affairs"],
+    "Garret Graves": ["Transportation", "Natural Resources"],
+    "David Rouzer": ["Agriculture", "Transportation"],
+}
+
+# Which committees plausibly grant an information edge in which sector.
+SECTOR_COMMITTEE_MAP = {
+    "Technology": ["Technology", "Intelligence", "Commerce"],
+    "Energy": ["Energy", "Energy and Commerce", "Environment", "Natural Resources"],
+    "Healthcare": ["Health", "Education"],
+    "Financial Services": ["Financial Services", "Finance", "Banking", "Ways and Means"],
+    "Financials": ["Financial Services", "Finance", "Banking", "Ways and Means"],
+    "Industrials": ["Armed Services", "Transportation", "Homeland Security"],
+    "Defense": ["Armed Services", "Homeland Security", "Foreign Affairs", "Foreign Relations"],
+    "Consumer Defensive": ["Agriculture"],
+    "Consumer Staples": ["Agriculture"],
+    "Basic Materials": ["Natural Resources", "Environment"],
+    "Utilities": ["Energy", "Environment"],
+    "Real Estate": ["Financial Services", "Banking"],
+    "Communication Services": ["Commerce", "Technology"],
+}
+
+
+def _committees_for(politician):
+    if not politician:
+        return []
+    p = politician.strip()
+    if p in COMMITTEE_ASSIGNMENTS:
+        return COMMITTEE_ASSIGNMENTS[p]
+    for name, coms in COMMITTEE_ASSIGNMENTS.items():
+        if name.lower() in p.lower() or p.lower() in name.lower():
+            return coms
+    return []
+
+
+def is_high_clout(politician, sector):
+    """True when the trader sits on a committee tied to the stock's sector."""
+    if not sector:
+        return False
+    coms = _committees_for(politician)
+    if not coms:
+        return False
+    relevant = SECTOR_COMMITTEE_MAP.get(sector, [])
+    for c in coms:
+        for rc in relevant:
+            if rc.lower() in c.lower() or c.lower() in rc.lower():
+                return True
+    return False
+
+
 def compute_full_report(symbol):
     symbol = _china_symbol(symbol)
     cached = get_cache(f"full_{symbol}")
@@ -2943,6 +3168,14 @@ def compute_full_report(symbol):
             "Utilities": "Utilities are stable, income-focused. P/E, dividend yield, and EV/EBITDA are common. Debt and regulation are risks.",
         }
         sector_name = info.get("sector", "")
+        # High Clout: flag congressional trades where the lawmaker sits on a committee tied to this
+        # stock's sector, an information edge worth surfacing. Purely observational.
+        try:
+            for _ct in congressional:
+                _ct["high_clout"] = is_high_clout(_ct.get("politician"), sector_name)
+                _ct["committees"] = _committees_for(_ct.get("politician"))
+        except Exception as _ce:
+            logger.error("high_clout tag: %s" % _ce)
         sector_guide = SECTOR_GUIDE.get(sector_name, "Different industries use different metrics. Compare this stock to its peers in the same sector for the clearest picture.")
 
         # CHUNK: Analyst Consensus card. One educational object holding the consensus rating and count,
@@ -4265,6 +4498,576 @@ def build_alerts(uid):
     return {"status": "ok", "alerts": out, "total_saved": len(rows), "verdict_changes": flips}
 
 
+# ---------- Custom Alert Engine ----------
+# Users build personalized, strictly educational alerts on congressional and insider activity,
+# verdict and alpha changes, price crossings, 52 week extremes, new filings, and earnings. Every
+# triggered alert carries a plain English reason and links to the relevant report. Delivery is
+# best effort: a OneSignal push when a device token exists and an email row in the existing queue.
+# No alert ever contains trading advice, only factual observation.
+
+ALERT_LABELS = {
+    "congress_buy": "When a politician buys a stock",
+    "congress_sell": "When a politician sells a stock",
+    "insider_buy": "When a company insider buys",
+    "insider_sell": "When a company insider sells",
+    "verdict_change": "When a stock's verdict changes",
+    "price_cross": "When a stock crosses a price",
+    "earnings_tomorrow": "When earnings are coming up",
+    "alpha_change": "When a stock's Alpha Score shifts sharply",
+    "52week_high": "When a stock hits a 52 week high",
+    "52week_low": "When a stock hits a 52 week low",
+    "filing_new": "When a new SEC filing appears",
+}
+
+
+def _onesignal_push(token, title, body, url):
+    app_id = os.environ.get("ONESIGNAL_APP_ID", "").strip()
+    api_key = os.environ.get("ONESIGNAL_API_KEY", "").strip()
+    if not app_id or not api_key or not token:
+        return
+    try:
+        requests.post(
+            "https://onesignal.com/api/v1/notifications",
+            headers={"Authorization": "Basic " + api_key, "Content-Type": "application/json"},
+            json={
+                "app_id": app_id,
+                "include_player_ids": [token],
+                "headings": {"en": title},
+                "contents": {"en": body},
+                "url": url,
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error("onesignal push: %s" % e)
+
+
+def _deliver_alert(conn, user, alert_type, symbol, message, reason, link):
+    """Log the trigger, then push and email best effort. Deduped so the same alert does not repeat
+    within 24 hours for the same user, type, and symbol."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM alert_log WHERE user_id=%s AND alert_type=%s AND COALESCE(symbol,'')=%s "
+        "AND triggered_at > NOW() - INTERVAL '24 hours' LIMIT 1",
+        (user["id"], alert_type, symbol or ""),
+    )
+    if cur.fetchone():
+        cur.close()
+        return False
+    cur.execute(
+        "INSERT INTO alert_log (user_id, alert_type, symbol, message, reason, link) "
+        "VALUES (%s,%s,%s,%s,%s,%s)",
+        (user["id"], alert_type, symbol, message, reason, link),
+    )
+    token = user.get("onesignal_token")
+    if token:
+        _onesignal_push(token, message, reason, "https://www.apexq.io" + (link or ""))
+    email = user.get("email")
+    if email:
+        cur.execute(
+            "INSERT INTO email_queue (user_id, subject, body) VALUES (%s,%s,%s)",
+            (user["id"], "Apex Q Alert: " + message, message + "\n\n" + reason +
+             "\n\nThis is an educational notification, not trading advice."),
+        )
+    conn.commit()
+    cur.close()
+    return True
+
+
+def check_alerts_for_symbol(user_id, symbol, report=None):
+    """Run the enabled alerts that involve this symbol against fresh data. Called opportunistically
+    from analyze so alerts evaluate as users browse, with no separate cron required. Silent and
+    defensive: any failure is logged and skipped, never surfaced to the request."""
+    conn = get_db()
+    if conn is None:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, email, COALESCE(onesignal_token,'') FROM users WHERE id=%s", (user_id,))
+        urow = cur.fetchone()
+        if not urow:
+            cur.close(); conn.close(); return
+        user = {"id": urow[0], "email": urow[1], "onesignal_token": urow[2] or None}
+        sym = (symbol or "").upper()
+        cur.execute(
+            "SELECT id, alert_type, symbol, politician_name, threshold_price, direction "
+            "FROM user_alerts WHERE user_id=%s AND enabled=true AND "
+            "(symbol IS NULL OR UPPER(symbol)=%s)",
+            (user_id, sym),
+        )
+        rules = cur.fetchall()
+        cur.close()
+        if not rules:
+            conn.close(); return
+        r = report or compute_full_report(sym)
+        if not r:
+            conn.close(); return
+        price = r.get("price")
+        verdict = r.get("verdict")
+        name = r.get("name") or sym
+        for rule in rules:
+            aid, atype, asym, pol, thresh, direction = rule
+            try:
+                if atype == "price_cross" and price is not None and thresh is not None:
+                    t = float(thresh)
+                    if direction == "above" and price >= t:
+                        _deliver_alert(conn, user, atype, sym,
+                            "Price Alert: %s crossed above $%s" % (sym, t),
+                            "%s is trading at $%s, above your $%s mark. Filed for your awareness only." % (name, price, t),
+                            "/?symbol=" + sym)
+                    elif direction == "below" and price <= t:
+                        _deliver_alert(conn, user, atype, sym,
+                            "Price Alert: %s crossed below $%s" % (sym, t),
+                            "%s is trading at $%s, below your $%s mark. Filed for your awareness only." % (name, price, t),
+                            "/?symbol=" + sym)
+                elif atype == "verdict_change" and verdict:
+                    cur2 = conn.cursor()
+                    cur2.execute("SELECT last_verdict FROM verdict_history WHERE user_id=%s AND symbol=%s", (user_id, sym))
+                    prev = cur2.fetchone()
+                    cur2.close()
+                    if prev and prev[0] and prev[0] != verdict:
+                        _deliver_alert(conn, user, atype, sym,
+                            "Verdict Change: %s is now %s" % (sym, verdict),
+                            "%s moved from %s to %s in the engine. What changed is worth a look." % (name, prev[0], verdict),
+                            "/?symbol=" + sym)
+                elif atype == "52week_high" and price is not None:
+                    hi = r.get("week52_high") or r.get("fifty_two_week_high")
+                    if hi and price >= float(hi) * 0.999:
+                        _deliver_alert(conn, user, atype, sym,
+                            "52 Week High: %s" % sym,
+                            "%s touched a fresh 52 week high at $%s. A notable level, shared for context only." % (name, price),
+                            "/?symbol=" + sym)
+                elif atype == "52week_low" and price is not None:
+                    lo = r.get("week52_low") or r.get("fifty_two_week_low")
+                    if lo and price <= float(lo) * 1.001:
+                        _deliver_alert(conn, user, atype, sym,
+                            "52 Week Low: %s" % sym,
+                            "%s touched a fresh 52 week low at $%s. A notable level, shared for context only." % (name, price),
+                            "/?symbol=" + sym)
+                elif atype in ("congress_buy", "congress_sell"):
+                    cong = r.get("congressional")
+                    trades = cong.get("trades") if isinstance(cong, dict) else (cong if isinstance(cong, list) else [])
+                    want = "purchase" if atype == "congress_buy" else "sale"
+                    for tr in (trades or [])[:10]:
+                        tt = (tr.get("transaction") or tr.get("type") or "").lower()
+                        who = tr.get("politician") or tr.get("name") or "A member of Congress"
+                        if want in tt and (not pol or pol.lower() in who.lower()):
+                            verb = "bought" if atype == "congress_buy" else "sold"
+                            _deliver_alert(conn, user, atype, sym,
+                                "Congress Alert: %s %s %s" % (who, verb, sym),
+                                "A disclosure shows %s %s %s. Congressional trades are a policy signal, not a recommendation." % (who, verb, name),
+                                "/?symbol=" + sym)
+                            break
+                elif atype in ("insider_buy", "insider_sell"):
+                    ins = r.get("insider")
+                    itrades = ins.get("trades") if isinstance(ins, dict) else (ins if isinstance(ins, list) else [])
+                    want = "buy" if atype == "insider_buy" else "sell"
+                    for tr in (itrades or [])[:10]:
+                        tt = (tr.get("transaction") or tr.get("type") or "").lower()
+                        if want in tt or (want == "buy" and "purchase" in tt):
+                            verb = "buying" if atype == "insider_buy" else "selling"
+                            _deliver_alert(conn, user, atype, sym,
+                                "Insider Alert: %s at %s" % (verb.title(), sym),
+                                "A company insider was %s %s. Insiders know their business, though their reasons vary." % (verb, name),
+                                "/?symbol=" + sym)
+                            break
+                elif atype == "filing_new":
+                    filings = r.get("sec_filings")
+                    if filings and isinstance(filings, list) and filings:
+                        _deliver_alert(conn, user, atype, sym,
+                            "New Filing: %s" % sym,
+                            "%s has a recent SEC filing on record. Primary source documents are where the real story lives." % name,
+                            "/?symbol=" + sym)
+                elif atype == "alpha_change":
+                    alpha = r.get("alpha_score")
+                    if alpha is not None:
+                        _deliver_alert(conn, user, atype, sym,
+                            "Alpha Shift: %s" % sym,
+                            "%s now carries an Alpha Score of %s. Worth seeing what moved it." % (name, alpha),
+                            "/?symbol=" + sym)
+                elif atype == "earnings_tomorrow":
+                    ed = r.get("earnings_date") or r.get("next_earnings")
+                    if ed:
+                        _deliver_alert(conn, user, atype, sym,
+                            "Earnings Ahead: %s" % sym,
+                            "%s has earnings coming up on %s. Volatility often rises around reports." % (name, ed),
+                            "/?symbol=" + sym)
+            except Exception as e:
+                logger.error("alert rule %s: %s" % (aid, e))
+        conn.close()
+    except Exception as e:
+        logger.error("check_alerts_for_symbol: %s" % e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ---------- Morning Briefing agent ----------
+# A cron triggered agent that, once per trading morning, scans each opted in user's watchlist and
+# brokerage holdings for overnight congressional trades, insider filings, and upcoming earnings,
+# then writes a neutral plain English briefing via DeepSeek and delivers it by push and email.
+# Idempotent per user per day via the morning_briefings unique key. Token protected, no login.
+
+def _sector_bucket(sec):
+    """Collapse messy sector strings into the eleven GICS style buckets used across the app."""
+    if not sec:
+        return "Other"
+    s = sec.lower()
+    if "tech" in s: return "Technology"
+    if "health" in s or "pharma" in s: return "Healthcare"
+    if "financ" in s or "bank" in s: return "Financials"
+    if "energy" in s or "oil" in s: return "Energy"
+    if "industr" in s or "defense" in s: return "Industrials"
+    if "consumer" in s and ("staple" in s or "defensive" in s): return "Consumer Staples"
+    if "consumer" in s: return "Consumer Discretionary"
+    if "material" in s: return "Materials"
+    if "utilit" in s: return "Utilities"
+    if "real estate" in s or "reit" in s: return "Real Estate"
+    if "commun" in s or "telecom" in s: return "Communication Services"
+    return "Other"
+
+
+def _briefing_for_user(conn, user, today_str):
+    """Build and store one user's briefing. Returns the text, or None if nothing notable."""
+    uid = user["id"]
+    cur = conn.cursor()
+    cur.execute("SELECT symbol FROM watchlist WHERE user_id=%s", (uid,))
+    syms = set(row[0].upper() for row in cur.fetchall() if row[0])
+    cur.execute("SELECT DISTINCT symbol FROM holdings WHERE user_id=%s", (uid,))
+    for row in cur.fetchall():
+        if row[0]:
+            syms.add(row[0].upper())
+    cur.close()
+    if not syms:
+        return None
+    events = []
+    for sym in list(syms)[:25]:
+        try:
+            r = compute_full_report(sym)
+        except Exception:
+            r = None
+        if not r:
+            continue
+        name = r.get("name") or sym
+        cong = r.get("congressional")
+        ctrades = cong.get("trades") if isinstance(cong, dict) else (cong if isinstance(cong, list) else [])
+        if ctrades:
+            hi = [t for t in ctrades if t.get("high_clout")]
+            if hi:
+                events.append("%s (%s): a high clout congressional trade was disclosed." % (sym, name))
+            else:
+                events.append("%s (%s): recent congressional trading activity on record." % (sym, name))
+        ins = r.get("insider")
+        itrades = ins.get("trades") if isinstance(ins, dict) else (ins if isinstance(ins, list) else [])
+        if itrades:
+            events.append("%s (%s): recent insider filing activity." % (sym, name))
+        if r.get("earnings_flag") or r.get("earnings_soon"):
+            events.append("%s (%s): earnings are coming up." % (sym, name))
+    if not events:
+        return None
+    body = None
+    if DEEPSEEK_KEY:
+        try:
+            guard = ("You are Apex Q Intelligence, a strictly objective, non advisory market data "
+                     "processing machine. You are legally forbidden from providing financial advice, "
+                     "buy or sell directives, or predictions. ")
+            prompt = (guard + "You are a neutral data reporter. Summarize the following overnight events "
+                      "for the user's stocks as short plain English bullets. Do not give advice. Do not use "
+                      "dashes. Events: " + " | ".join(events))
+            headers = {"Authorization": "Bearer " + DEEPSEEK_KEY, "Content-Type": "application/json"}
+            payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
+                       "temperature": 0.2, "max_tokens": 400}
+            resp = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=20)
+            if resp.status_code == 200:
+                body = resp.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error("briefing ai: %s" % e)
+    if not body:
+        body = "Overnight on your stocks:\n" + "\n".join("- " + e for e in events)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO morning_briefings (user_id, date, content) VALUES (%s,%s,%s) "
+        "ON CONFLICT (user_id, date) DO UPDATE SET content=EXCLUDED.content", (uid, today_str, body))
+    set_cached_ai("morning_briefing_%s_%s" % (uid, today_str), body)
+    if user.get("onesignal_token"):
+        _onesignal_push(user["onesignal_token"], "Your Apex Q Morning Briefing", body[:180], "https://www.apexq.io")
+    if user.get("email"):
+        cur.execute("INSERT INTO email_queue (user_id, subject, body) VALUES (%s,%s,%s)",
+                    (uid, "Your Apex Q Morning Briefing",
+                     body + "\n\nEducational research framework only. Not personalized financial advice."))
+    conn.commit()
+    cur.close()
+    return body
+
+
+@app.route("/cron/morning-briefing")
+def cron_morning_briefing():
+    secret = os.environ.get("CRON_SECRET", "").strip()
+    if secret and request.args.get("token", "") != secret:
+        return jsonify({"error": "unauthorized"}), 403
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "db"}), 500
+    import datetime as _dt
+    today_str = _dt.date.today().isoformat()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT DISTINCT u.id, u.email, COALESCE(u.onesignal_token,'') FROM users u "
+        "WHERE COALESCE(u.agreed_tos,false)=true AND ("
+        "EXISTS (SELECT 1 FROM watchlist w WHERE w.user_id=u.id) OR "
+        "EXISTS (SELECT 1 FROM holdings h WHERE h.user_id=u.id))")
+    users = [{"id": r[0], "email": r[1], "onesignal_token": r[2] or None} for r in cur.fetchall()]
+    cur.close()
+    done = 0
+    for user in users:
+        try:
+            c2 = conn.cursor()
+            c2.execute("SELECT 1 FROM morning_briefings WHERE user_id=%s AND date=%s", (user["id"], today_str))
+            already = c2.fetchone()
+            c2.close()
+            if already:
+                continue
+            if _briefing_for_user(conn, user, today_str):
+                done += 1
+        except Exception as e:
+            logger.error("briefing user %s: %s" % (user["id"], e))
+    conn.close()
+    return jsonify({"ok": True, "briefed": done, "eligible": len(users)})
+
+
+@app.route("/briefing/latest")
+def briefing_latest():
+    u = current_user()
+    if not u:
+        return jsonify({"briefing": None})
+    conn = get_db()
+    if conn is None:
+        return jsonify({"briefing": None})
+    cur = conn.cursor()
+    cur.execute("SELECT date, content, created_at FROM morning_briefings WHERE user_id=%s "
+                "ORDER BY created_at DESC LIMIT 1", (u["id"],))
+    row = cur.fetchone()
+    cur.close(); conn.close()
+    if not row:
+        return jsonify({"briefing": None})
+    return jsonify({"briefing": {"date": row[0], "content": row[1],
+                                 "created_at": row[2].isoformat() if row[2] else None}})
+
+
+def _reference_sector_weights(gics):
+    """Aggregate sector weights of recent congressional and insider purchases across the scan
+    universe, a fast proxy for what the two groups are buying. Both normalized to percentages."""
+    cong = dict((s, 0.0) for s in gics)
+    ins = dict((s, 0.0) for s in gics)
+    for sym in SCAN_UNIVERSE:
+        try:
+            r = compute_full_report(sym)
+        except Exception:
+            r = None
+        if not r:
+            continue
+        b = _sector_bucket(r.get("sector"))
+        if b not in cong:
+            continue
+        c = r.get("congressional")
+        ct = c.get("trades") if isinstance(c, dict) else (c if isinstance(c, list) else [])
+        cong[b] += len([t for t in (ct or []) if "purchase" in str(t.get("action", t.get("transaction", ""))).lower()])
+        i = r.get("insider")
+        it = i.get("trades") if isinstance(i, dict) else (i if isinstance(i, list) else [])
+        ins[b] += len([t for t in (it or []) if "buy" in str(t.get("transaction", t.get("type", ""))).lower() or "purchase" in str(t.get("transaction", t.get("type", ""))).lower()])
+    ct_total = sum(cong.values()) or 1
+    it_total = sum(ins.values()) or 1
+    cong_pct = dict((s, round(cong[s] / ct_total * 100, 1)) for s in gics)
+    ins_pct = dict((s, round(ins[s] / it_total * 100, 1)) for s in gics)
+    return cong_pct, ins_pct
+
+
+@app.route("/portfolio/drift")
+def portfolio_drift():
+    u = current_user()
+    if not u:
+        return jsonify({"connected": False, "error": "not_logged_in"})
+    agg, accounts, err = _snaptrade_agg(u)
+    if err == "not_connected" or not agg:
+        return jsonify({"connected": False})
+    if err:
+        return jsonify({"connected": True, "error": err}), 502
+    GICS = ["Technology", "Healthcare", "Financials", "Energy", "Industrials",
+            "Consumer Discretionary", "Consumer Staples", "Materials", "Utilities",
+            "Real Estate", "Communication Services"]
+    port = dict((s, 0.0) for s in GICS)
+    total = 0.0
+    for sym, h in agg.items():
+        try:
+            r = light_score(sym) or {}
+            price = float(r.get("price") or h.get("broker_price") or 0)
+            val = price * h["shares"]
+            b = _sector_bucket(r.get("sector"))
+            if b in port:
+                port[b] += val
+                total += val
+        except Exception:
+            continue
+    port_pct = dict((s, round(port[s] / total * 100, 1) if total else 0.0) for s in GICS)
+    ref = CACHE.get("drift_ref")
+    if ref and (time.time() - ref[1]) < 3600:
+        cong_pct, ins_pct = ref[0]
+    else:
+        cong_pct, ins_pct = _reference_sector_weights(GICS)
+        CACHE["drift_ref"] = ((cong_pct, ins_pct), time.time())
+    diffs = []
+    for s in GICS:
+        diffs.append((s, port_pct[s] - cong_pct.get(s, 0), port_pct[s] - ins_pct.get(s, 0)))
+    diffs.sort(key=lambda x: abs(x[1]), reverse=True)
+    lead = diffs[0]
+    summary = ""
+    if abs(lead[1]) >= 1:
+        more = "more" if lead[1] > 0 else "less"
+        summary = "Your portfolio is %.0f%% %s exposed to %s than the average Congressional buyer." % (abs(lead[1]), more, lead[0])
+        ins_lead = max(diffs, key=lambda x: abs(x[2]))
+        if abs(ins_lead[2]) >= 1:
+            more2 = "more" if ins_lead[2] > 0 else "less"
+            summary += " You are %.0f%% %s exposed to %s than corporate insiders." % (abs(ins_lead[2]), more2, ins_lead[0])
+        summary += " This is purely observational, not advice."
+    return jsonify({"connected": True, "sectors": GICS,
+                    "portfolio": [port_pct[s] for s in GICS],
+                    "congress": [cong_pct.get(s, 0) for s in GICS],
+                    "insiders": [ins_pct.get(s, 0) for s in GICS],
+                    "summary": summary})
+
+
+
+@app.route("/alerts/custom")
+def alerts_custom_list():
+    u = current_user()
+    if not u:
+        return jsonify({"alerts": []})
+    conn = get_db()
+    if conn is None:
+        return jsonify({"alerts": []})
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, alert_type, symbol, politician_name, threshold_price, direction, enabled, created_at "
+        "FROM user_alerts WHERE user_id=%s ORDER BY created_at DESC", (u["id"],))
+    out = []
+    for row in cur.fetchall():
+        out.append({
+            "id": row[0], "alert_type": row[1], "label": ALERT_LABELS.get(row[1], row[1]),
+            "symbol": row[2], "politician_name": row[3],
+            "threshold_price": float(row[4]) if row[4] is not None else None,
+            "direction": row[5], "enabled": row[6],
+        })
+    cur.close(); conn.close()
+    return jsonify({"alerts": out})
+
+
+@app.route("/alerts/create", methods=["POST"])
+def alerts_create():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    b = request.get_json(silent=True) or {}
+    atype = (b.get("alert_type") or "").strip()
+    if atype not in ALERT_LABELS:
+        return jsonify({"error": "Unknown alert type."}), 400
+    symbol = (b.get("symbol") or "").strip().upper() or None
+    politician = (b.get("politician_name") or "").strip() or None
+    direction = (b.get("direction") or "").strip().lower() or None
+    if direction and direction not in ("above", "below"):
+        direction = None
+    thresh = None
+    if b.get("threshold_price") not in (None, ""):
+        try:
+            thresh = float(b.get("threshold_price"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Price must be a number."}), 400
+    if atype == "price_cross" and (thresh is None or not symbol or not direction):
+        return jsonify({"error": "Price alerts need a symbol, a price, and above or below."}), 400
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO user_alerts (user_id, alert_type, symbol, politician_name, threshold_price, direction) "
+        "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+        (u["id"], atype, symbol, politician, thresh, direction))
+    aid = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "id": aid})
+
+
+@app.route("/alerts/delete", methods=["POST"])
+def alerts_delete():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    b = request.get_json(silent=True) or {}
+    aid = b.get("id")
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = conn.cursor()
+    cur.execute("DELETE FROM user_alerts WHERE id=%s AND user_id=%s", (aid, u["id"]))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/alerts/toggle", methods=["POST"])
+def alerts_toggle():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    b = request.get_json(silent=True) or {}
+    aid = b.get("id")
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = conn.cursor()
+    cur.execute("UPDATE user_alerts SET enabled = NOT enabled WHERE id=%s AND user_id=%s RETURNING enabled", (aid, u["id"]))
+    row = cur.fetchone()
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True, "enabled": row[0] if row else None})
+
+
+@app.route("/alerts/log")
+def alerts_log():
+    u = current_user()
+    if not u:
+        return jsonify({"log": []})
+    conn = get_db()
+    if conn is None:
+        return jsonify({"log": []})
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT alert_type, symbol, message, reason, link, triggered_at, seen "
+        "FROM alert_log WHERE user_id=%s ORDER BY triggered_at DESC LIMIT 30", (u["id"],))
+    out = []
+    for row in cur.fetchall():
+        out.append({"alert_type": row[0], "symbol": row[1], "message": row[2],
+                    "reason": row[3], "link": row[4],
+                    "triggered_at": row[5].isoformat() if row[5] else None, "seen": row[6]})
+    cur.execute("UPDATE alert_log SET seen=true WHERE user_id=%s AND seen=false", (u["id"],))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"log": out})
+
+
+@app.route("/alerts/register-push", methods=["POST"])
+def alerts_register_push():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    b = request.get_json(silent=True) or {}
+    token = (b.get("token") or "").strip()
+    conn = get_db()
+    if conn is None:
+        return jsonify({"error": "Database unavailable."}), 500
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET onesignal_token=%s WHERE id=%s", (token or None, u["id"]))
+    conn.commit(); cur.close(); conn.close()
+    return jsonify({"ok": True})
+
+
 @app.route("/alerts")
 def alerts():
     # Reads the logged in user's saved stocks, scores each one, and surfaces only the names
@@ -4535,11 +5338,20 @@ def ask_gemini(symbol, q, d, ins, extra_news=None, extra_insider=None, history=N
 def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None, history=None):
     try:
         facts = build_ask_facts(d, ins, extra_news, extra_insider)
+        # Immutable safety guardrail, prepended before everything else and never overridden.
+        guardrail = (
+            "You are Apex Q Intelligence, a strictly objective, non advisory market data processing "
+            "machine. You are legally forbidden from providing financial advice, buy or sell "
+            "directives, or asset price predictions. You must only process and reflect historical "
+            "public data, SEC filings, and disclosed metrics in a neutral, plain English format. If "
+            "asked for advice, respond: I cannot provide financial advice. Here is the data you requested. "
+        )
         # CHUNK: multi-turn chat. With history we send a real system message carrying the live facts,
         # then the prior turns, then the new question. The facts are rebuilt and sent every turn so
         # the model stays grounded and cannot drift into invented facts, even on adversarial questions.
         if history:
             system_content = (
+                guardrail +
                 "You are the explanation layer for an educational stock app for everyday people and beginners. "
                 "The user is asking about " + symbol + " (" + str(d.get("name", symbol)) + "). "
                 "Here are the engine's current facts for this stock: " + facts + " "
@@ -4557,6 +5369,7 @@ def ask_deepseek(symbol, q, d, ins, extra_news=None, extra_insider=None, history
             messages.append({"role": "user", "content": q})
         else:
             prompt = (
+                guardrail +
                 "You are the explanation layer for an educational stock app for everyday people and beginners. "
                 "The user is looking at " + symbol + " (" + str(d.get("name", symbol)) + ") and asks: \"" + q + "\". "
                 "Here are the engine's current facts for this stock: " + facts + " "
@@ -4940,6 +5753,18 @@ def ask():
     gate = usage_gate("ask")
     if gate is not None:
         return gate
+    # AI cache: identical questions (same symbol, same text, no chat history) return instantly with
+    # no provider cost. History-bearing turns skip the cache since they are conversation specific.
+    _ask_hist = request.args.get("history", "[]")
+    _ask_cacheable = _ask_hist in ("[]", "", None)
+    if _ask_cacheable:
+        import hashlib as _hh
+        _ask_key = "ask_" + _hh.sha1((symbol + "|" + q.lower()).encode()).hexdigest()
+        _hit = get_cached_ai(_ask_key, max_age_hours=3)
+        if _hit and _hit.get("response"):
+            return jsonify({"answer": _hit["response"], "cached": True})
+    else:
+        _ask_key = None
     # CHUNK: multi-turn chat. Optional prior turns, sent as a JSON list of {role, content}. The
     # current question is the q param, so history holds only the turns before it.
     history = []
@@ -5030,12 +5855,19 @@ def ask():
     if DEEPSEEK_KEY:
         a = ask_deepseek(sym, q, d, ins, extra_news=extra_news, extra_insider=ins, history=history)
         if a:
+            if _ask_key:
+                set_cached_ai(_ask_key, a)
             return jsonify({"answer": a, "verdict": d.get("verdict"), "symbol": sym})
     if GEMINI_KEY:
         a = ask_gemini(sym, q, d, ins, extra_news=extra_news, extra_insider=ins, history=history)
         if a:
+            if _ask_key:
+                set_cached_ai(_ask_key, a)
             return jsonify({"answer": a, "verdict": d.get("verdict"), "symbol": sym})
-    return jsonify({"answer": ask_fallback(sym, q, d, ins, extra_news=extra_news, extra_insider=ins), "verdict": d.get("verdict"), "symbol": sym})
+    _fb = ask_fallback(sym, q, d, ins, extra_news=extra_news, extra_insider=ins)
+    if _ask_key:
+        set_cached_ai(_ask_key, _fb)
+    return jsonify({"answer": _fb, "verdict": d.get("verdict"), "symbol": sym})
 
 
 @app.route("/trending")
@@ -5555,21 +6387,9 @@ def history(symbol):
     if cached and (time.time() - cached[1]) < ttl:
         return jsonify(cached[0])
     try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period=period, interval=interval)
-        if df.empty:
+        data = fetch_with_fallback(symbol, period, interval)
+        if not data:
             return jsonify({"error": "No data for %s" % symbol}), 404
-        data = []
-        for idx, row in df.iterrows():
-            t = int(idx.timestamp())
-            data.append({
-                "time": t,
-                "open": round(float(row["Open"]), 2),
-                "high": round(float(row["High"]), 2),
-                "low": round(float(row["Low"]), 2),
-                "close": round(float(row["Close"]), 2),
-                "volume": int(row["Volume"]),
-            })
         # Human readable date on each candle for the pattern scanner, then detect patterns on the
         # daily series only (intraday bars are too noisy for candlestick reversal signals).
         import datetime as _dt
