@@ -771,6 +771,7 @@ select.cmpInp{cursor:pointer;}
 .btSw{width:11px;height:11px;border-radius:3px;display:inline-block;}
 .btChartHost{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px;margin-bottom:18px;box-shadow:var(--shadow-sm);min-height:320px;}
 #ptChart svg.btSvg{width:100%;height:300px;display:block;}
+#paperChartContainer{height:350px;width:100%;}
 .ptChartEmpty{display:flex;align-items:center;justify-content:center;min-height:300px;text-align:center;color:var(--muted);font-size:13px;line-height:1.6;padding:20px;}
 .btSvg{width:100%;height:auto;display:block;}
 .btTip{position:absolute;top:8px;background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:7px 9px;font-size:11.5px;font-family:var(--font-mono);color:var(--text);pointer-events:none;box-shadow:var(--shadow-sm);z-index:5;min-width:96px;}
@@ -1643,7 +1644,7 @@ body{transition:background-color .3s ease,color .3s ease;}
     <div class="ptErr" id="ptErr" style="display:none"></div>
     <div class="ptQuote" id="ptQuote" style="display:none"></div>
     <div class="btLegend"><span class="btLeg"><span class="btSw" style="background:#22c55e"></span>Your portfolio</span><span class="btLeg"><span class="btSw" style="background:#3b82f6"></span>S&P 500</span></div>
-    <div class="btChartHost" id="ptChart"></div>
+    <div class="btChartHost" id="ptChart"><div id="paperChartContainer"></div></div>
     <div class="ptSection"><div class="ptSecTitle">Open positions</div><div class="ptPositions" id="ptPositions"></div></div>
     <div class="ptSection"><div class="ptSecTitle">Recent closed trades</div><div class="ptClosed" id="ptClosed"></div></div>
     <div class="ptDisc">Practice trading uses virtual money only. Real market conditions differ.</div>
@@ -4615,11 +4616,49 @@ function renderPaper(d){
   }
   var clEl = document.getElementById("ptClosed");
   if(clEl){ clEl.innerHTML = ch || "<div class='btNote'>No closed trades yet.</div>"; }
-  renderPaperChart(d.chart_data, d.starting_cash || 1000000);
+  // Draw the performance chart with Lightweight Charts using the data already in hand.
+  drawPaperChart(d.chart_data);
 }
 // Named entry point the Paper Trading chip calls: fetch the portfolio and draw the performance
 // chart. Reuses the existing renderPaperChart, which compares portfolio value to the S&P 500 and
 // already adapts to the theme through CSS variables.
+var _paperLw = null;
+function drawPaperChart(data){
+  var host = document.getElementById("ptChart");
+  if(!host){ return; }
+  if(!data || data.length < 2){
+    host.innerHTML = "<div class='ptChartEmpty'>Chart data will appear after your first trade.</div>";
+    return;
+  }
+  // Prefer Lightweight Charts: green area for the paper portfolio, blue line for the S&P 500.
+  // Falls back to the built in SVG chart if the library is unavailable, so it always draws.
+  if(typeof LightweightCharts === "undefined"){
+    renderPaperChart(data, 1000000);
+    return;
+  }
+  if(!document.getElementById("paperChartContainer")){
+    host.innerHTML = "<div id='paperChartContainer'></div>";
+  }
+  var cont = document.getElementById("paperChartContainer");
+  cont.innerHTML = "";
+  var dark = (document.documentElement.getAttribute("data-theme") || "dark") !== "light";
+  var col = dark
+    ? {text:"#7d8596", grid:"rgba(255,255,255,.05)", port:"#00e676", portFill:"rgba(0,230,118,.18)", spx:"#3b82f6"}
+    : {text:"#64748b", grid:"rgba(0,0,0,.06)", port:"#0f7b4e", portFill:"rgba(15,123,78,.16)", spx:"#2563eb"};
+  _paperLw = LightweightCharts.createChart(cont, {
+    height: 350,
+    layout: {background: {color: "transparent"}, textColor: col.text},
+    grid: {vertLines: {color: col.grid}, horzLines: {color: col.grid}},
+    rightPriceScale: {borderColor: col.grid},
+    timeScale: {borderColor: col.grid, timeVisible: false},
+    crosshair: {mode: 0}
+  });
+  var portArea = _paperLw.addAreaSeries({lineColor: col.port, topColor: col.portFill, bottomColor: "rgba(0,0,0,0)", lineWidth: 2});
+  var spxLine = _paperLw.addLineSeries({color: col.spx, lineWidth: 2});
+  portArea.setData(data.map(function(p){ return {time: p.date, value: p.portfolio_value}; }));
+  spxLine.setData(data.map(function(p){ return {time: p.date, value: p.sp500_value}; }));
+  _paperLw.timeScale().fitContent();
+}
 function loadPaperChart(){
   var host = document.getElementById("ptChart");
   if(!host){ return; }
@@ -4627,15 +4666,12 @@ function loadPaperChart(){
     host.innerHTML = "<div class='ptChartEmpty'>Log in to start practice trading and see your performance chart here.</div>";
     return;
   }
-  if(!host.innerHTML.trim()){
-    host.innerHTML = "<div class='ptChartEmpty'>Loading your performance chart...</div>";
-  }
   fetch(API + "/paper/portfolio", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
     if(!d || d.error){
       host.innerHTML = "<div class='ptChartEmpty'>Chart data will appear after your first trade.</div>";
       return;
     }
-    renderPaperChart(d.chart_data, d.starting_cash || 1000000);
+    drawPaperChart(d.chart_data);
   }).catch(function(){
     host.innerHTML = "<div class='ptChartEmpty'>Could not load the chart right now. It will appear after your next trade.</div>";
   });
