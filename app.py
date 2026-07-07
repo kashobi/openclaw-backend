@@ -370,6 +370,21 @@ def ensure_db():
         )
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS onesignal_token TEXT")
         cur.execute(
+            "CREATE TABLE IF NOT EXISTS insider_clusters ("
+            "id SERIAL PRIMARY KEY,"
+            "ticker TEXT NOT NULL,"
+            "company_name TEXT,"
+            "unique_insiders_count INTEGER DEFAULT 1,"
+            "total_capital_deployed NUMERIC DEFAULT 0,"
+            "executive_roles TEXT[],"
+            "insider_names TEXT[],"
+            "window_start_date DATE,"
+            "window_end_date DATE,"
+            "last_alert_count INTEGER DEFAULT 0,"
+            "is_resolved BOOLEAN DEFAULT false,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute(
             "CREATE TABLE IF NOT EXISTS morning_briefings ("
             "id SERIAL PRIMARY KEY,"
             "user_id INTEGER NOT NULL,"
@@ -2687,6 +2702,146 @@ def is_high_clout(politician, sector):
     return False
 
 
+def detect_insider_cluster(ticker, company_name, insider_list):
+    """Corporate Cluster Buy engine. Groups open market executive buys in a rolling 14 day window.
+    When three or more distinct executives buy the same stock, the cluster becomes a high signal
+    event. Returns the active cluster dict (3+ insiders) for the report, or None. Idempotent per
+    name so re-analyzing the same stock does not double count, and only escalating severity
+    re-alerts. All failures are logged and swallowed, never surfaced to the report."""
+    conn = get_db()
+    if conn is None:
+        return None
+    try:
+        import datetime as _dt
+        today = _dt.date.today()
+        cutoff = today - _dt.timedelta(days=14)
+        # Qualifying buys: real open market executive purchases only.
+        buys = []
+        for t in (insider_list or []):
+            if t.get("action") == "A" and t.get("kind") == "buy" and t.get("is_clevel"):
+                buys.append(t)
+        cur = conn.cursor()
+        # Auto resolve any stale cluster for this ticker whose window has fully aged out.
+        cur.execute("UPDATE insider_clusters SET is_resolved=true WHERE ticker=%s AND is_resolved=false "
+                    "AND window_end_date < %s", (ticker, cutoff))
+        conn.commit()
+        if not buys:
+            cur.execute("SELECT unique_insiders_count, total_capital_deployed, executive_roles, "
+                        "window_start_date FROM insider_clusters WHERE ticker=%s AND is_resolved=false "
+                        "AND unique_insiders_count >= 3 ORDER BY created_at DESC LIMIT 1", (ticker,))
+            row = cur.fetchone()
+            cur.close(); conn.close()
+            if row:
+                return {"unique_insiders_count": row[0], "total_capital_deployed": float(row[1] or 0),
+                        "executive_roles": row[2] or [], "window_start_date": row[3].isoformat() if row[3] else None}
+            return None
+        # Find or open the active cluster for this ticker.
+        cur.execute("SELECT id, unique_insiders_count, total_capital_deployed, executive_roles, "
+                    "insider_names, last_alert_count FROM insider_clusters WHERE ticker=%s "
+                    "AND is_resolved=false AND window_end_date >= %s ORDER BY created_at DESC LIMIT 1",
+                    (ticker, cutoff))
+        existing = cur.fetchone()
+        if existing:
+            cid, count, capital, roles, names, last_alert = existing
+            roles = roles or []
+            names = names or []
+            capital = float(capital or 0)
+        else:
+            cid = None
+            count, capital, roles, names, last_alert = 0, 0.0, [], [], 0
+        # Fold in any buyer not already counted (dedupe by name).
+        changed = False
+        for b in buys:
+            nm = (b.get("name") or "").strip()
+            if not nm or nm in names:
+                continue
+            names.append(nm)
+            roles.append(_short_role(b.get("title")))
+            # Capital is approximate: shares times a price if present, else shares as a proxy count.
+            px = b.get("price") or 0
+            capital += (b.get("shares") or 0) * (px if px else 0)
+            changed = True
+        unique_count = len(names)
+        if cid is None:
+            cur.execute("INSERT INTO insider_clusters (ticker, company_name, unique_insiders_count, "
+                        "total_capital_deployed, executive_roles, insider_names, window_start_date, "
+                        "window_end_date) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                        (ticker, company_name, unique_count, capital, roles, names, today, today))
+            cid = cur.fetchone()[0]
+        elif changed:
+            cur.execute("UPDATE insider_clusters SET unique_insiders_count=%s, total_capital_deployed=%s, "
+                        "executive_roles=%s, insider_names=%s, window_end_date=%s WHERE id=%s",
+                        (unique_count, capital, roles, names, today, cid))
+        conn.commit()
+        # High signal: 3+ insiders, alert only on first crossing or on severity escalation.
+        active = None
+        if unique_count >= 3:
+            active = {"unique_insiders_count": unique_count, "total_capital_deployed": capital,
+                      "executive_roles": roles, "window_start_date": str(today)}
+            escalated = (last_alert < 3 and unique_count >= 3) or (last_alert < 5 and unique_count >= 5)
+            if escalated:
+                sev = "CRITICAL" if unique_count >= 5 else "HIGH"
+                msg = "C Suite accumulation: %d executives bought %s in 14 days" % (unique_count, ticker)
+                reason = "%d distinct executives have made open market purchases of %s within a 14 day window. %s signal." % (unique_count, ticker, sev)
+                _cluster_alert_watchlist(conn, ticker, msg, reason)
+                cur.execute("UPDATE insider_clusters SET last_alert_count=%s WHERE id=%s", (unique_count, cid))
+                conn.commit()
+        cur.close(); conn.close()
+        return active
+    except Exception as e:
+        logger.error("detect_insider_cluster %s: %s" % (ticker, e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return None
+
+
+def _short_role(title):
+    t = str(title or "").upper()
+    if "CHIEF EXECUTIVE" in t or "CEO" in t: return "CEO"
+    if "CHIEF FINANCIAL" in t or "CFO" in t: return "CFO"
+    if "CHIEF OPERATING" in t or "COO" in t: return "COO"
+    if "CHIEF TECH" in t or "CTO" in t: return "CTO"
+    for r in ["PRESIDENT", "CHAIR", "FOUNDER", "EVP", "SVP", "DIRECTOR", "OFFICER"]:
+        if r in t:
+            return r.title() if len(r) > 3 else r
+    return (str(title)[:20] if title else "Executive")
+
+
+def _cluster_alert_watchlist(conn, ticker, message, reason):
+    """Log a cluster alert and push to every user watching this ticker."""
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT w.user_id, u.email, COALESCE(u.onesignal_token,'') "
+                    "FROM watchlist w JOIN users u ON u.id = w.user_id WHERE UPPER(w.symbol)=%s",
+                    (ticker.upper(),))
+        watchers = cur.fetchall()
+        for uid, email, token in watchers:
+            cur.execute("SELECT 1 FROM alert_log WHERE user_id=%s AND alert_type='insider_cluster' "
+                        "AND symbol=%s AND triggered_at > NOW() - INTERVAL '24 hours' AND message=%s LIMIT 1",
+                        (uid, ticker, message))
+            if cur.fetchone():
+                continue
+            cur.execute("INSERT INTO alert_log (user_id, alert_type, symbol, message, reason, link) "
+                        "VALUES (%s,'insider_cluster',%s,%s,%s,%s)",
+                        (uid, ticker, message, reason, "/?symbol=" + ticker))
+            if token:
+                _onesignal_push(token, message, reason, "https://www.apexq.io/?symbol=" + ticker)
+            if email:
+                cur.execute("INSERT INTO email_queue (user_id, subject, body) VALUES (%s,%s,%s)",
+                            (uid, "Apex Q Cluster Alert: " + ticker,
+                             message + "\n\n" + reason + "\n\nEducational research framework only. Not personalized financial advice."))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("cluster alert watchlist: %s" % e)
+
+
+def detect_insider_cluster_safe(*a, **k):
+    return detect_insider_cluster(*a, **k)
+
+
 def compute_full_report(symbol):
     symbol = _china_symbol(symbol)
     cached = get_cache(f"full_{symbol}")
@@ -3285,6 +3440,7 @@ def compute_full_report(symbol):
             "news": news,
             "congressional": congressional,
             "insider": insider,
+            "active_cluster": detect_insider_cluster(symbol, info.get("longName") or info.get("shortName") or symbol, insider),
             "suggested_questions": suggested,
             "data_timestamp": int(time.time()),
         }
@@ -4799,6 +4955,44 @@ def _briefing_for_user(conn, user, today_str):
     conn.commit()
     cur.close()
     return body
+
+
+@app.route("/signals/active-catalysts")
+def signals_active_catalysts():
+    cached = CACHE.get("active_catalysts")
+    if cached and (time.time() - cached[1]) < 300:
+        return jsonify(cached[0])
+    conn = get_db()
+    if conn is None:
+        return jsonify({"catalysts": []})
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT ticker, company_name, total_capital_deployed, executive_roles, "
+                    "window_start_date, unique_insiders_count FROM insider_clusters "
+                    "WHERE is_resolved=false AND unique_insiders_count >= 3 "
+                    "ORDER BY unique_insiders_count DESC, created_at DESC LIMIT 40")
+        out = []
+        for row in cur.fetchall():
+            cnt = row[5]
+            out.append({
+                "ticker": row[0], "company_name": row[1] or row[0],
+                "total_capital_deployed": float(row[2] or 0),
+                "executive_roles": row[3] or [],
+                "window_start_date": row[4].isoformat() if row[4] else None,
+                "unique_insiders_count": cnt,
+                "severity": "CRITICAL" if cnt >= 5 else "HIGH",
+            })
+        cur.close(); conn.close()
+        payload = {"catalysts": out}
+        CACHE["active_catalysts"] = (payload, time.time())
+        return jsonify(payload)
+    except Exception as e:
+        logger.error("active_catalysts: %s" % e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return jsonify({"catalysts": []})
 
 
 @app.route("/cron/morning-briefing")
