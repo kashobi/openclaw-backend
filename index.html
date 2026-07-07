@@ -768,7 +768,9 @@ select.cmpInp{cursor:pointer;}
 .btLegend{display:flex;gap:18px;margin-bottom:8px;font-size:12.5px;color:var(--muted);font-weight:700;}
 .btLeg{display:flex;align-items:center;gap:6px;}
 .btSw{width:11px;height:11px;border-radius:3px;display:inline-block;}
-.btChartHost{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px;margin-bottom:18px;box-shadow:var(--shadow-sm);}
+.btChartHost{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px;margin-bottom:18px;box-shadow:var(--shadow-sm);min-height:320px;}
+#ptChart svg.btSvg{width:100%;height:300px;display:block;}
+.ptChartEmpty{display:flex;align-items:center;justify-content:center;min-height:300px;text-align:center;color:var(--muted);font-size:13px;line-height:1.6;padding:20px;}
 .btSvg{width:100%;height:auto;display:block;}
 .btTip{position:absolute;top:8px;background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:7px 9px;font-size:11.5px;font-family:var(--font-mono);color:var(--text);pointer-events:none;box-shadow:var(--shadow-sm);z-index:5;min-width:96px;}
 .btTipD{font-weight:800;margin-bottom:4px;}
@@ -4588,10 +4590,34 @@ function renderPaper(d){
   if(clEl){ clEl.innerHTML = ch || "<div class='btNote'>No closed trades yet.</div>"; }
   renderPaperChart(d.chart_data, d.starting_cash || 1000000);
 }
+// Named entry point the Paper Trading chip calls: fetch the portfolio and draw the performance
+// chart. Reuses the existing renderPaperChart, which compares portfolio value to the S&P 500 and
+// already adapts to the theme through CSS variables.
+function loadPaperChart(){
+  var host = document.getElementById("ptChart");
+  if(!host){ return; }
+  if(!currentUser){
+    host.innerHTML = "<div class='ptChartEmpty'>Log in to start practice trading and see your performance chart here.</div>";
+    return;
+  }
+  if(!host.innerHTML.trim()){
+    host.innerHTML = "<div class='ptChartEmpty'>Loading your performance chart...</div>";
+  }
+  fetch(API + "/paper/portfolio", {credentials: "same-origin"}).then(function(r){ return r.json(); }).then(function(d){
+    if(!d || d.error){
+      host.innerHTML = "<div class='ptChartEmpty'>Chart data will appear after your first trade.</div>";
+      return;
+    }
+    renderPaperChart(d.chart_data, d.starting_cash || 1000000);
+  }).catch(function(){
+    host.innerHTML = "<div class='ptChartEmpty'>Could not load the chart right now. It will appear after your next trade.</div>";
+  });
+}
+
 function renderPaperChart(data, baseline){
   var host = document.getElementById("ptChart");
   if(!host) return;
-  if(!data || data.length < 2){ host.innerHTML = "<div class='btNote'>Your performance chart appears once you have held a position across a trading day.</div>"; return; }
+  if(!data || data.length < 2){ host.innerHTML = "<div class='ptChartEmpty'>Chart data will appear after your first trade. Your performance line and the S&P 500 comparison build once you have held a position across a trading day.</div>"; return; }
   var W = 720, H = 300, padL = 12, padR = 14, padT = 16, padB = 28;
   var plotW = W - padL - padR, plotH = H - padT - padB, baseY = padT + plotH;
   var n = data.length;
@@ -5189,6 +5215,8 @@ if(ib){
   function apexqPortMode(mode){
     var target = mode === "paper" ? "trade" : (mode === "build" ? "build" : "portfolio");
     if(typeof showView === "function"){ showView(target); }
+    // When the Paper Trading chip is chosen, make sure the performance chart loads right away.
+    if(mode === "paper" && typeof loadPaperChart === "function"){ setTimeout(loadPaperChart, 120); }
     // Keep the Portfolio tab lit in the bottom bar for all three modes, since they live under it.
     var tabs = document.querySelectorAll(".tabbar .tab");
     for(var i = 0; i < tabs.length; i++){ tabs[i].classList.remove("active"); }
