@@ -1202,6 +1202,7 @@ body{transition:background-color .3s ease,color .3s ease;}
 .idxPx{text-align:right;}
 .idxPrice{font-size:24px;font-weight:800;color:var(--text);font-family:var(--font-mono);}
 .idxChg{font-size:14px;font-weight:700;margin-top:2px;}
+.idxDesc{font-size:14px;color:var(--text);line-height:1.65;margin-top:16px;font-weight:600;}
 .idxCtx{font-size:14px;color:var(--text);line-height:1.65;margin-top:16px;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:14px;}
 .idxNote{font-size:12px;color:var(--muted);line-height:1.6;margin-top:12px;}
 </style>
@@ -2439,6 +2440,7 @@ function renderIndexReport(d){
     "<div class='idxHead'><div><div class='idxName'>" + (d.name || d.symbol) + "</div><div class='idxSym'>" + (d.symbol || "") + "</div></div>" +
     "<div class='idxPx'><div class='idxPrice'>$" + (d.price || 0).toLocaleString() + "</div>" +
     "<div class='idxChg' style='color:" + col + "'>" + (cp2 >= 0 ? "+" : "") + cp2 + "% today</div></div></div>" +
+    (d.description ? "<div class='idxDesc'>" + d.description + "</div>" : "") +
     (d.market_context ? "<div class='idxCtx'>" + d.market_context + "</div>" : "") +
     "<div class='idxNote'>" + (d.index_note || "") + "</div></div>";
   var ra2 = document.getElementById("reportArea");
