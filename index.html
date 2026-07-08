@@ -1209,7 +1209,8 @@ body{transition:background-color .3s ease,color .3s ease;}
 .rptTabsWrap{display:flex;align-items:center;gap:4px;margin:14px 0 6px;position:relative;}
 .rptTabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:4px;flex:1;scroll-behavior:smooth;}
 .rptTabs::-webkit-scrollbar{display:none;height:0;}
-.rptTabHint{flex-shrink:0;color:var(--accent);font-size:20px;font-weight:800;padding:0 4px;transition:opacity .2s ease;pointer-events:none;}
+.rptTabHint{flex-shrink:0;color:var(--accent);font-size:22px;font-weight:800;padding:2px 8px;transition:opacity .2s ease,transform .12s ease;cursor:pointer;user-select:none;}
+.rptTabHint:active{transform:scale(0.85);}
 .rptTab{flex-shrink:0;background:var(--s2);border:1px solid var(--border);border-radius:999px;padding:8px 15px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;transition:all .15s ease;white-space:nowrap;}
 .rptTab:hover{border-color:var(--accent);}
 .rptTab.active{background:rgba(var(--accent-rgb),.14);border-color:var(--accent);color:var(--accent);}
@@ -1363,6 +1364,7 @@ body{transition:background-color .3s ease,color .3s ease;}
             <button class="tfBtn" data-p="3mo" data-i="1d">3M</button>
             <button class="tfBtn" data-p="6mo" data-i="1d">6M</button>
             <button class="tfBtn active" data-p="1y" data-i="1d">1Y</button>
+            <button class="tfBtn" data-p="5y" data-i="1wk">5Y</button>
           </div>
         </div>
         <div id="chartContainer"></div>
@@ -6667,13 +6669,30 @@ if(ib){
     }
     var tabs = document.querySelectorAll(".rptTab");
     for(var t = 0; t < tabs.length; t++){ tabs[t].classList.toggle("active", tabs[t].getAttribute("data-rtab") === tab); }
+    _updateTabHint();
   }
   function _updateTabHint(){
     var strip = document.getElementById("rptTabs");
     var hint = document.getElementById("rptTabHint");
     if(!strip || !hint){ return; }
-    var more = strip.scrollWidth > strip.clientWidth + 4 && (strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 4);
-    hint.style.opacity = more ? "1" : "0";
+    // Show the chevron whenever there is a next tab to move to.
+    var order = ["overview", "chart", "congress", "insiders", "fundamentals", "more"];
+    var idx = order.indexOf(_curRtab);
+    hint.style.opacity = (idx >= 0 && idx < order.length - 1) ? "1" : "0";
+    hint.style.pointerEvents = (idx >= 0 && idx < order.length - 1) ? "auto" : "none";
+  }
+  function _nextReportTab(){
+    var order = ["overview", "chart", "congress", "insiders", "fundamentals", "more"];
+    var idx = order.indexOf(_curRtab);
+    if(idx >= 0 && idx < order.length - 1){
+      showReportTab(order[idx + 1]);
+      // Keep the newly active tab visible in the scroller.
+      var strip = document.getElementById("rptTabs");
+      var activeBtn = strip ? strip.querySelector(".rptTab.active") : null;
+      if(activeBtn && activeBtn.scrollIntoView){ activeBtn.scrollIntoView({behavior: "smooth", inline: "center", block: "nearest"}); }
+      var wrap = document.getElementById("rptTabsWrap");
+      if(wrap){ window.scrollTo({top: wrap.getBoundingClientRect().top + window.pageYOffset - 56, behavior: "smooth"}); }
+    }
   }
   (function initReportTabs(){
     var strip = document.getElementById("rptTabs");
@@ -6689,6 +6708,8 @@ if(ib){
       });
       strip.addEventListener("scroll", _updateTabHint);
     }
+    var hint = document.getElementById("rptTabHint");
+    if(hint){ hint.addEventListener("click", _nextReportTab); }
   })();
   window.applyReportTabs = applyReportTabs;
   window.resetReportTab = function(){ _curRtab = "overview"; };
