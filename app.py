@@ -7545,7 +7545,10 @@ def _snaptrade_agg(u):
     if err:
         return None, None, err
     if not accounts:
-        return None, None, "not_connected"
+        # The secret still exists, so the person IS linked. An empty account list here means the
+        # brokerage authorization went stale or SnapTrade returned nothing this moment, NOT that
+        # they disconnected. Report it distinctly so the app never wipes a real connection from view.
+        return None, None, "needs_refresh"
     agg = {}
     for a in accounts:
         acct_id = a.get("id")
@@ -7702,6 +7705,8 @@ def snaptrade_analyze():
     agg, accounts, err = _snaptrade_agg(u)
     if err == "not_connected":
         return jsonify({"connected": False})
+    if err == "needs_refresh":
+        return jsonify({"connected": True, "needs_refresh": True})
     if err:
         return jsonify({"error": err}), 502
     payload = _snaptrade_analysis(agg)
@@ -7718,8 +7723,14 @@ def snaptrade_sync():
     agg, accounts, err = _snaptrade_agg(u)
     if err == "not_connected":
         return jsonify({"connected": False})
+    if err == "needs_refresh":
+        # Do NOT touch stored holdings here. An empty pull must never overwrite the real portfolio
+        # the person already synced. Tell them to reconnect the brokerage instead.
+        return jsonify({"connected": True, "needs_refresh": True})
     if err:
         return jsonify({"error": err}), 502
+    if not agg:
+        return jsonify({"connected": True, "needs_refresh": True})
     # Auto populate the built in Portfolio tracker: upsert every brokerage holding, so the summary
     # card, allocation math, and warnings reflect the real account with no manual typing.
     db = get_db()
@@ -7788,20 +7799,36 @@ def tts_route():
     if hit and (time.time() - hit[1]) < 900:
         return Response(hit[0], mimetype="audio/wav")
     try:
-        r = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=" + key,
-            json={
-                "contents": [{"parts": [{"text": text}]}],
-                "generationConfig": {
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}},
-                },
-            },
-            timeout=60,
-        )
-        if r.status_code != 200:
-            logger.error("tts gemini %s: %s" % (r.status_code, r.text[:200]))
+        # Try current TTS models in order. Preview model names get renamed and retired by Google,
+        # which silently breaks TTS and drops the app back to the robotic device voice. Trying the
+        # stable name first, then known preview names, keeps the neural voice working across those
+        # changes. Voice is Achernar, a warmer female voice than the default.
+        voice = os.environ.get("TTS_VOICE", "Achernar").strip() or "Achernar"
+        models = ["gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts", "gemini-2.0-flash-exp"]
+        r = None
+        used = None
+        for m in models:
+            try:
+                r = requests.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent?key=" + key,
+                    json={
+                        "contents": [{"parts": [{"text": text}]}],
+                        "generationConfig": {
+                            "responseModalities": ["AUDIO"],
+                            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+                        },
+                    },
+                    timeout=60,
+                )
+                if r.status_code == 200:
+                    used = m
+                    break
+                logger.error("tts model %s -> %s: %s" % (m, r.status_code, r.text[:160]))
+            except Exception as me:
+                logger.error("tts model %s error: %s" % (m, me))
+        if not used or r is None or r.status_code != 200:
             return jsonify({"error": "tts_unavailable"}), 503
+        logger.info("tts served via %s voice %s" % (used, voice))
         data = r.json()
         b64 = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
         import base64 as _b64
