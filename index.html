@@ -1205,6 +1205,12 @@ body{transition:background-color .3s ease,color .3s ease;}
 .idxDesc{font-size:14px;color:var(--text);line-height:1.65;margin-top:16px;font-weight:600;}
 .idxCtx{font-size:14px;color:var(--text);line-height:1.65;margin-top:16px;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:14px;}
 .idxNote{font-size:12px;color:var(--muted);line-height:1.6;margin-top:12px;}
+/* Report tabs: in-place tabbed surface for the stock report, mobile friendly and scrollable. */
+.rptTabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin:14px 0 4px;padding-bottom:4px;position:sticky;top:0;background:var(--bg);z-index:20;}
+.rptTabs::-webkit-scrollbar{display:none;}
+.rptTab{flex-shrink:0;background:var(--s2);border:1px solid var(--border);border-radius:999px;padding:8px 15px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;transition:all .15s ease;white-space:nowrap;}
+.rptTab:hover{border-color:var(--accent);}
+.rptTab.active{background:rgba(var(--accent-rgb),.14);border-color:var(--accent);color:var(--accent);}
 </style>
 </head>
 <body>
@@ -1375,6 +1381,14 @@ body{transition:background-color .3s ease,color .3s ease;}
         <div class="vmean" id="vmean" style="display:none"></div>
         <div class="wguide" id="wguide"></div>
         <div class="vrlist" id="vrl"></div>
+      </div>
+      <div class="rptTabs" id="rptTabs" style="display:none">
+        <button class="rptTab active" data-rtab="overview">Overview</button>
+        <button class="rptTab" data-rtab="chart">Chart</button>
+        <button class="rptTab" data-rtab="congress">Congress</button>
+        <button class="rptTab" data-rtab="insiders">Insiders</button>
+        <button class="rptTab" data-rtab="fundamentals">Fundamentals</button>
+        <button class="rptTab" data-rtab="more">More</button>
       </div>
       <div id="stockSections">
       <div class="ic alphaCard" id="alphaCard" style="display:none">
@@ -5216,6 +5230,13 @@ if(ib){
     setTimeout(injectGuba, 350);
     setTimeout(injectPatterns, 400);
     setTimeout(injectCluster, 250);
+    // Build the tab grouping once sections exist, then again after the async injectors have added
+    // their cards, so late arrivals land in the correct tab instead of defaulting to overview.
+    if(typeof applyReportTabs === "function"){
+      if(typeof window.resetReportTab === "function"){ window.resetReportTab(); }
+      setTimeout(applyReportTabs, 120);
+      setTimeout(applyReportTabs, 500);
+    }
     // Interactive candlestick chart for real stocks (not funds, not crypto or macro).
     var symC = document.getElementById("sym");
     var symV = symC ? (symC.textContent || "").trim().toUpperCase() : "";
@@ -6540,6 +6561,97 @@ if(ib){
     if(vb && vb.parentNode === host){ host.insertBefore(card, vb.nextSibling); }
     else { host.insertBefore(card, host.firstChild); }
   }
+
+  // Report tabs: turn the long report scroll into an in-place tabbed surface, the flow lesson from
+  // desktop research tools translated to mobile. The stock stays fixed while tapping a tab swaps
+  // which sections show. Nothing in the DOM moves, so every injector target and id is preserved;
+  // sections are simply assigned a tab and shown or hidden. Runs after the report and after each
+  // injector so late-arriving cards (alternatives, patterns, cluster, Guba) land in the right tab.
+  //
+  // Grouping, matched by the section id or the heading text that immediately precedes a block:
+  //   overview      verdict, alpha score, key metrics, about
+  //   chart         interactive chart, patterns
+  //   congress      congressional scanner
+  //   insiders      insider engine, cluster buy card
+  //   fundamentals  analyst consensus, deep fundamentals, valuation, sector guide, rating changes
+  //   more          alternatives, portfolio context, filings, news, classroom
+  var _rtabAssign = [
+    ["alphaCard", "overview"], ["aboutCard", "overview"], ["mtGauge", "overview"],
+    ["mets", "overview"],
+    ["stChartCard", "chart"], ["patCard", "chart"],
+    ["analystConsensus", "fundamentals"], ["acTitle", "fundamentals"], ["deepFund", "fundamentals"],
+    ["sectorCard", "fundamentals"], ["valGrid", "fundamentals"], ["grades", "fundamentals"],
+    ["gradeTitle", "fundamentals"],
+    ["cong", "congress"],
+    ["ins", "insiders"], ["clusterCard", "insiders"],
+    ["altCard", "more"], ["gubaCard", "more"], ["portCtx", "more"], ["filingsCard", "more"],
+    ["news", "more"], ["classroom", "more"],
+  ];
+  // Section title <div class="stitle"> blocks precede many sections; map each to its tab by keyword.
+  var _rtabTitleMap = [
+    ["Analyst Consensus", "fundamentals"], ["Deep Fundamentals", "fundamentals"],
+    ["Valuation", "fundamentals"], ["Analyst Rating", "fundamentals"],
+    ["Political Conflict", "congress"], ["Corporate Insider", "insiders"],
+    ["Live News", "more"], ["Classroom", "more"], ["Analyst Consensus", "fundamentals"],
+  ];
+  var _curRtab = "overview";
+  function applyReportTabs(){
+    var host = document.getElementById("stockSections");
+    var strip = document.getElementById("rptTabs");
+    if(!host || !strip){ return; }
+    // Only show tabs on a full stock report (verdict present, not ETF/index).
+    var d = window._lastReport;
+    var isStock = d && d.verdict && d.verdict !== "ETF" && d.verdict !== "INDEX";
+    if(!isStock){ strip.style.display = "none"; 
+      // Ensure everything visible for non-stock.
+      var kids0 = host.children;
+      for(var z = 0; z < kids0.length; z++){ kids0[z].removeAttribute("data-rhidden"); kids0[z].style.display = ""; }
+      return;
+    }
+    strip.style.display = "flex";
+    // Assign each direct child of stockSections to a tab. Default any unmatched to overview.
+    var idMap = {};
+    for(var i = 0; i < _rtabAssign.length; i++){ idMap[_rtabAssign[i][0]] = _rtabAssign[i][1]; }
+    var kids = host.children;
+    var pendingTitleTab = null;
+    for(var k = 0; k < kids.length; k++){
+      var el = kids[k];
+      var tab = null;
+      if(el.id && idMap[el.id]){ tab = idMap[el.id]; }
+      else if(el.classList && el.classList.contains("stitle")){
+        var txt = el.textContent || "";
+        for(var t = 0; t < _rtabTitleMap.length; t++){ if(txt.indexOf(_rtabTitleMap[t][0]) >= 0){ tab = _rtabTitleMap[t][1]; break; } }
+        pendingTitleTab = tab || pendingTitleTab;
+      }
+      if(!tab && el.classList && el.classList.contains("mets")){ tab = pendingTitleTab || "overview"; }
+      if(!tab){ tab = pendingTitleTab || "overview"; }
+      el.setAttribute("data-rtab-belongs", tab);
+    }
+    showReportTab(_curRtab);
+  }
+  function showReportTab(tab){
+    _curRtab = tab;
+    var host = document.getElementById("stockSections");
+    if(!host){ return; }
+    var kids = host.children;
+    for(var k = 0; k < kids.length; k++){
+      var belongs = kids[k].getAttribute("data-rtab-belongs") || "overview";
+      kids[k].style.display = (belongs === tab) ? "" : "none";
+    }
+    var tabs = document.querySelectorAll(".rptTab");
+    for(var t = 0; t < tabs.length; t++){ tabs[t].classList.toggle("active", tabs[t].getAttribute("data-rtab") === tab); }
+  }
+  (function initReportTabs(){
+    var strip = document.getElementById("rptTabs");
+    if(strip){
+      strip.addEventListener("click", function(e){
+        var b = e.target.closest(".rptTab");
+        if(b){ showReportTab(b.getAttribute("data-rtab")); var ra = document.getElementById("reportArea"); if(ra){ window.scrollTo({top: ra.getBoundingClientRect().top + window.pageYOffset - 60, behavior: "smooth"}); } }
+      });
+    }
+  })();
+  window.applyReportTabs = applyReportTabs;
+  window.resetReportTab = function(){ _curRtab = "overview"; };
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
