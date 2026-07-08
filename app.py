@@ -572,8 +572,33 @@ def require_premium(f):
 # ============ END PREMIUM TIER ============
 
 
+INDEX_ALIASES = {
+    "SPX": "^GSPC", "SP500": "^GSPC", "S&P500": "^GSPC", "S&P 500": "^GSPC", "GSPC": "^GSPC",
+    "^SPX": "^GSPC", "^GSPC": "^GSPC", "SPY500": "^GSPC",
+    "NASDAQ": "^IXIC", "IXIC": "^IXIC", "^IXIC": "^IXIC", "NDX": "^IXIC", "NASDAQ COMPOSITE": "^IXIC",
+    "DOW": "^DJI", "DOWJONES": "^DJI", "DOW JONES": "^DJI", "DJIA": "^DJI", "DJI": "^DJI", "^DJI": "^DJI",
+    "RUSSELL": "^RUT", "RUSSELL2000": "^RUT", "RUSSELL 2000": "^RUT", "RUT": "^RUT", "^RUT": "^RUT",
+    "VIX": "^VIX", "^VIX": "^VIX", "FEAR": "^VIX", "FEAR INDEX": "^VIX", "VOLATILITY": "^VIX",
+    "GOLD": "GC=F", "GOLD FUTURES": "GC=F", "GC=F": "GC=F", "GC": "GC=F", "XAU": "GC=F",
+    "SILVER": "SI=F", "SI=F": "SI=F",
+    "OIL": "CL=F", "WTI": "CL=F", "OIL WTI": "CL=F", "CRUDE": "CL=F", "CRUDE OIL": "CL=F", "CL=F": "CL=F",
+    "NATGAS": "NG=F", "NATURAL GAS": "NG=F", "NG=F": "NG=F",
+    "COPPER": "HG=F", "HG=F": "HG=F",
+    "BITCOIN": "BTC-USD", "BTC": "BTC-USD", "BTC-USD": "BTC-USD",
+    "ETHEREUM": "ETH-USD", "ETH": "ETH-USD", "ETH-USD": "ETH-USD",
+}
+
+
 def resolve_ticker(query):
     query = query.strip()
+    # Indices, futures, and crypto majors resolve directly, before any search. yfinance search
+    # mangles caret symbols and friendly names (VIX, GOLD, OIL) into the wrong instrument, which is
+    # what caused every index to show one identical wrong price. Direct mapping fixes that.
+    up = query.upper()
+    if up in INDEX_ALIASES:
+        return INDEX_ALIASES[up]
+    if up.startswith("^") or "=F" in up or up.endswith("-USD"):
+        return up
     try:
         s = yf.Search(query, max_results=1)
         if s.quotes:
@@ -1460,18 +1485,26 @@ def _build_index_report(symbol):
     sym = symbol.upper()
     try:
         t = yf.Ticker(sym)
+        # Prefer the daily history close, which is reliable for indices and futures. yfinance's
+        # info.regularMarketPrice is often stale, wrong, or shared across symbols for ^ tickers,
+        # which caused the identical bad price. History is per symbol and trustworthy.
+        price = None
+        prev = None
+        try:
+            hist = t.history(period="1mo")
+            if hist is not None and not hist.empty:
+                price = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price
+        except Exception as he:
+            logger.error("index hist %s: %s" % (sym, he))
         info = {}
         try:
             info = t.info or {}
         except Exception:
             info = {}
-        price = info.get("regularMarketPrice") or info.get("previousClose")
-        prev = info.get("previousClose")
         if price is None:
-            hist = t.history(period="5d")
-            if hist is not None and not hist.empty:
-                price = float(hist["Close"].iloc[-1])
-                prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price
+            price = info.get("regularMarketPrice") or info.get("previousClose")
+            prev = info.get("previousClose")
         if price is None:
             return None
         price = float(price)
