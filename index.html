@@ -344,6 +344,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-sans);width:1
 .disctitle{font-size:20px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:8px;letter-spacing:-.3px;}
 .discsub{font-size:13.5px;color:var(--muted);font-weight:500;margin-top:6px;line-height:1.55;max-width:760px;}
 .discchips{display:flex;gap:9px;margin-top:14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+.discchips-wrap{flex-wrap:wrap;overflow:visible;overflow-x:visible;max-height:none;padding-bottom:8px;}
+.discchips-wrap .discchip{flex-shrink:1;}
 .discchips::-webkit-scrollbar{display:none;}
 .discchip{flex-shrink:0;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:9px 17px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;font-family:var(--font-sans);white-space:nowrap;transition:all .2s;}
 .discchip:hover{border-color:var(--accent);color:var(--accent);}
@@ -1435,7 +1437,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   <div class="disctitle">&#9889; Discover Overlooked Industries</div>
   <div class="discsub">Most people only know the big names. The real gems hide in the industries nobody talks about. Tap any one to see what the engine likes right now, and learn why the space matters.</div>
   <div class="discgroup">The 11 Market Sectors</div>
-  <div class="discchips">
+  <div class="discchips discchips-wrap">
     <div class="discchip" data-theme="tech">&#128187; Technology</div>
     <div class="discchip" data-theme="health">&#129658; Health Care</div>
     <div class="discchip" data-theme="financials">&#127974; Financials</div>
