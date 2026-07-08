@@ -1419,6 +1419,88 @@ except Exception as _ake:
     logger.error("akshare unavailable: %s" % _ake)
 
 
+INDEX_NAMES = {
+    "^GSPC": "S&P 500", "^IXIC": "Nasdaq Composite", "^DJI": "Dow Jones Industrial Average",
+    "^RUT": "Russell 2000", "^VIX": "CBOE Volatility Index", "^FTSE": "FTSE 100",
+    "^N225": "Nikkei 225", "^HSI": "Hang Seng", "^GDAXI": "DAX",
+    "GC=F": "Gold Futures", "SI=F": "Silver Futures", "CL=F": "Crude Oil Futures",
+    "NG=F": "Natural Gas Futures", "HG=F": "Copper Futures", "BTC-USD": "Bitcoin",
+    "ETH-USD": "Ethereum",
+}
+
+
+def _is_index_symbol(sym):
+    s = (sym or "").upper()
+    return s in INDEX_NAMES or s.startswith("^")
+
+
+def _build_index_report(symbol):
+    """Simplified report for an index or future: name, price, change, extended hours, and a one
+    line market context. No scoring engine, no company sections. Returns None on failure so the
+    caller can fall through to the normal path."""
+    sym = symbol.upper()
+    try:
+        t = yf.Ticker(sym)
+        info = {}
+        try:
+            info = t.info or {}
+        except Exception:
+            info = {}
+        price = info.get("regularMarketPrice") or info.get("previousClose")
+        prev = info.get("previousClose")
+        if price is None:
+            hist = t.history(period="5d")
+            if hist is not None and not hist.empty:
+                price = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price
+        if price is None:
+            return None
+        price = float(price)
+        change_pct = 0.0
+        if prev:
+            try:
+                change_pct = round((price - float(prev)) / float(prev) * 100, 2)
+            except (TypeError, ValueError, ZeroDivisionError):
+                change_pct = 0.0
+        name = INDEX_NAMES.get(sym, info.get("shortName") or info.get("longName") or sym)
+        # Honest factual context based on the move itself. Indices do not have company fundamentals
+        # for the AI context layer to ground on, so a plain factual line is more trustworthy than
+        # an AI guess.
+        direction = "up" if change_pct > 0 else ("down" if change_pct < 0 else "flat")
+        if sym == "^VIX":
+            context = ("The VIX measures expected market volatility over the next 30 days. It is %s %.2f%% today. "
+                       "A rising VIX often reflects growing fear or uncertainty, a falling VIX calmer conditions." % (direction, abs(change_pct)))
+        else:
+            context = ("%s is %s %.2f%% today, sitting at %s. This tracks a broad basket, so it reflects overall "
+                       "market mood rather than any single company." % (name, direction, abs(change_pct), ("%.2f" % price)))
+        is_future = "=F" in sym
+        is_crypto = sym.endswith("-USD")
+        kind = "future" if is_future else ("cryptocurrency" if is_crypto else "index")
+        note = ("This is a %s. It represents a basket or benchmark, not an individual company, so "
+                "company level signals like insider trades, congressional activity, and moat do not "
+                "apply here." % kind)
+        ext = None
+        try:
+            ext = extended_hours(info, price)
+        except Exception:
+            ext = None
+        return {
+            "symbol": sym,
+            "name": name,
+            "price": round(price, 2),
+            "change_pct": change_pct,
+            "verdict": "INDEX",
+            "asset_class": "index",
+            "market_context": context,
+            "index_note": note,
+            "extended": ext,
+            "data_timestamp": int(time.time()),
+        }
+    except Exception as e:
+        logger.error("index report %s: %s" % (sym, e))
+        return None
+
+
 def _asset_class(symbol):
     """crypto, macro, or stock. Crypto pairs end in a dash USD quote; macro covers futures (=F),
     currency pairs (=X), yield indexes (^), and the commodity index."""
@@ -1899,6 +1981,12 @@ def analyze():
         return jsonify({"error": "No symbol provided"}), 400
     symbol = resolve_ticker(query)
     logger.info(f"ANALYZE: {query} -> {symbol}")
+    # Major indices and futures get a clean, simplified report: price and change, a one line market
+    # context, no company scoring, insider, congressional, or moat sections, since a basket has none.
+    if _is_index_symbol(symbol):
+        idx = _build_index_report(symbol)
+        if idx:
+            return jsonify(idx)
     result = compute_full_report(symbol)
     if result is None:
         return jsonify({"error": f"Could not pull data for {symbol}."}), 404
