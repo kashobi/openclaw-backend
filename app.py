@@ -1428,6 +1428,25 @@ INDEX_NAMES = {
     "ETH-USD": "Ethereum",
 }
 
+INDEX_DESCRIPTIONS = {
+    "^GSPC": "The S&P 500 is a market cap weighted index of 500 leading US companies, the most common benchmark for the overall US stock market.",
+    "^IXIC": "The Nasdaq Composite tracks over 3,000 stocks listed on the Nasdaq exchange, weighted heavily toward technology companies.",
+    "^DJI": "The Dow Jones Industrial Average tracks 30 large, established US companies. It is price weighted, so higher priced stocks move it more.",
+    "^RUT": "The Russell 2000 tracks 2,000 smaller US companies and is watched as a gauge of small cap and domestic economic health.",
+    "^VIX": "The VIX measures the market's expected volatility over the next 30 days. It often rises when fear rises, which is why it is called the fear gauge.",
+    "^FTSE": "The FTSE 100 tracks the 100 largest companies listed on the London Stock Exchange.",
+    "^N225": "The Nikkei 225 is Japan's leading stock index, tracking 225 large companies on the Tokyo Stock Exchange.",
+    "^HSI": "The Hang Seng tracks the largest companies listed in Hong Kong.",
+    "^GDAXI": "The DAX tracks 40 major companies trading on the Frankfurt Stock Exchange in Germany.",
+    "GC=F": "Gold futures reflect the market price of gold, a metal often bought as a store of value when investors seek safety.",
+    "SI=F": "Silver futures track the price of silver, used both as an investment and widely in industry.",
+    "CL=F": "Crude oil futures track the price of oil, a driver of energy costs and a closely watched signal of global demand.",
+    "NG=F": "Natural gas futures track the price of natural gas, a key heating and power generation fuel.",
+    "HG=F": "Copper futures track the price of copper, often called Doctor Copper for how well its price reflects economic health.",
+    "BTC-USD": "Bitcoin is the largest cryptocurrency by value, trading 24 hours a day with no company, earnings, or central authority behind it.",
+    "ETH-USD": "Ethereum is the second largest cryptocurrency and the leading platform for smart contracts and decentralized apps.",
+}
+
 
 def _is_index_symbol(sym):
     s = (sym or "").upper()
@@ -1491,6 +1510,7 @@ def _build_index_report(symbol):
             "change_pct": change_pct,
             "verdict": "INDEX",
             "asset_class": "index",
+            "description": INDEX_DESCRIPTIONS.get(sym, ""),
             "market_context": context,
             "index_note": note,
             "extended": ext,
