@@ -5841,6 +5841,14 @@ if(ib){
       body.innerHTML = "<div class='stNote'>Could not load the analysis.</div><button class='stBtn' onclick='window.staLoad(true)'>Try again</button>";
       return;
     }
+    if(d.needs_refresh){
+      card.style.display = "";
+      body.innerHTML = "<div class='stNote'>Your brokerage is still linked, but the connection needs a refresh. This is normal: brokerages ask you to re-authorize every so often. Your saved portfolio is safe. Tap below to reconnect.</div>" +
+        "<button class='cmpBtn' style='margin-top:10px' id='stReconnectBtn'>Reconnect brokerage</button>";
+      var rc = document.getElementById("stReconnectBtn");
+      if(rc){ rc.onclick = function(){ if(typeof loadSnaptrade === "function"){ loadSnaptrade(); } else if(typeof staLoad === "function"){ staLoad(true); } }; }
+      return;
+    }
     if(d.error === "premium_required"){
       card.style.display = "";
       body.innerHTML = "<div class='stNote'>Brokerage analysis is a Premium feature. Upgrade to run every holding through the engine automatically.</div>" +
