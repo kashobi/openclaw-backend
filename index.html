@@ -1194,6 +1194,16 @@ body{transition:background-color .3s ease,color .3s ease;}
 .clusterT{font-weight:800;font-size:15px;color:var(--text);margin-bottom:8px;}
 .clusterBig{font-size:15px;line-height:1.5;color:var(--text);font-weight:600;}
 .clusterRoles{font-size:12.5px;color:var(--muted);margin-top:8px;}
+/* Index and futures clean report card. */
+.indexCard{padding:22px;}
+.idxHead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+.idxName{font-size:22px;font-weight:800;color:var(--text);letter-spacing:-.4px;}
+.idxSym{font-size:12px;color:var(--muted);font-family:var(--font-mono);margin-top:2px;}
+.idxPx{text-align:right;}
+.idxPrice{font-size:24px;font-weight:800;color:var(--text);font-family:var(--font-mono);}
+.idxChg{font-size:14px;font-weight:700;margin-top:2px;}
+.idxCtx{font-size:14px;color:var(--text);line-height:1.65;margin-top:16px;background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:14px;}
+.idxNote{font-size:12px;color:var(--muted);line-height:1.6;margin-top:12px;}
 </style>
 </head>
 <body>
@@ -2390,6 +2400,53 @@ function prettySector(k){
   return String(k).replace(/_/g, " ").replace(/\b\w/g, function(c){ return c.toUpperCase(); });
 }
 
+function renderIndexReport(d){
+  // Clean, simplified report for an index or future: name, price, change, plain context. No stock
+  // sections. Reuses the report shell but hides everything company specific.
+  document.getElementById("stockSections").style.display = "none";
+  var etfS = document.getElementById("etfSections");
+  if(etfS){ etfS.style.display = "none"; }
+  document.getElementById("sym").textContent = d.symbol || "";
+  document.getElementById("sfull").textContent = d.name || "";
+  var sect = document.getElementById("ssect");
+  if(sect){ sect.textContent = "Market Index"; }
+  document.getElementById("spx").textContent = "$" + (d.price || 0).toLocaleString();
+  var chg = document.getElementById("schg");
+  if(chg){
+    var cp = d.change_pct || 0;
+    chg.textContent = (cp >= 0 ? "+" : "") + cp + "% today";
+    chg.className = "schg " + (cp >= 0 ? "up" : "down");
+  }
+  // Remove any leftover injected cards from a previous stock report.
+  ["altCard", "gubaCard", "patCard", "clusterCard", "stChartCard"].forEach(function(id){
+    var el = document.getElementById(id); if(el){ el.style.display = "none"; }
+  });
+  var host = document.getElementById("stockSections");
+  // Build a single clean card in a dedicated container so we do not disturb stock section markup.
+  var wrap = document.getElementById("indexReportWrap");
+  if(!wrap){
+    wrap = document.createElement("div");
+    wrap.id = "indexReportWrap";
+    var ra = document.getElementById("reportArea");
+    var anchor = document.getElementById("stockSections");
+    if(anchor && anchor.parentNode){ anchor.parentNode.insertBefore(wrap, anchor); }
+    else if(ra){ ra.appendChild(wrap); }
+  }
+  wrap.style.display = "";
+  var cp2 = d.change_pct || 0;
+  var col = cp2 >= 0 ? "var(--green)" : "var(--red)";
+  wrap.innerHTML = "<div class='ic indexCard'>" +
+    "<div class='idxHead'><div><div class='idxName'>" + (d.name || d.symbol) + "</div><div class='idxSym'>" + (d.symbol || "") + "</div></div>" +
+    "<div class='idxPx'><div class='idxPrice'>$" + (d.price || 0).toLocaleString() + "</div>" +
+    "<div class='idxChg' style='color:" + col + "'>" + (cp2 >= 0 ? "+" : "") + cp2 + "% today</div></div></div>" +
+    (d.market_context ? "<div class='idxCtx'>" + d.market_context + "</div>" : "") +
+    "<div class='idxNote'>" + (d.index_note || "") + "</div></div>";
+  var ra2 = document.getElementById("reportArea");
+  if(ra2){ ra2.style.display = ""; }
+  document.getElementById("rpt").style.opacity = "1";
+  if(typeof focusReport === "function"){ focusReport(); }
+}
+
 function renderETFReport(d){
   // Header shell, shared with the stock report
   document.getElementById("sym").textContent = d.symbol || "";
@@ -2748,8 +2805,14 @@ function run(){
       renderETFReport(d);
       return;
     }
+    if(d.verdict === "INDEX"){
+      renderIndexReport(d);
+      return;
+    }
     document.getElementById("stockSections").style.display = "";
     document.getElementById("etfSections").style.display = "none";
+    var _iw = document.getElementById("indexReportWrap");
+    if(_iw){ _iw.style.display = "none"; }
     renderAlpha(d);
 
     document.getElementById("sym").textContent = d.symbol || val;
