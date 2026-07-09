@@ -6968,6 +6968,14 @@ import hashlib as _hashlib
 import base64 as _base64
 from urllib.parse import urlencode as _st_urlencode
 
+# SEC EDGAR pipeline. Guarded so a missing or broken module cannot crash app boot;
+# if the import fails, the cron route reports it cleanly instead of the app dying.
+try:
+    from sec_edgar_pipeline import fetch_sec_edgar_data as _fetch_sec_edgar_data
+except Exception as _sec_imp_err:
+    _fetch_sec_edgar_data = None
+    logger.error("sec_edgar_pipeline import failed: %s" % _sec_imp_err)
+
 SNAPTRADE_CLIENT_ID = os.environ.get("SNAPTRADE_CLIENT_ID", "").strip()
 SNAPTRADE_CONSUMER_KEY = os.environ.get("SNAPTRADE_CONSUMER_KEY", "").strip()
 SNAPTRADE_BASE = "https://api.snaptrade.com/api/v1"
@@ -8308,6 +8316,26 @@ try:
     _boot_timer.start()
 except Exception as _e:
     logger.error("warm boot: %s" % _e)
+
+
+@app.route("/cron/sec-edgar")
+def cron_sec_edgar():
+    # Token protected like the other cron routes: matches CRON_SECRET, no login.
+    secret = os.environ.get("CRON_SECRET", "").strip()
+    if secret and request.args.get("token", "") != secret:
+        return jsonify({"error": "unauthorized"}), 403
+    if _fetch_sec_edgar_data is None:
+        return jsonify({"error": "sec pipeline unavailable"}), 503
+    # Run the daily incremental scan in a background thread so the request returns
+    # immediately; a full EDGAR scan can take longer than an HTTP timeout allows.
+    def _run():
+        try:
+            summary = _fetch_sec_edgar_data(days_back=1)
+            logger.info("sec-edgar cron done: %s" % summary)
+        except Exception as e:
+            logger.error("sec-edgar cron error: %s" % e)
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"started": True})
 
 
 if __name__ == "__main__":
