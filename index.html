@@ -6559,12 +6559,13 @@ if(ib){
     var vb = document.getElementById("vbox");
     var sym = (document.getElementById("sym") || {}).textContent || "";
     var roles = (ac.executive_roles || []).join(", ");
-    var cap = ac.total_capital_deployed > 0 ? "$" + Number(ac.total_capital_deployed).toLocaleString() : "a notable amount";
+    var hasCap = ac.total_capital_deployed > 0;
+    var capStr = hasCap ? ("$" + Number(ac.total_capital_deployed).toLocaleString() + " of ") : "";
     var card = document.createElement("div");
     card.id = "clusterCard";
     card.className = "ic clusterCard";
     card.innerHTML = "<div class='clusterT'>&#128293; C Suite Accumulation Detected</div>" +
-      "<div class='clusterBig'>" + ac.unique_insiders_count + " distinct executives have bought " + cap + " of " + sym + " within 14 days.</div>" +
+      "<div class='clusterBig'>" + ac.unique_insiders_count + " distinct executives have bought " + capStr + sym + " within a 14 day window.</div>" +
       (roles ? "<div class='clusterRoles'>Roles involved: " + roles + "</div>" : "") +
       "<div class='aqEduBadge'>&#9888;&#65039; Educational research framework only. Not personalized financial advice.</div>";
     if(vb && vb.parentNode === host){ host.insertBefore(card, vb.nextSibling); }
