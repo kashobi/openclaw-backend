@@ -2939,12 +2939,18 @@ def detect_insider_cluster(ticker, company_name, insider_list):
 
 
 def _short_role(title):
+    import re as _re
     t = str(title or "").upper()
-    if "CHIEF EXECUTIVE" in t or "CEO" in t: return "CEO"
-    if "CHIEF FINANCIAL" in t or "CFO" in t: return "CFO"
-    if "CHIEF OPERATING" in t or "COO" in t: return "COO"
-    if "CHIEF TECH" in t or "CTO" in t: return "CTO"
-    for r in ["PRESIDENT", "CHAIR", "FOUNDER", "EVP", "SVP", "DIRECTOR", "OFFICER"]:
+    # Word-boundary matching. The old substring check mislabeled DIRECTOR as CTO, because
+    # "DIRECTOR" literally contains the letters C-T-O. Check the full titles first, then use
+    # word boundaries for the acronyms so a substring inside another word never matches.
+    if "CHIEF EXECUTIVE" in t or _re.search(r"\bCEO\b", t): return "CEO"
+    if "CHIEF FINANCIAL" in t or _re.search(r"\bCFO\b", t): return "CFO"
+    if "CHIEF OPERATING" in t or _re.search(r"\bCOO\b", t): return "COO"
+    if "CHIEF TECHNOLOGY" in t or "CHIEF TECHNICAL" in t or _re.search(r"\bCTO\b", t): return "CTO"
+    if "CHIEF" in t and "OFFICER" in t: return "Chief Officer"
+    if "DIRECTOR" in t: return "Director"
+    for r in ["PRESIDENT", "CHAIRMAN", "CHAIR", "FOUNDER", "EVP", "SVP", "VICE PRESIDENT", "OFFICER"]:
         if r in t:
             return r.title() if len(r) > 3 else r
     return (str(title)[:20] if title else "Executive")
