@@ -1395,7 +1395,7 @@ body{transition:background-color .3s ease,color .3s ease;}
         <div class="stChartMsg" id="stChartMsg" style="display:none"></div>
       </div>
       <div class="aqPrintBrand">Apex Q Intelligence Report</div>
-      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button><button class="shareBtn" id="pdfBtn">&#128196; PDF</button><button class="shareBtn" id="addPortBtn">&#43; Portfolio</button></div>
+      <div class="saveRow" id="saveRow" style="display:none"><button class="saveBtn" id="saveBtn">&#9734; Save to Watchlist</button><button class="shareBtn" id="shareBtn">&#128279; Share</button><button class="shareBtn" id="shareImgBtn">&#128248; Share Image</button><button class="shareBtn" id="pdfBtn">&#128196; PDF</button><button class="shareBtn" id="addPortBtn">&#43; Portfolio</button></div>
       <div class="addPortForm" id="addPortForm" style="display:none"><input class="cmpInp" id="addPortShares" type="number" step="any" min="0" placeholder="Shares" autocomplete="off"><input class="cmpInp" id="addPortCost" type="number" step="any" min="0" placeholder="Avg cost" autocomplete="off"><button class="cmpBtn" id="addPortSubmit">Add</button></div>
       <div id="verdictChangeBanner" style="display:none"></div>
       <div class="aq-audio-banner">
@@ -1471,6 +1471,7 @@ body{transition:background-color .3s ease,color .3s ease;}
       <div class="stitle">&#127963; The Political Conflict of Interest Scanner</div>
       <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">LOADING</div></div><div class="itxt aqSkel">Fetching the latest data. First analysis takes a few seconds, later loads are instant.</div></div></div>
       <div id="senateCard"></div>
+      <div id="lobbyCard"></div>
       <div class="stitle">&#128188; The Corporate Insider Conviction Engine</div>
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">LOADING</div></div><div class="itxt aqSkel">Fetching the latest data. First analysis takes a few seconds, later loads are instant.</div></div></div>
       </div>
@@ -4423,6 +4424,79 @@ function shareSnapshot(){
 }
 var _shareBtn = document.getElementById("shareBtn");
 if(_shareBtn){ _shareBtn.addEventListener("click", shareSnapshot); }
+// Share as image: capture the report card as a PNG via html2canvas, add an apexq.io watermark,
+// then use the native share sheet on mobile or copy to clipboard on desktop. Fully self contained;
+// html2canvas is loaded on demand so it never affects initial page load.
+function _loadHtml2Canvas(cb){
+  if(typeof html2canvas !== "undefined"){ cb(true); return; }
+  var sc = document.createElement("script");
+  sc.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+  sc.onload = function(){ cb(true); };
+  sc.onerror = function(){ cb(false); };
+  document.head.appendChild(sc);
+}
+function _captureReportImage(){
+  var rpt = document.getElementById("rpt");
+  if(!rpt){ showToast("Run a report first"); return; }
+  showToast("Building image...");
+  _loadHtml2Canvas(function(ok){
+    if(!ok || typeof html2canvas === "undefined"){
+      showToast("Share image is not available right now. Take a screenshot instead.");
+      return;
+    }
+    // Temporarily add a watermark node so it is captured inside the image.
+    var wm = document.createElement("div");
+    wm.setAttribute("style", "position:absolute;bottom:8px;right:12px;display:flex;align-items:center;gap:6px;font-family:var(--font-sans);font-weight:800;font-size:13px;color:var(--accent);opacity:.9;pointer-events:none;z-index:5;");
+    wm.innerHTML = "<span>&#9889; Apex Q</span><span style='color:var(--muted);font-weight:600'>apexq.io</span>";
+    var prevPos = rpt.style.position;
+    if(!prevPos){ rpt.style.position = "relative"; }
+    rpt.appendChild(wm);
+    var isDark = (document.documentElement.getAttribute("data-theme") || "dark") !== "light";
+    html2canvas(rpt, {backgroundColor: isDark ? "#0a0e14" : "#ffffff", scale: 2, useCORS: true, logging: false}).then(function(canvas){
+      rpt.removeChild(wm);
+      if(!prevPos){ rpt.style.position = ""; }
+      canvas.toBlob(function(blob){
+        if(!blob){ showToast("Share image is not available right now. Take a screenshot instead."); return; }
+        var file = null;
+        try { file = new File([blob], "apexq-report.png", {type: "image/png"}); } catch(e){ file = null; }
+        // Mobile: native share sheet with the image if supported.
+        if(file && navigator.canShare && navigator.canShare({files: [file]})){
+          navigator.share({files: [file], title: "Apex Q", text: "My Apex Q stock report"}).then(function(){
+            showToast("Shared!");
+          }).catch(function(){ _downloadCanvas(canvas); });
+          return;
+        }
+        // Desktop: try clipboard, fall back to download.
+        if(navigator.clipboard && window.ClipboardItem){
+          try {
+            navigator.clipboard.write([new ClipboardItem({"image/png": blob})]).then(function(){
+              showToast("Image copied! Share it anywhere.");
+            }).catch(function(){ _downloadCanvas(canvas); });
+            return;
+          } catch(e){ _downloadCanvas(canvas); return; }
+        }
+        _downloadCanvas(canvas);
+      }, "image/png");
+    }).catch(function(){
+      if(rpt.contains(wm)){ rpt.removeChild(wm); }
+      if(!prevPos){ rpt.style.position = ""; }
+      showToast("Share image is not available right now. Take a screenshot instead.");
+    });
+  });
+}
+function _downloadCanvas(canvas){
+  try {
+    var a = document.createElement("a");
+    a.download = "apexq-report.png";
+    a.href = canvas.toDataURL("image/png");
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    showToast("Image saved! Share it anywhere.");
+  } catch(e){
+    showToast("Share image is not available right now. Take a screenshot instead.");
+  }
+}
+var _shareImgBtn = document.getElementById("shareImgBtn");
+if(_shareImgBtn){ _shareImgBtn.addEventListener("click", _captureReportImage); }
 // PDF download: hide interactive chrome, print (the browser offers Save as PDF), then restore.
 // The @media print CSS is the belt; this JS is the suspenders for browsers that print immediately.
 var _pdfBtn = document.getElementById("pdfBtn");
@@ -5265,6 +5339,7 @@ if(ib){
     setTimeout(injectPatterns, 400);
     setTimeout(injectCluster, 250);
     setTimeout(function(){ if(typeof injectSenate === "function"){ injectSenate(); } }, 350);
+    setTimeout(function(){ if(typeof injectLobby === "function"){ injectLobby(); } }, 380);
     // Build the tab grouping once sections exist, then again after the async injectors have added
     // their cards, so late arrivals land in the correct tab instead of defaulting to overview.
     if(typeof applyReportTabs === "function"){
@@ -6210,11 +6285,12 @@ if(ib){
   // timeframe buttons, and a 60 second refresh on intraday views. Theme aware through the current
   // data-theme attribute. Falls back to an honest message if the library or data is unavailable.
   var _lwChart = null, _lwCandle = null, _lwVol = null, _lwSma = null, _lwTimer = null, _lwSym = null;
+  var _lwRsi = null, _lwMacd = null, _lwMacdSig = null, _lwMacdHist = null;
   function _chartColors(){
     var dark = (document.documentElement.getAttribute("data-theme") || "dark") !== "light";
     return dark
-      ? {bg:"transparent", text:"#7d8596", grid:"rgba(255,255,255,.05)", up:"#00e676", down:"#ff3d3d", vol:"rgba(125,133,150,.35)", sma:"#f4b740"}
-      : {bg:"transparent", text:"#64748b", grid:"rgba(0,0,0,.06)", up:"#0f7b4e", down:"#dc2626", vol:"rgba(100,116,139,.3)", sma:"#d97706"};
+      ? {bg:"transparent", text:"#7d8596", grid:"rgba(255,255,255,.05)", up:"#00e676", down:"#ff3d3d", vol:"rgba(125,133,150,.35)", sma:"#f4b740", rsi:"#a78bfa", macd:"#3b82f6", signal:"#f59e0b"}
+      : {bg:"transparent", text:"#64748b", grid:"rgba(0,0,0,.06)", up:"#0f7b4e", down:"#dc2626", vol:"rgba(100,116,139,.3)", sma:"#d97706", rsi:"#7c3aed", macd:"#2563eb", signal:"#d97706"};
   }
   function _sma(candles, len){
     var out = [];
@@ -6224,6 +6300,70 @@ if(ib){
       out.push({time: candles[i].time, value: +(sum / len).toFixed(2)});
     }
     return out;
+  }
+  // RSI (Wilder's smoothing), 14 period default. Returns [{time, value}].
+  function _rsi(candles, len){
+    len = len || 14;
+    if(candles.length <= len){ return []; }
+    var out = [], gains = 0, losses = 0;
+    for(var i = 1; i <= len; i++){
+      var ch = candles[i].close - candles[i - 1].close;
+      if(ch >= 0){ gains += ch; } else { losses -= ch; }
+    }
+    var avgGain = gains / len, avgLoss = losses / len;
+    var rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    out.push({time: candles[len].time, value: +(100 - 100 / (1 + rs)).toFixed(2)});
+    for(var k = len + 1; k < candles.length; k++){
+      var chg = candles[k].close - candles[k - 1].close;
+      var g = chg > 0 ? chg : 0, l = chg < 0 ? -chg : 0;
+      avgGain = (avgGain * (len - 1) + g) / len;
+      avgLoss = (avgLoss * (len - 1) + l) / len;
+      rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+      out.push({time: candles[k].time, value: +(100 - 100 / (1 + rs)).toFixed(2)});
+    }
+    return out;
+  }
+  // EMA of an array of closes, returns array aligned to candles (nulls before seed).
+  function _ema(values, len){
+    var out = [], k = 2 / (len + 1), prev = null;
+    for(var i = 0; i < values.length; i++){
+      if(i < len - 1){ out.push(null); continue; }
+      if(prev === null){
+        var sum = 0; for(var j = i - len + 1; j <= i; j++){ sum += values[j]; }
+        prev = sum / len;
+      } else {
+        prev = values[i] * k + prev * (1 - k);
+      }
+      out.push(prev);
+    }
+    return out;
+  }
+  // MACD(12,26,9). Returns {macd:[{time,value}], signal:[...], hist:[{time,value,color}]}.
+  function _macd(candles){
+    var closes = candles.map(function(x){ return x.close; });
+    var e12 = _ema(closes, 12), e26 = _ema(closes, 26);
+    var macdLine = [], macdVals = [];
+    for(var i = 0; i < candles.length; i++){
+      if(e12[i] === null || e26[i] === null){ macdVals.push(null); continue; }
+      var m = e12[i] - e26[i];
+      macdVals.push(m);
+      macdLine.push({time: candles[i].time, value: +m.toFixed(3)});
+    }
+    var compact = macdVals.filter(function(v){ return v !== null; });
+    var sigRaw = _ema(compact, 9);
+    var signal = [], hist = [];
+    var si = 0;
+    for(var j = 0; j < candles.length; j++){
+      if(macdVals[j] === null){ continue; }
+      var sv = sigRaw[si];
+      if(sv !== null && sv !== undefined){
+        signal.push({time: candles[j].time, value: +sv.toFixed(3)});
+        var h = macdVals[j] - sv;
+        hist.push({time: candles[j].time, value: +h.toFixed(3), _pos: h >= 0});
+      }
+      si++;
+    }
+    return {macd: macdLine, signal: signal, hist: hist};
   }
   function renderStockChart(symbol, period, interval){
     var card = document.getElementById("stChartCard");
@@ -6269,6 +6409,34 @@ if(ib){
         if(d.data.length >= 200){
           _lwSma = _lwChart.addLineSeries({color: c.sma, lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false});
           _lwSma.setData(_sma(d.data, 200));
+        }
+        // RSI and MACD indicator panes. Hidden on small screens to avoid clutter.
+        var showInd = window.innerWidth >= 768;
+        if(showInd && d.data.length > 35){
+          // Compress the main price into the top ~55% so the indicator panes have room.
+          _lwChart.priceScale("right").applyOptions({scaleMargins: {top: 0.02, bottom: 0.45}});
+          _lwChart.priceScale("vol").applyOptions({scaleMargins: {top: 0.50, bottom: 0.38}});
+          // RSI pane (middle band).
+          var rsiData = _rsi(d.data, 14);
+          if(rsiData.length){
+            _lwRsi = _lwChart.addLineSeries({priceScaleId: "rsi", color: c.rsi, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false});
+            _lwChart.priceScale("rsi").applyOptions({scaleMargins: {top: 0.62, bottom: 0.22}});
+            _lwRsi.setData(rsiData);
+            // Overbought 70 (red) and oversold 30 (green) reference lines.
+            _lwRsi.createPriceLine({price: 70, color: c.down, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "70"});
+            _lwRsi.createPriceLine({price: 30, color: c.up, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "30"});
+          }
+          // MACD pane (bottom band): histogram + macd line + signal line.
+          var macd = _macd(d.data);
+          if(macd.macd.length){
+            _lwMacdHist = _lwChart.addHistogramSeries({priceScaleId: "macd", priceLineVisible: false, lastValueVisible: false});
+            _lwChart.priceScale("macd").applyOptions({scaleMargins: {top: 0.80, bottom: 0.02}});
+            _lwMacdHist.setData(macd.hist.map(function(x){ return {time: x.time, value: x.value, color: x._pos ? c.up : c.down}; }));
+            _lwMacd = _lwChart.addLineSeries({priceScaleId: "macd", color: c.macd, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false});
+            _lwMacd.setData(macd.macd);
+            _lwMacdSig = _lwChart.addLineSeries({priceScaleId: "macd", color: c.signal, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false});
+            _lwMacdSig.setData(macd.signal);
+          }
         }
         _lwChart.timeScale().fitContent();
         // Live refresh of the last candle on intraday views only.
@@ -6620,6 +6788,7 @@ if(ib){
     ["stChartCard", "chart"], ["patCard", "chart"],
     ["cong", "congress"],
     ["senateCard", "congress"],
+    ["lobbyCard", "congress"],
     ["ins", "insiders"], ["clusterCard", "insiders"],
     ["analystConsensus", "fundamentals"], ["deepFund", "fundamentals"],
     ["sectorCard", "fundamentals"], ["valGrid", "fundamentals"], ["grades", "fundamentals"],
@@ -6812,6 +6981,36 @@ if(ib){
     return m[abbr] || abbr;
   }
   window.injectSenate = injectSenate;
+
+  // Lobbying Activity card. Reads our own LDA data via /api/lobbying. Shows who lobbied on behalf
+  // of this company, how much, and on what. No competitor surfaces this for retail users.
+  function injectLobby(sym){
+    var card = document.getElementById("lobbyCard");
+    if(!card){ return; }
+    var s = sym || currentSymbol || (document.getElementById("sym") || {}).textContent || "";
+    if(!s){ card.innerHTML = ""; return; }
+    fetch(API + "/api/lobbying?symbol=" + encodeURIComponent(s)).then(function(r){ return r.json(); }).then(function(d){
+      var recs = (d && d.records) || [];
+      var head = "<div class='snHead'><div class='snHeadL'><div class='snIcon'>&#127963;&#65039;</div>" +
+        "<div><div class='snTitle'>Lobbying Activity</div><div class='snSub'>Who is lobbying, and on what</div></div></div>" +
+        "<span class='snLive'>LDA</span></div>";
+      if(!recs.length){
+        card.innerHTML = "<div class='ic senateCardIc'>" + head + "<div class='snEmpty'>No recent lobbying activity on record for " + esc(s) + ".</div></div>";
+        return;
+      }
+      var rows = recs.slice(0, 3).map(function(r){
+        var amt = r.amount ? ("$" + Number(r.amount).toLocaleString()) : "Amount not disclosed";
+        var per = [r.filing_period, r.filing_year].filter(Boolean).join(" ");
+        return "<div class='snRow' style='border-left-color:#a78bfa'>" +
+          "<div class='snRowMid'><div class='snTicker' style='font-family:var(--font-sans)'>" + esc(r.registrant_name || "Registrant") + "</div>" +
+          "<div class='snDate'>" + esc(r.issue_description || "General lobbying") + (per ? (" \u00b7 " + esc(per)) : "") + "</div></div>" +
+          "<div class='snAmt'>" + esc(amt) + "</div></div>";
+      }).join("");
+      card.innerHTML = "<div class='ic senateCardIc'>" + head + rows +
+        "<div class='snFoot'>&#128737;&#65039; Sourced from US Senate Lobbying Disclosure Act filings</div></div>";
+    }).catch(function(){ card.innerHTML = ""; });
+  }
+  window.injectLobby = injectLobby;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
