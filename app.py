@@ -6968,14 +6968,6 @@ import hashlib as _hashlib
 import base64 as _base64
 from urllib.parse import urlencode as _st_urlencode
 
-# SEC EDGAR pipeline. Guarded so a missing or broken module cannot crash app boot;
-# if the import fails, the cron route reports it cleanly instead of the app dying.
-try:
-    from sec_edgar_pipeline import fetch_sec_edgar_data as _fetch_sec_edgar_data
-except Exception as _sec_imp_err:
-    _fetch_sec_edgar_data = None
-    logger.error("sec_edgar_pipeline import failed: %s" % _sec_imp_err)
-
 SNAPTRADE_CLIENT_ID = os.environ.get("SNAPTRADE_CLIENT_ID", "").strip()
 SNAPTRADE_CONSUMER_KEY = os.environ.get("SNAPTRADE_CONSUMER_KEY", "").strip()
 SNAPTRADE_BASE = "https://api.snaptrade.com/api/v1"
@@ -8318,19 +8310,451 @@ except Exception as _e:
     logger.error("warm boot: %s" % _e)
 
 
+
+
+# =========================================================================== #
+# SEC EDGAR DATA PIPELINE (inlined)
+# Fetches insider transactions (Forms 3/4/5) and financials (10-K/10-Q) directly
+# from SEC EDGAR and stores them in PostgreSQL. Owns its own tables. Uses a
+# private logger (sec_logger) so it never disturbs the app's global logger.
+# =========================================================================== #
+from psycopg2.extras import Json as _SecJson
+from datetime import date as _sec_date
+from xml.etree import ElementTree as _SecET
+
+sec_logger = logging.getLogger("sec_edgar_pipeline")
+
+SEC_USER_AGENT = "ApexQ/1.0 support@apexq.io"
+MAX_REQUESTS_PER_SECOND = 8
+SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+SEC_DAILY_INDEX_BASE = "https://www.sec.gov/Archives/edgar/daily-index"
+SEC_COMPANY_FACTS_BASE = "https://data.sec.gov/api/xbrl/companyfacts"
+SEC_ARCHIVES_BASE = "https://www.sec.gov/Archives"
+SEC_INSIDER_FORMS = {"3", "4", "5", "3/A", "4/A", "5/A"}
+SEC_FINANCIAL_FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A"}
+SEC_TRANSACTION_CODE_MAP = {
+    "P": "buy", "S": "sell", "A": "grant", "M": "option_exercise", "X": "option_exercise",
+    "F": "tax_withholding", "G": "other", "D": "other", "C": "other", "V": "other", "J": "other",
+}
+
+
+class _SecTokenBucket:
+    """At most `rate` requests per second, blocking when dry. Keeps us under SEC's ceiling."""
+    def __init__(self, rate):
+        self.rate = float(rate); self.capacity = float(rate); self.tokens = float(rate)
+        self.last = time.monotonic(); self.lock = threading.Lock()
+    def take(self):
+        with self.lock:
+            now = time.monotonic()
+            self.tokens = min(self.capacity, self.tokens + (now - self.last) * self.rate)
+            self.last = now
+            if self.tokens < 1.0:
+                time.sleep((1.0 - self.tokens) / self.rate); self.tokens = 0.0
+            else:
+                self.tokens -= 1.0
+
+
+_sec_bucket = _SecTokenBucket(MAX_REQUESTS_PER_SECOND)
+
+
+def _sec_get(url, expect_json=False, timeout=30, retries=3):
+    """Polite SEC GET: rate limited, proper User-Agent, retry with backoff. Never raises."""
+    headers = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
+    for attempt in range(retries):
+        _sec_bucket.take()
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 200:
+                return r
+            if r.status_code == 404:
+                sec_logger.warning("404 not found: %s", url); return None
+            if r.status_code == 429:
+                wait = 2 ** attempt
+                sec_logger.warning("429 from SEC, backing off %ss: %s", wait, url)
+                time.sleep(wait); continue
+            sec_logger.warning("HTTP %s on %s (attempt %s)", r.status_code, url, attempt + 1)
+        except requests.RequestException as e:
+            sec_logger.warning("request error on %s: %s (attempt %s)", url, e, attempt + 1)
+        time.sleep(1 + attempt)
+    sec_logger.error("giving up on %s after %s attempts", url, retries)
+    return None
+
+
+def _sec_connect():
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise RuntimeError("DATABASE_URL is not set; cannot connect to PostgreSQL.")
+    if dsn.startswith("postgres://"):
+        dsn = dsn.replace("postgres://", "postgresql://", 1)
+    return psycopg2.connect(dsn)
+
+
+def sec_create_tables(conn):
+    cur = conn.cursor()
+    cur.execute("""CREATE TABLE IF NOT EXISTS sec_filings_raw (
+        id SERIAL PRIMARY KEY, cik TEXT, ticker TEXT, form_type TEXT, filing_date DATE,
+        accession_number TEXT UNIQUE, raw_json JSONB, parse_status TEXT DEFAULT 'parsed',
+        fetched_at TIMESTAMP DEFAULT NOW())""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS insider_transactions_sec (
+        id SERIAL PRIMARY KEY, filing_id INTEGER REFERENCES sec_filings_raw(id) ON DELETE CASCADE,
+        insider_name TEXT, insider_title TEXT, transaction_date DATE, transaction_code TEXT,
+        shares NUMERIC, price NUMERIC, ownership_type TEXT, derived_ticker TEXT,
+        created_at TIMESTAMP DEFAULT NOW())""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS company_financials_sec (
+        id SERIAL PRIMARY KEY, filing_id INTEGER REFERENCES sec_filings_raw(id) ON DELETE CASCADE,
+        ticker TEXT, period_end_date DATE, revenue NUMERIC, net_income NUMERIC, eps NUMERIC,
+        total_assets NUMERIC, total_liabilities NUMERIC, operating_cash_flow NUMERIC,
+        capex NUMERIC, source_text TEXT, created_at TIMESTAMP DEFAULT NOW())""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ins_sec_ticker ON insider_transactions_sec(derived_ticker)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fin_sec_ticker ON company_financials_sec(ticker)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_raw_accession ON sec_filings_raw(accession_number)")
+    conn.commit(); cur.close()
+    sec_logger.info("sec tables ready")
+
+
+def _sec_filing_exists(conn, accession_number):
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM sec_filings_raw WHERE accession_number = %s", (accession_number,))
+    row = cur.fetchone(); cur.close()
+    return row[0] if row else None
+
+
+def _sec_last_filing_date(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(filing_date) FROM sec_filings_raw")
+    row = cur.fetchone(); cur.close()
+    return row[0] if row and row[0] else None
+
+
+_sec_ticker_cache = {"map": None, "loaded_at": 0}
+
+
+def sec_load_cik_ticker_map():
+    if _sec_ticker_cache["map"] and (time.time() - _sec_ticker_cache["loaded_at"]) < 3600:
+        return _sec_ticker_cache["map"]
+    r = _sec_get(SEC_TICKERS_URL)
+    if r is None:
+        sec_logger.error("could not load company_tickers.json")
+        return _sec_ticker_cache["map"] or {}
+    try:
+        data = r.json()
+    except ValueError:
+        sec_logger.error("company_tickers.json not valid JSON")
+        return _sec_ticker_cache["map"] or {}
+    mapping = {}
+    for _, row in data.items():
+        cik = str(row.get("cik_str", "")).zfill(10)
+        ticker = row.get("ticker")
+        if cik and ticker:
+            mapping[cik] = ticker.upper()
+    _sec_ticker_cache["map"] = mapping
+    _sec_ticker_cache["loaded_at"] = time.time()
+    sec_logger.info("loaded %s CIK->ticker mappings", len(mapping))
+    return mapping
+
+
+def sec_cik_to_ticker(cik):
+    return sec_load_cik_ticker_map().get(str(cik).zfill(10))
+
+
+def _sec_quarter_for(d):
+    return (d.month - 1) // 3 + 1
+
+
+def sec_fetch_daily_master(target_date):
+    y = target_date.year; q = _sec_quarter_for(target_date); stamp = target_date.strftime("%Y%m%d")
+    url = "%s/%s/QTR%s/master.%s.idx" % (SEC_DAILY_INDEX_BASE, y, q, stamp)
+    r = _sec_get(url)
+    if r is None:
+        return []
+    filings = []
+    for line in r.text.splitlines():
+        parts = line.split("|")
+        if len(parts) != 5:
+            continue
+        cik, company, form_type, date_filed, filename = parts
+        if not cik.isdigit():
+            continue
+        form_type = form_type.strip()
+        if form_type not in SEC_INSIDER_FORMS and form_type not in SEC_FINANCIAL_FORMS:
+            continue
+        m = re.search(r"(\d{10}-\d{2}-\d{6})", filename)
+        accession = m.group(1) if m else None
+        filings.append({"cik": cik, "company": company.strip(), "form_type": form_type,
+                        "filing_date": target_date, "filename": filename.strip(),
+                        "accession_number": accession})
+    sec_logger.info("%s: %s relevant filings", stamp, len(filings))
+    return filings
+
+
+def _sec_strip_ns(tag):
+    return tag.split("}")[-1] if "}" in tag else tag
+
+
+def _sec_find_text(node, path):
+    for child in node.iter():
+        if _sec_strip_ns(child.tag) == path:
+            for sub in child:
+                if _sec_strip_ns(sub.tag) == "value":
+                    return (sub.text or "").strip()
+            return (child.text or "").strip()
+    return None
+
+
+def _sec_to_num(val):
+    if val is None or val == "":
+        return None
+    try:
+        return float(str(val).replace(",", ""))
+    except (ValueError, TypeError):
+        return None
+
+
+def sec_parse_form4_xml(xml_text):
+    try:
+        root = _SecET.fromstring(xml_text)
+    except _SecET.ParseError as e:
+        sec_logger.warning("form4 xml parse error: %s", e)
+        return None
+    owner_name = None; owner_title = None
+    for node in root.iter():
+        tag = _sec_strip_ns(node.tag)
+        if tag == "rptOwnerName" and node.text:
+            owner_name = node.text.strip()
+        if tag == "officerTitle" and node.text:
+            owner_title = node.text.strip()
+    if not owner_title:
+        for node in root.iter():
+            tag = _sec_strip_ns(node.tag)
+            if tag == "isDirector" and (node.text or "").strip() in ("1", "true"):
+                owner_title = "Director"
+            if tag == "isOfficer" and (node.text or "").strip() in ("1", "true") and not owner_title:
+                owner_title = "Officer"
+    transactions = []
+
+    def _collect(table_tag, is_derivative):
+        for node in root.iter():
+            if _sec_strip_ns(node.tag) != table_tag:
+                continue
+            for txn in node:
+                if _sec_strip_ns(txn.tag) not in ("nonDerivativeTransaction", "derivativeTransaction"):
+                    continue
+                transactions.append({
+                    "transaction_code": _sec_find_text(txn, "transactionCode"),
+                    "transaction_date": _sec_find_text(txn, "transactionDate"),
+                    "shares": _sec_to_num(_sec_find_text(txn, "transactionShares")),
+                    "price": _sec_to_num(_sec_find_text(txn, "transactionPricePerShare")),
+                    "ownership_type": _sec_find_text(txn, "directOrIndirectOwnership"),
+                    "is_derivative": is_derivative,
+                })
+    _collect("nonDerivativeTable", False)
+    _collect("derivativeTable", True)
+    return {"owner_name": owner_name, "owner_title": owner_title, "transactions": transactions}
+
+
+def _sec_extract_xml(txt_body):
+    m = re.search(r"(<ownershipDocument>.*?</ownershipDocument>)", txt_body, re.DOTALL | re.IGNORECASE)
+    if m:
+        return m.group(1)
+    for block in re.findall(r"<XML>(.*?)</XML>", txt_body, re.DOTALL | re.IGNORECASE):
+        if "ownershipDocument" in block:
+            return block.strip()
+    return None
+
+
+def sec_classify_transaction(code):
+    if not code:
+        return "other"
+    return SEC_TRANSACTION_CODE_MAP.get(code.strip().upper(), "other")
+
+
+def _sec_submission_txt_url(cik, accession_number):
+    acc_nodash = accession_number.replace("-", "")
+    return "%s/edgar/data/%s/%s/%s.txt" % (SEC_ARCHIVES_BASE, int(cik), acc_nodash, accession_number)
+
+
+def _sec_safe_date(s):
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def sec_process_insider_filing(conn, filing):
+    accession = filing.get("accession_number")
+    if not accession:
+        sec_logger.warning("insider filing missing accession"); return
+    if _sec_filing_exists(conn, accession):
+        return
+    cik = filing["cik"]; ticker = sec_cik_to_ticker(cik)
+    r = _sec_get(_sec_submission_txt_url(cik, accession))
+    cur = conn.cursor()
+    if r is None:
+        cur.execute("INSERT INTO sec_filings_raw (cik, ticker, form_type, filing_date, accession_number, raw_json, parse_status) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,'unparsed') ON CONFLICT (accession_number) DO NOTHING",
+                    (cik, ticker, filing["form_type"], filing["filing_date"], accession, _SecJson({"error": "fetch_failed"})))
+        conn.commit(); cur.close(); return
+    xml_text = _sec_extract_xml(r.text)
+    parsed = sec_parse_form4_xml(xml_text) if xml_text else None
+    status = "parsed" if parsed and parsed["transactions"] else "unparsed"
+    cur.execute("INSERT INTO sec_filings_raw (cik, ticker, form_type, filing_date, accession_number, raw_json, parse_status) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (accession_number) DO NOTHING RETURNING id",
+                (cik, ticker, filing["form_type"], filing["filing_date"], accession,
+                 _SecJson({"accession": accession, "form": filing["form_type"], "has_xml": bool(xml_text)}), status))
+    row = cur.fetchone()
+    if not row:
+        conn.commit(); cur.close(); return
+    filing_id = row[0]
+    if parsed and parsed["transactions"]:
+        for t in parsed["transactions"]:
+            category = sec_classify_transaction(t["transaction_code"])
+            cur.execute("INSERT INTO insider_transactions_sec (filing_id, insider_name, insider_title, "
+                        "transaction_date, transaction_code, shares, price, ownership_type, derived_ticker) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (filing_id, parsed["owner_name"], parsed["owner_title"], _sec_safe_date(t["transaction_date"]),
+                         (t["transaction_code"] or "") + ":" + category, t["shares"], t["price"],
+                         t["ownership_type"], ticker))
+        sec_logger.info("stored %s insider txns for %s (%s)", len(parsed["transactions"]), ticker or cik, accession)
+    else:
+        sec_logger.info("insider filing %s stored unparsed", accession)
+    conn.commit(); cur.close()
+
+
+SEC_XBRL_CONCEPTS = {
+    "revenue": ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"],
+    "net_income": ["NetIncomeLoss", "ProfitLoss"],
+    "eps": ["EarningsPerShareDiluted", "EarningsPerShareBasic"],
+    "total_assets": ["Assets"], "total_liabilities": ["Liabilities"],
+    "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities"],
+    "capex": ["PaymentsToAcquirePropertyPlantAndEquipment"],
+}
+
+
+def _sec_latest_xbrl_value(facts, concepts, period_end=None):
+    for concept in concepts:
+        node = facts.get("us-gaap", {}).get(concept)
+        if not node:
+            continue
+        units = node.get("units", {})
+        series = units.get("USD") or units.get("USD/shares") or next(iter(units.values()), [])
+        if not series:
+            continue
+        dated = [x for x in series if x.get("end")]
+        dated.sort(key=lambda x: x["end"], reverse=True)
+        if period_end:
+            for x in dated:
+                if x["end"] == period_end:
+                    return x.get("val"), x["end"]
+        if dated:
+            return dated[0].get("val"), dated[0]["end"]
+    return None, None
+
+
+def sec_process_financial_filing(conn, filing):
+    accession = filing.get("accession_number")
+    if not accession or _sec_filing_exists(conn, accession):
+        return
+    cik = filing["cik"]; ticker = sec_cik_to_ticker(cik)
+    cur = conn.cursor()
+    r = _sec_get("%s/CIK%s.json" % (SEC_COMPANY_FACTS_BASE, str(cik).zfill(10)), expect_json=True)
+    if r is None:
+        cur.execute("INSERT INTO sec_filings_raw (cik, ticker, form_type, filing_date, accession_number, raw_json, parse_status) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,'unparsed') ON CONFLICT (accession_number) DO NOTHING",
+                    (cik, ticker, filing["form_type"], filing["filing_date"], accession, _SecJson({"error": "no_xbrl"})))
+        conn.commit(); cur.close(); return
+    try:
+        facts_root = r.json().get("facts", {})
+    except ValueError:
+        facts_root = {}
+    metrics = {}; period_end = None
+    for col, concepts in SEC_XBRL_CONCEPTS.items():
+        val, pend = _sec_latest_xbrl_value(facts_root, concepts)
+        metrics[col] = val
+        if pend and not period_end:
+            period_end = pend
+    got_any = any(v is not None for v in metrics.values())
+    status = "parsed" if got_any else "unparsed"
+    cur.execute("INSERT INTO sec_filings_raw (cik, ticker, form_type, filing_date, accession_number, raw_json, parse_status) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (accession_number) DO NOTHING RETURNING id",
+                (cik, ticker, filing["form_type"], filing["filing_date"], accession,
+                 _SecJson({"accession": accession, "form": filing["form_type"], "xbrl": got_any}), status))
+    row = cur.fetchone()
+    if not row:
+        conn.commit(); cur.close(); return
+    filing_id = row[0]
+    if got_any:
+        cur.execute("INSERT INTO company_financials_sec (filing_id, ticker, period_end_date, revenue, net_income, "
+                    "eps, total_assets, total_liabilities, operating_cash_flow, capex, source_text) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (filing_id, ticker, _sec_safe_date(period_end), metrics["revenue"], metrics["net_income"],
+                     metrics["eps"], metrics["total_assets"], metrics["total_liabilities"],
+                     metrics["operating_cash_flow"], metrics["capex"], "xbrl:companyfacts"))
+        sec_logger.info("stored financials for %s (%s)", ticker or cik, accession)
+    else:
+        sec_logger.info("financial filing %s stored unparsed", accession)
+    conn.commit(); cur.close()
+
+
+def fetch_sec_edgar_data(days_back=1, max_filings=None):
+    """Main entry point. Discover and process new SEC filings. Safe from a cron route."""
+    started = time.time()
+    conn = _sec_connect()
+    try:
+        sec_create_tables(conn)
+        sec_load_cik_ticker_map()
+        last = _sec_last_filing_date(conn)
+        today = _sec_date.today()
+        start_day = today - timedelta(days=days_back)
+        if last:
+            start_day = min(start_day, last + timedelta(days=1))
+        summary = {"insider": 0, "financial": 0, "skipped_existing": 0, "days": 0, "errors": 0}
+        processed = 0; day = start_day
+        while day <= today:
+            summary["days"] += 1
+            try:
+                filings = sec_fetch_daily_master(day)
+            except Exception as e:
+                sec_logger.error("daily index %s: %s", day, e); summary["errors"] += 1
+                day += timedelta(days=1); continue
+            for f in filings:
+                if max_filings and processed >= max_filings:
+                    day = today; break
+                accession = f.get("accession_number")
+                if accession and _sec_filing_exists(conn, accession):
+                    summary["skipped_existing"] += 1; continue
+                try:
+                    if f["form_type"] in SEC_INSIDER_FORMS:
+                        sec_process_insider_filing(conn, f); summary["insider"] += 1
+                    elif f["form_type"] in SEC_FINANCIAL_FORMS:
+                        sec_process_financial_filing(conn, f); summary["financial"] += 1
+                    processed += 1
+                except Exception as e:
+                    sec_logger.error("error processing %s: %s", accession, e)
+                    summary["errors"] += 1; conn.rollback()
+            day += timedelta(days=1)
+        summary["elapsed_sec"] = round(time.time() - started, 1)
+        sec_logger.info("sec run complete: %s", summary)
+        return summary
+    finally:
+        conn.close()
+# =========================================================================== #
+# END SEC EDGAR DATA PIPELINE
+# =========================================================================== #
+
+
 @app.route("/cron/sec-edgar")
 def cron_sec_edgar():
     # Token protected like the other cron routes: matches CRON_SECRET, no login.
     secret = os.environ.get("CRON_SECRET", "").strip()
     if secret and request.args.get("token", "") != secret:
         return jsonify({"error": "unauthorized"}), 403
-    if _fetch_sec_edgar_data is None:
-        return jsonify({"error": "sec pipeline unavailable"}), 503
     # Run the daily incremental scan in a background thread so the request returns
     # immediately; a full EDGAR scan can take longer than an HTTP timeout allows.
     def _run():
         try:
-            summary = _fetch_sec_edgar_data(days_back=1)
+            summary = fetch_sec_edgar_data(days_back=1)
             logger.info("sec-edgar cron done: %s" % summary)
         except Exception as e:
             logger.error("sec-edgar cron error: %s" % e)
