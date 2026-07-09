@@ -635,6 +635,59 @@ def score_to_conviction(score):
         return "Very Low"
 
 
+@app.route("/cron/lda-lobbying")
+def cron_lda_lobbying():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        from lda_pipeline import fetch_lobbying_data
+    except Exception as e:
+        logger.error("lda import failed: %s" % e)
+        return jsonify({"error": "lda pipeline unavailable"}), 503
+    try:
+        return jsonify(fetch_lobbying_data(pages=3))
+    except Exception as e:
+        logger.error("lda run error: %s" % e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/lobbying")
+def api_lobbying():
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    if not symbol:
+        return jsonify({"symbol": "", "records": []})
+    ck = "lobbying_" + symbol
+    cached = CACHE.get(ck)
+    if cached and (time.time() - cached[1]) < 900:
+        return jsonify(cached[0])
+    out = {"symbol": symbol, "records": []}
+    conn = get_db()
+    if conn is None:
+        return jsonify(out)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT registrant_name, client_name, amount, issue_description, filing_year, filing_period "
+            "FROM lobbying_disclosures WHERE client_ticker = %s "
+            "ORDER BY filing_year DESC, id DESC LIMIT 10", (symbol,))
+        for r in cur.fetchall():
+            out["records"].append({
+                "registrant_name": r[0], "client_name": r[1],
+                "amount": float(r[2]) if r[2] is not None else None,
+                "issue_description": r[3], "filing_year": r[4], "filing_period": r[5],
+            })
+        cur.close(); conn.close()
+    except Exception as e:
+        logger.error("api_lobbying: %s" % e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return jsonify(out)
+    CACHE[ck] = (out, time.time())
+    return jsonify(out)
+
+
 @app.route("/cron/senate-trades")
 def cron_senate_trades():
     # Token gate, same pattern as the SEC cron. Independent of SEC entirely.
