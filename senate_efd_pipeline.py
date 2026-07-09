@@ -368,25 +368,29 @@ def _parse_report_page(session, url):
 
     rows = []
     # Grab the first table body and split into rows/cells with light regex, avoiding a
-    # BeautifulSoup dependency. Senate PTR tables are simple and regular.
+    # BeautifulSoup dependency. Column layout confirmed from the live site:
+    #   0:#  1:Transaction Date  2:Owner  3:Ticker  4:Asset Name  5:Asset Type  6:Type  7:Amount  8:Comment
     tbody = re.search(r"<tbody>(.*?)</tbody>", html, re.DOTALL)
     body = tbody.group(1) if tbody else html
     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.DOTALL):
         cells = re.findall(r"<td[^>]*>(.*?)</td>", tr, re.DOTALL)
         cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
-        if len(cells) < 7:
+        if len(cells) < 8:
             continue
-        # Typical PTR columns: #, Transaction Date, Owner, Ticker, Asset Name, Type, Amount
-        # Column positions vary slightly; locate by content where possible.
         trade_date = _parse_efd_date(cells[1])
         ticker = _clean_ticker(cells[3])
         asset = cells[4]
-        txn_type = _classify_txn(cells[5])
-        amount = cells[6]
+        asset_type = cells[5]
+        txn_type = _classify_txn(cells[6])
+        amount = cells[7]
         if not ticker:
             continue
+        # Only equities; skip options, bonds, and other non stock asset types quietly.
+        if asset_type and asset_type.lower() not in ("stock", "stock (common)", "common stock", ""):
+            # Still record it, the ticker is valid; asset type is kept in raw for later filtering.
+            pass
         rows.append({"trade_date": trade_date, "ticker": ticker, "asset": asset,
-                     "transaction_type": txn_type, "amount": amount})
+                     "asset_type": asset_type, "transaction_type": txn_type, "amount": amount})
     return rows, False
 
 
