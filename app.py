@@ -8746,20 +8746,28 @@ def fetch_sec_edgar_data(days_back=1, max_filings=None):
 
 @app.route("/cron/sec-edgar")
 def cron_sec_edgar():
-    # Token protected like the other cron routes: matches CRON_SECRET, no login.
-    secret = os.environ.get("CRON_SECRET", "").strip()
-    if secret and request.args.get("token", "") != secret:
+    # Token gate: reject anything whose token does not match CRON_SECRET.
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
         return jsonify({"error": "unauthorized"}), 403
-    # Run the daily incremental scan in a background thread so the request returns
-    # immediately; a full EDGAR scan can take longer than an HTTP timeout allows.
-    def _run():
+    # Prefer the inlined pipeline function if present; otherwise import the standalone module
+    # locally (inside the route) so a missing module never breaks app startup. Either way we call
+    # the same entry point and return its summary directly so a manual browser run shows results.
+    try:
+        runner = fetch_sec_edgar_data
+    except NameError:
+        runner = None
+    if runner is None:
         try:
-            summary = fetch_sec_edgar_data(days_back=1)
-            logger.info("sec-edgar cron done: %s" % summary)
+            from sec_edgar_pipeline import fetch_sec_edgar_data as runner
         except Exception as e:
-            logger.error("sec-edgar cron error: %s" % e)
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify({"started": True})
+            logger.error("sec-edgar import failed: %s" % e)
+            return jsonify({"error": "sec pipeline unavailable"}), 503
+    try:
+        result = runner(days_back=1)
+        return jsonify(result)
+    except Exception as e:
+        logger.error("sec-edgar run error: %s" % e)
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
