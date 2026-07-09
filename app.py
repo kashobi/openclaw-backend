@@ -635,20 +635,6 @@ def score_to_conviction(score):
         return "Very Low"
 
 
-@app.route("/cron/senate-debug")
-def cron_senate_debug():
-    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
-        return jsonify({"error": "unauthorized"}), 403
-    try:
-        from senate_efd_pipeline import debug_first_report
-    except Exception as e:
-        return jsonify({"error": "senate module unavailable", "detail": str(e)}), 503
-    try:
-        return jsonify(debug_first_report(days_back=int(request.args.get("days", 7))))
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route("/cron/senate-trades")
 def cron_senate_trades():
     # Token gate, same pattern as the SEC cron. Independent of SEC entirely.
@@ -662,7 +648,7 @@ def cron_senate_trades():
         logger.error("senate import failed: %s" % e)
         return jsonify({"error": "senate pipeline unavailable"}), 503
     try:
-        return jsonify(fetch_senate_trades(days_back=1))
+        return jsonify(fetch_senate_trades(days_back=3))
     except Exception as e:
         logger.error("senate run error: %s" % e)
         return jsonify({"error": str(e)}), 500
