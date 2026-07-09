@@ -398,7 +398,61 @@ def _parse_report_page(session, url):
 # Orchestration
 # --------------------------------------------------------------------------- #
 
-def fetch_senate_trades(days_back=1):
+# Current US senators keyed by last name (lowercase), giving party and state. Only 100 senators,
+# so a static map is reliable and cheap. Used to fill party/state, which the filing row omits.
+# Format: last_name -> (party, state). Where two senators share a surname, first initial is appended.
+SENATORS = {
+    "baldwin": ("Democrat", "WI"), "barrasso": ("Republican", "WY"), "bennet": ("Democrat", "CO"),
+    "blackburn": ("Republican", "TN"), "blumenthal": ("Democrat", "CT"), "booker": ("Democrat", "NJ"),
+    "boozman": ("Republican", "AR"), "britt": ("Republican", "AL"), "budd": ("Republican", "NC"),
+    "cantwell": ("Democrat", "WA"), "capito": ("Republican", "WV"), "cardin": ("Democrat", "MD"),
+    "carper": ("Democrat", "DE"), "casey": ("Democrat", "PA"), "cassidy": ("Republican", "LA"),
+    "collins": ("Republican", "ME"), "coons": ("Democrat", "DE"), "cornyn": ("Republican", "TX"),
+    "cortez masto": ("Democrat", "NV"), "cotton": ("Republican", "AR"), "cramer": ("Republican", "ND"),
+    "crapo": ("Republican", "ID"), "cruz": ("Republican", "TX"), "daines": ("Republican", "MT"),
+    "duckworth": ("Democrat", "IL"), "durbin": ("Democrat", "IL"), "ernst": ("Republican", "IA"),
+    "etterman": ("Democrat", "PA"), "fetterman": ("Democrat", "PA"), "fischer": ("Republican", "NE"),
+    "gallego": ("Democrat", "AZ"), "gillibrand": ("Democrat", "NY"), "graham": ("Republican", "SC"),
+    "grassley": ("Republican", "IA"), "hagerty": ("Republican", "TN"), "hassan": ("Democrat", "NH"),
+    "hawley": ("Republican", "MO"), "heinrich": ("Democrat", "NM"), "hickenlooper": ("Democrat", "CO"),
+    "hirono": ("Democrat", "HI"), "hoeven": ("Republican", "ND"), "husted": ("Republican", "OH"),
+    "hyde-smith": ("Republican", "MS"), "johnson": ("Republican", "WI"), "justice": ("Republican", "WV"),
+    "kaine": ("Democrat", "VA"), "kelly": ("Democrat", "AZ"), "kennedy": ("Republican", "LA"),
+    "king": ("Independent", "ME"), "klobuchar": ("Democrat", "MN"), "lankford": ("Republican", "OK"),
+    "lee": ("Republican", "UT"), "lujan": ("Democrat", "NM"), "lummis": ("Republican", "WY"),
+    "manchin": ("Independent", "WV"), "markey": ("Democrat", "MA"), "marshall": ("Republican", "KS"),
+    "mcconnell": ("Republican", "KY"), "mccormick": ("Republican", "PA"), "merkley": ("Democrat", "OR"),
+    "moody": ("Republican", "FL"), "moran": ("Republican", "KS"), "mullin": ("Republican", "OK"),
+    "murkowski": ("Republican", "AK"), "murphy": ("Democrat", "CT"), "murray": ("Democrat", "WA"),
+    "ossoff": ("Democrat", "GA"), "padilla": ("Democrat", "CA"), "paul": ("Republican", "KY"),
+    "peters": ("Democrat", "MI"), "reed": ("Democrat", "RI"), "ricketts": ("Republican", "NE"),
+    "risch": ("Republican", "ID"), "rosen": ("Democrat", "NV"), "rounds": ("Republican", "SD"),
+    "sanders": ("Independent", "VT"), "schatz": ("Democrat", "HI"), "schiff": ("Democrat", "CA"),
+    "schmitt": ("Republican", "MO"), "schumer": ("Democrat", "NY"), "scott": ("Republican", "FL"),
+    "shaheen": ("Democrat", "NH"), "sheehy": ("Republican", "MT"), "slotkin": ("Democrat", "MI"),
+    "smith": ("Democrat", "MN"), "sullivan": ("Republican", "AK"), "thune": ("Republican", "SD"),
+    "tillis": ("Republican", "NC"), "tuberville": ("Republican", "AL"), "van hollen": ("Democrat", "MD"),
+    "vance": ("Republican", "OH"), "warner": ("Democrat", "VA"), "warnock": ("Democrat", "GA"),
+    "warren": ("Democrat", "MA"), "welch": ("Democrat", "VT"), "whitehouse": ("Democrat", "RI"),
+    "wicker": ("Republican", "MS"), "wyden": ("Democrat", "OR"), "young": ("Republican", "IN"),
+    "banks": ("Republican", "IN"), "curtis": ("Republican", "UT"), "kim": ("Democrat", "NJ"),
+    "moreno": ("Republican", "OH"), "blunt rochester": ("Democrat", "DE"), "alsobrooks": ("Democrat", "MD"),
+}
+
+
+def _senator_party_state(last, first=""):
+    """Look up a senator's party and state by last name, with a first-initial tiebreaker."""
+    key = str(last or "").strip().lower()
+    if key in SENATORS:
+        return SENATORS[key]
+    # Try compound last names (e.g., "Cortez Masto", "Van Hollen").
+    for k, v in SENATORS.items():
+        if " " in k and k in (str(first) + " " + str(last)).lower():
+            return v
+    return ("Unknown", "Unknown")
+
+
+def fetch_senate_trades(days_back=3):
     """Main entry point. Scrape and store recent Senate PTR trades.
 
     Returns {"trades": int, "errors": int, "elapsed_sec": float, ...}. Never raises: any
@@ -428,14 +482,8 @@ def fetch_senate_trades(days_back=1):
                 last = str(frow[1]).strip() if len(frow) > 1 else ""
                 office = str(frow[2]).strip() if len(frow) > 2 else ""
                 politician = (first + " " + last).strip() or "Unknown"
-                # Office often reads like "Senator - State (Party)"; pull hints if present.
-                state = "Unknown"; party = "Unknown"
-                sm = re.search(r"([A-Z]{2})\b", office)
-                if sm:
-                    state = sm.group(1)
-                pm = re.search(r"\((R|D|I)[^)]*\)", office)
-                if pm:
-                    party = {"R": "Republican", "D": "Democrat", "I": "Independent"}.get(pm.group(1), "Unknown")
+                # Party and state come from the senator lookup map, since the filing row omits them.
+                party, state = _senator_party_state(last, first)
 
                 url, filed = _extract_report_link(frow)
                 filing_date = _parse_efd_date(filed)
