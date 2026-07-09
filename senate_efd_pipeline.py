@@ -270,12 +270,25 @@ def _search_ptrs(session, days_back):
 
 
 def _extract_report_link(filing_row):
-    """The filing_date cell contains an anchor to the report. Pull href and visible date."""
-    cell = filing_row[-1] if filing_row else ""
-    m = re.search(r'href="([^"]+)"', str(cell))
-    href = m.group(1) if m else None
-    dm = re.search(r">([\d/]+)<", str(cell))
-    filed = dm.group(1) if dm else None
+    """Pull the report href and filing date from a search result row.
+
+    Real row shape (confirmed from the live site):
+      [first_name, last_name, "Last, First (Senator)", "<a href=...>Periodic Transaction Report...", "07/08/2026"]
+    The anchor lives in the report-type cell (index 3), not the last cell. We scan every cell for
+    an href so we are resilient to column shifts, and read the visible date from the last cell.
+    """
+    href = None
+    for cell in filing_row:
+        m = re.search(r'href="([^"]+)"', str(cell))
+        if m:
+            href = m.group(1)
+            break
+    # Filing date is the last cell, typically a plain date string.
+    filed = None
+    if filing_row:
+        last = re.sub(r"<[^>]+>", "", str(filing_row[-1])).strip()
+        dm = re.search(r"(\d{2}/\d{2}/\d{4})", last)
+        filed = dm.group(1) if dm else None
     if href and href.startswith("/"):
         href = EFD_BASE + href
     return href, filed
