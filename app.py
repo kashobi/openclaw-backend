@@ -3133,6 +3133,7 @@ def compute_full_report(symbol):
                         if n in row and row.get(n) is not None:
                             return row.get(n)
                     return None
+                _seen_txns = set()
                 for _, rrow in it.head(12).iterrows():
                     row = rrow.to_dict()
                     name = pick(row, "Insider", "Name") or "Unknown"
@@ -3155,6 +3156,12 @@ def compute_full_report(symbol):
                     except Exception:
                         shares_val = 0
                     date_str = str(date_raw)[:10] if date_raw is not None else ""
+                    # Dedupe: yfinance sometimes returns the same transaction twice. Key by insider,
+                    # shares, date, and action so an identical row is never counted or shown twice.
+                    _sig = (str(name).strip().lower(), str(shares), date_str, action)
+                    if _sig in _seen_txns:
+                        continue
+                    _seen_txns.add(_sig)
                     insider.append({
                         "name": flip_name(name),
                         "title": str(pos),
