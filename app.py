@@ -3105,6 +3105,66 @@ def compute_full_report(symbol):
         insider = []
         CLEVEL = ["CHIEF", "CEO", "CFO", "COO", "CTO", "PRESIDENT", "CHAIR", "DIRECTOR", "OFFICER", "FOUNDER", "10%", "VICE PRESIDENT", "EVP", "SVP"]
 
+        # Prefer our own SEC EDGAR data. It is sourced directly from government filings, carries real
+        # per share prices (which yfinance's insider feed lacks), and is already deduplicated. If our
+        # table has recent transactions for this ticker we use them; otherwise we fall back to the
+        # yfinance path below, so nothing breaks while the SEC tables are still filling in.
+        _sec_insider_used = False
+        try:
+            _sconn = get_db()
+            if _sconn is not None:
+                _scur = _sconn.cursor()
+                _scur.execute(
+                    "SELECT insider_name, insider_title, transaction_code, shares, price, "
+                    "transaction_date, ownership_type FROM insider_transactions_sec "
+                    "WHERE UPPER(derived_ticker) = %s AND transaction_date IS NOT NULL "
+                    "ORDER BY transaction_date DESC LIMIT 12", (symbol.upper(),))
+                _srows = _scur.fetchall()
+                _scur.close(); _sconn.close()
+                if _srows:
+                    _sec_seen = set()
+                    for _r in _srows:
+                        _nm, _title, _code, _shares, _price, _tdate, _own = _r
+                        # transaction_code is stored as "RAWCODE:category", e.g. "P:buy".
+                        _cat = _code.split(":")[-1] if _code and ":" in _code else (_code or "")
+                        _cat = _cat.lower()
+                        if _cat == "buy":
+                            _kind, _action = "buy", "Purchase"
+                        elif _cat == "sell":
+                            _kind, _action = "sell", "Sale"
+                        elif _cat == "grant":
+                            _kind, _action = "grant", "Grant"
+                        elif _cat == "option_exercise":
+                            _kind, _action = "option", "Option Exercise"
+                        elif _cat == "tax_withholding":
+                            _kind, _action = "tax", "Tax Withholding"
+                        else:
+                            _kind, _action = "other", (_code or "Other")
+                        _sig = (str(_nm).strip().lower(), str(_shares), str(_tdate), _action)
+                        if _sig in _sec_seen:
+                            continue
+                        _sec_seen.add(_sig)
+                        _tu = str(_title or "").upper()
+                        _is_cl = any(k in _tu for k in CLEVEL) and "10%" not in _tu
+                        _is_holder = "10%" in _tu
+                        insider.append({
+                            "name": str(_nm or "Unknown"),
+                            "title": str(_title or ""),
+                            "action": _action,
+                            "kind": _kind,
+                            "desc": _action,
+                            "shares": int(float(_shares)) if _shares is not None else 0,
+                            "price": float(_price) if _price is not None else 0,
+                            "date": str(_tdate)[:10] if _tdate else "",
+                            "is_clevel": _is_cl,
+                            "is_holder": _is_holder,
+                        })
+                    if insider:
+                        _sec_insider_used = True
+                        logger.info("insider data from SEC table for %s (%s rows)" % (symbol, len(insider)))
+        except Exception as _se:
+            logger.error("SEC insider read for %s: %s" % (symbol, _se))
+
         def classify_kind(text):
             # Read what the filing actually is. Only real open market buys and sells move the
             # verdict. Grants, option exercises, and tax withholding are routine and stay neutral.
@@ -3126,7 +3186,9 @@ def compute_full_report(symbol):
             return "other"
 
         try:
-            it = ticker.insider_transactions
+            it = None
+            if not _sec_insider_used:
+                it = ticker.insider_transactions
             if it is not None and not it.empty:
                 def pick(row, *names):
                     for n in names:
