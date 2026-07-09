@@ -1214,6 +1214,30 @@ body{transition:background-color .3s ease,color .3s ease;}
 .rptTab{flex-shrink:0;background:var(--s2);border:1px solid var(--border);border-radius:999px;padding:8px 15px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;transition:all .15s ease;white-space:nowrap;}
 .rptTab:hover{border-color:var(--accent);}
 .rptTab.active{background:rgba(var(--accent-rgb),.14);border-color:var(--accent);color:var(--accent);}
+/* Senate Disclosures card, premium grouped design. */
+.senateCardIc{padding:16px !important;}
+.snHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.snHeadL{display:flex;align-items:center;gap:9px;}
+.snIcon{width:34px;height:34px;border-radius:9px;background:var(--s2);display:flex;align-items:center;justify-content:center;font-size:18px;}
+.snTitle{font-size:15px;font-weight:700;color:var(--text);line-height:1.2;}
+.snSub{font-size:11px;color:var(--muted);line-height:1.3;}
+.snLive{font-size:10px;font-weight:800;color:var(--accent);background:rgba(var(--accent-rgb),.12);border:1px solid var(--accent);padding:3px 9px;border-radius:20px;letter-spacing:.3px;}
+.snSenator{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--s2);border:1px solid var(--border);border-radius:11px;margin:12px 0 8px;}
+.snAv{width:36px;height:36px;border-radius:50%;background:rgba(var(--accent-rgb),.18);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--accent);flex-shrink:0;}
+.snSenName{font-size:13px;font-weight:700;color:var(--text);}
+.snSenSub{font-size:11px;color:var(--muted);}
+.snRow{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--s2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:9px;margin-bottom:7px;}
+.snPillWrap{width:44px;text-align:center;flex-shrink:0;}
+.snPill{font-size:10px;font-weight:800;padding:3px 7px;border-radius:5px;}
+.snBuy{color:#2ea043;background:rgba(46,160,67,.14);}
+.snSell{color:#f0787d;background:rgba(209,68,74,.14);}
+.snOther{color:var(--muted);background:var(--s1);}
+.snRowMid{flex:1;min-width:0;}
+.snTicker{font-size:13px;font-weight:700;color:var(--text);font-family:var(--font-mono);}
+.snDate{font-size:10.5px;color:var(--muted);}
+.snAmt{font-size:12px;font-weight:700;color:var(--text2,#a9b4c2);font-variant-numeric:tabular-nums;flex-shrink:0;}
+.snFoot{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:11px;border-top:1px solid var(--border);font-size:10.5px;color:var(--muted);}
+.snEmpty{font-size:13px;color:var(--muted);padding:8px 2px;}
 </style>
 </head>
 <body>
@@ -6718,9 +6742,9 @@ if(ib){
   window.applyReportTabs = applyReportTabs;
   window.resetReportTab = function(){ _curRtab = "overview"; };
 
-  // Senate Disclosures card on the report. Reads from our own Senate eFD data via /api/senate-trades.
-  // Independent of the Quiver-powered Congressional Trades card above it; if Senate has nothing,
-  // it shows a quiet empty state rather than an error.
+  // Senate Disclosures card. Reads our own Senate eFD data via /api/senate-trades. Grouped by
+  // senator with an avatar, party and state, and colored buy/sell rows. Independent of the
+  // Quiver-powered card above; quiet empty state when there is nothing.
   function injectSenate(sym){
     var card = document.getElementById("senateCard");
     if(!card){ return; }
@@ -6728,23 +6752,64 @@ if(ib){
     if(!s){ card.innerHTML = ""; return; }
     fetch(API + "/api/senate-trades?symbol=" + encodeURIComponent(s)).then(function(r){ return r.json(); }).then(function(d){
       var trades = (d && d.trades) || [];
-      var head = "<div class='ih'><div class='it'>&#127963;&#65039; Senate Disclosures</div><div class='ibdg'>eFD</div></div>";
       if(!trades.length){
-        card.innerHTML = "<div class='ic'>" + head + "<div class='itxt'>No recent Senate trades found for " + s + ".</div></div>";
+        card.innerHTML = "<div class='ic senateCardIc'><div class='snHead'><div class='snHeadL'><div class='snIcon'>&#127963;&#65039;</div>" +
+          "<div><div class='snTitle'>Senate Disclosures</div><div class='snSub'>Your data, sourced from the Senate</div></div></div>" +
+          "<span class='snLive'>LIVE eFD</span></div><div class='snEmpty'>No recent Senate trades on record for " + esc(s) + ".</div></div>";
         return;
       }
-      var rows = trades.slice(0, 15).map(function(t){
-        var cls = t.transaction_type === "buy" ? "buy" : (t.transaction_type === "sell" ? "sell" : "gray");
-        var act = t.transaction_type === "buy" ? "BUY" : (t.transaction_type === "sell" ? "SELL" : (t.transaction_type || "").toUpperCase());
-        var party = t.party && t.party !== "Unknown" ? (" (" + t.party.charAt(0) + ")") : "";
-        var st = t.state && t.state !== "Unknown" ? (" " + t.state) : "";
-        return "<div class='tr'><span class='" + cls + "'>" + act + "</span><span>" + esc(t.politician_name || "Unknown") + esc(party) + "</span>" +
-          "<span class='gray'>" + esc(st) + "</span><span class='gray'>" + esc(t.amount || "") + "</span>" +
-          "<span class='gray'>" + esc(usDate(t.trade_date) || "") + "</span></div>";
-      }).join("");
-      card.innerHTML = "<div class='ic'>" + head + "<div class='trlist'>" + rows + "</div>" +
-        "<div class='itxt' style='margin-top:8px'>Sourced directly from US Senate electronic financial disclosures.</div></div>";
+      // Group trades by senator.
+      var groups = {};
+      var order = [];
+      trades.forEach(function(t){
+        var k = t.politician_name || "Unknown";
+        if(!groups[k]){ groups[k] = []; order.push(k); }
+        groups[k].push(t);
+      });
+      var body = "";
+      order.forEach(function(name){
+        var list = groups[name];
+        var initials = name.split(" ").map(function(w){ return w.charAt(0); }).join("").slice(-2).toUpperCase();
+        var t0 = list[0];
+        var partyState = [];
+        if(t0.party && t0.party !== "Unknown"){ partyState.push(t0.party); }
+        if(t0.state && t0.state !== "Unknown"){ partyState.push(_stateName(t0.state)); }
+        partyState.push(list.length + " trade" + (list.length > 1 ? "s" : ""));
+        body += "<div class='snSenator'><div class='snAv'>" + esc(initials) + "</div>" +
+          "<div class='snSenMeta'><div class='snSenName'>Sen. " + esc(name) + "</div>" +
+          "<div class='snSenSub'>" + esc(partyState.join(" \u00b7 ")) + "</div></div></div>";
+        list.slice(0, 8).forEach(function(t){
+          var isBuy = t.transaction_type === "buy";
+          var isSell = t.transaction_type === "sell";
+          var accent = isBuy ? "#2ea043" : (isSell ? "#d1444a" : "#6b7688");
+          var pillTxt = isBuy ? "BUY" : (isSell ? "SELL" : (t.transaction_type || "").toUpperCase());
+          var pillCls = isBuy ? "snBuy" : (isSell ? "snSell" : "snOther");
+          var amt = _shortAmount(t.amount);
+          body += "<div class='snRow' style='border-left-color:" + accent + "'>" +
+            "<div class='snPillWrap'><span class='snPill " + pillCls + "'>" + pillTxt + "</span></div>" +
+            "<div class='snRowMid'><div class='snTicker'>" + esc(sym || s) + "</div>" +
+            "<div class='snDate'>" + esc(usDate(t.trade_date) || "") + "</div></div>" +
+            "<div class='snAmt'>" + esc(amt) + "</div></div>";
+        });
+      });
+      card.innerHTML = "<div class='ic senateCardIc'>" +
+        "<div class='snHead'><div class='snHeadL'><div class='snIcon'>&#127963;&#65039;</div>" +
+        "<div><div class='snTitle'>Senate Disclosures</div><div class='snSub'>Your data, sourced from the Senate</div></div></div>" +
+        "<span class='snLive'>LIVE eFD</span></div>" + body +
+        "<div class='snFoot'>&#128737;&#65039; Sourced directly from US Senate electronic financial disclosures</div></div>";
     }).catch(function(){ card.innerHTML = ""; });
+  }
+  function _shortAmount(a){
+    if(!a){ return ""; }
+    // "$15,001 - $50,000" -> "$15K-50K"
+    var nums = String(a).match(/[\d,]+/g);
+    if(!nums || nums.length < 2){ return a; }
+    function k(n){ n = parseInt(n.replace(/,/g, ""), 10); if(n >= 1000000){ return (n/1000000).toFixed(1).replace(/\.0$/, "") + "M"; } if(n >= 1000){ return Math.round(n/1000) + "K"; } return n; }
+    return "$" + k(nums[0]) + "\u2013" + k(nums[1]);
+  }
+  function _stateName(abbr){
+    var m = {AL:"Alabama",AK:"Alaska",AZ:"Arizona",AR:"Arkansas",CA:"California",CO:"Colorado",CT:"Connecticut",DE:"Delaware",FL:"Florida",GA:"Georgia",HI:"Hawaii",ID:"Idaho",IL:"Illinois",IN:"Indiana",IA:"Iowa",KS:"Kansas",KY:"Kentucky",LA:"Louisiana",ME:"Maine",MD:"Maryland",MA:"Massachusetts",MI:"Michigan",MN:"Minnesota",MS:"Mississippi",MO:"Missouri",MT:"Montana",NE:"Nebraska",NV:"Nevada",NH:"New Hampshire",NJ:"New Jersey",NM:"New Mexico",NY:"New York",NC:"North Carolina",ND:"North Dakota",OH:"Ohio",OK:"Oklahoma",OR:"Oregon",PA:"Pennsylvania",RI:"Rhode Island",SC:"South Carolina",SD:"South Dakota",TN:"Tennessee",TX:"Texas",UT:"Utah",VT:"Vermont",VA:"Virginia",WA:"Washington",WV:"West Virginia",WI:"Wisconsin",WY:"Wyoming"};
+    return m[abbr] || abbr;
   }
   window.injectSenate = injectSenate;
 
