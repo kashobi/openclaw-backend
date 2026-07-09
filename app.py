@@ -635,6 +635,64 @@ def score_to_conviction(score):
         return "Very Low"
 
 
+@app.route("/cron/senate-trades")
+def cron_senate_trades():
+    # Token gate, same pattern as the SEC cron. Independent of SEC entirely.
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    # Local import so a missing or broken Senate module never breaks app startup. A Senate
+    # failure is fully contained here and cannot touch the SEC pipeline or anything else.
+    try:
+        from senate_efd_pipeline import fetch_senate_trades
+    except Exception as e:
+        logger.error("senate import failed: %s" % e)
+        return jsonify({"error": "senate pipeline unavailable"}), 503
+    try:
+        return jsonify(fetch_senate_trades(days_back=1))
+    except Exception as e:
+        logger.error("senate run error: %s" % e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/senate-trades")
+def api_senate_trades():
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    if not symbol:
+        return jsonify({"symbol": "", "trades": []})
+    ck = "senate_trades_" + symbol
+    cached = CACHE.get(ck)
+    if cached and (time.time() - cached[1]) < 900:
+        return jsonify(cached[0])
+    out = {"symbol": symbol, "trades": []}
+    conn = get_db()
+    if conn is None:
+        return jsonify(out)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT politician_name, party, state, transaction_type, amount, trade_date, filing_date "
+            "FROM congressional_trades_senate WHERE ticker = %s AND ticker IS NOT NULL "
+            "ORDER BY trade_date DESC NULLS LAST LIMIT 50", (symbol,))
+        for r in cur.fetchall():
+            out["trades"].append({
+                "politician_name": r[0], "party": r[1], "state": r[2],
+                "transaction_type": r[3], "amount": r[4],
+                "trade_date": r[5].isoformat() if r[5] else None,
+                "filing_date": r[6].isoformat() if r[6] else None,
+            })
+        cur.close(); conn.close()
+    except Exception as e:
+        # Table may not exist yet, or any query issue: return empty gracefully, never error.
+        logger.error("api_senate_trades: %s" % e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return jsonify(out)
+    CACHE[ck] = (out, time.time())
+    return jsonify(out)
+
+
 @app.route("/")
 def home():
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
@@ -2843,6 +2901,28 @@ def is_high_clout(politician, sector):
     return False
 
 
+def _is_operating_exec(title):
+    """True only for operating C-suite who run the company day to day: CEO, CFO, COO, CTO,
+    President, Founder. Directors and 10% holders are deliberately excluded here. A board
+    director buying is a real but weaker signal than an operating executive buying, so only
+    operating execs count toward the C-Suite Accumulation headline."""
+    import re as _re
+    t = str(title or "").upper()
+    if "DIRECTOR" in t and not any(k in t for k in ["CHIEF", "PRESIDENT", "FOUNDER"]):
+        # Pure director (or "Officer and Director" leans director unless a chief title present).
+        if "OFFICER" not in t or "CHIEF" not in t:
+            pass  # fall through to the positive checks below; only counts if a chief title exists
+    if "CHIEF" in t and "OFFICER" in t:
+        return True
+    if _re.search(r"\bCEO\b|\bCFO\b|\bCOO\b|\bCTO\b", t):
+        return True
+    if "PRESIDENT" in t and "VICE" not in t:
+        return True
+    if "FOUNDER" in t:
+        return True
+    return False
+
+
 def detect_insider_cluster(ticker, company_name, insider_list):
     """Corporate Cluster Buy engine. Groups open market executive buys in a rolling 14 day window.
     When three or more distinct executives buy the same stock, the cluster becomes a high signal
@@ -2859,7 +2939,11 @@ def detect_insider_cluster(ticker, company_name, insider_list):
         # Qualifying buys: real open market executive purchases only.
         buys = []
         for t in (insider_list or []):
-            if t.get("action") == "A" and t.get("kind") == "buy" and t.get("is_clevel"):
+            # Recognize a buy from either data source: SEC sets action "Purchase"/kind "buy",
+            # the older yfinance path set action "A". Only open market buys by operating executives
+            # count toward the cluster. Directors are tracked separately as a lighter signal.
+            _is_buy = t.get("kind") == "buy" and t.get("action") in ("A", "Purchase", "Buy")
+            if _is_buy and _is_operating_exec(t.get("title")):
                 buys.append(t)
         cur = conn.cursor()
         # Auto resolve any stale cluster for this ticker whose window has fully aged out.
