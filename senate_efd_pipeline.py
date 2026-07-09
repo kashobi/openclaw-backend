@@ -281,6 +281,55 @@ def _extract_report_link(filing_row):
     return href, filed
 
 
+def debug_first_report(days_back=7):
+    """Diagnostic: fetch the first PTR found and return what its page actually contains, so the
+    table parser can be tuned against the real HTML instead of assumptions. Returns a small dict
+    with the report URL, whether a table was found, the column headers, and the first data row's
+    raw cells. Never stores anything. Safe to expose behind the cron token."""
+    out = {"filings_found": 0, "report_url": None, "has_table": False,
+           "headers": [], "first_row_cells": [], "note": ""}
+    try:
+        session = _get_authenticated_senate_session()
+        if session is None:
+            out["note"] = "could not authorize session"
+            return out
+        filings = _search_ptrs(session, days_back)
+        out["filings_found"] = len(filings)
+        if not filings:
+            out["note"] = "no PTR filings in window"
+            return out
+        url, _ = _extract_report_link(filings[0])
+        out["report_url"] = url
+        if not url:
+            out["note"] = "no report link extracted from filing row"
+            out["raw_filing_row"] = [str(c)[:120] for c in filings[0]]
+            return out
+        _senate_bucket.take()
+        r = session.get(url, timeout=30)
+        html = r.text
+        out["status"] = r.status_code
+        out["is_pdf"] = ("/paper/" in url or ".pdf" in url.lower())
+        # Pull table headers.
+        thead = re.search(r"<thead>(.*?)</thead>", html, re.DOTALL)
+        if thead:
+            out["headers"] = [re.sub(r"<[^>]+>", "", c).strip()
+                              for c in re.findall(r"<th[^>]*>(.*?)</th>", thead.group(1), re.DOTALL)]
+        # Pull first data row cells.
+        tbody = re.search(r"<tbody>(.*?)</tbody>", html, re.DOTALL)
+        body = tbody.group(1) if tbody else html
+        first_tr = re.search(r"<tr[^>]*>(.*?)</tr>", body, re.DOTALL)
+        if first_tr:
+            out["has_table"] = True
+            out["first_row_cells"] = [re.sub(r"<[^>]+>", "", c).strip()
+                                      for c in re.findall(r"<td[^>]*>(.*?)</td>", first_tr.group(1), re.DOTALL)]
+        out["table_striped_present"] = "table-striped" in html
+        out["html_length"] = len(html)
+        return out
+    except Exception as e:
+        out["note"] = "error: " + str(e)
+        return out
+
+
 def _parse_report_page(session, url):
     """Fetch a PTR report page and extract its transaction rows from the .table-striped table.
 
