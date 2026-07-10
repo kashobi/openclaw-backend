@@ -1238,6 +1238,16 @@ body{transition:background-color .3s ease,color .3s ease;}
 .snAmt{font-size:12px;font-weight:700;color:var(--text2,#a9b4c2);font-variant-numeric:tabular-nums;flex-shrink:0;}
 .snFoot{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:11px;border-top:1px solid var(--border);font-size:10.5px;color:var(--muted);}
 .snEmpty{font-size:13px;color:var(--muted);padding:8px 2px;}
+/* Seven-factor Alpha Score breakdown. */
+.alphaFac{padding:9px 0;border-bottom:1px solid var(--border);}
+.alphaFacHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;}
+.alphaFacName{font-size:13px;font-weight:700;color:var(--text);}
+.alphaFacPts{font-size:12px;font-weight:800;font-family:var(--font-mono);color:var(--muted);}
+.alphaFacBar{height:5px;border-radius:3px;background:var(--s2);overflow:hidden;margin-bottom:5px;}
+.alphaFacFill{height:100%;border-radius:3px;transition:width .4s ease;}
+.alphaFacWhy{font-size:11.5px;color:var(--muted);line-height:1.45;}
+.alphaOverride{margin-top:10px;padding:9px 11px;background:var(--s2);border-left:3px solid #f4b740;border-radius:7px;font-size:12px;color:var(--text);line-height:1.5;}
+.cf-neutral{background:var(--s2);border:1px solid var(--border);}
 </style>
 </head>
 <body>
@@ -2802,15 +2812,33 @@ function renderAlpha(d){
   if(lab){ lab.textContent = alphaLabel(s); lab.style.color = col; }
   var box = document.getElementById("alphaBreak");
   if(box){
-    var items = (d && d.alpha_breakdown) ? d.alpha_breakdown : [];
     var h = "";
-    for(var i=0;i<items.length;i++){
-      var cat = String(items[i]).split(":")[0].trim();
-      var why = ALPHA_WHY[cat] || "";
-      h += "<div class=\"alphaRow\"><span class=\"ard\" style=\"background:" + col + "\"></span><span class=\"alphaRowT\">" + esc(items[i]) + (why ? "<span class=\"alphaWhy\">" + esc(why) + "</span>" : "") + "</span></div>";
+    if(d && d.alpha_v2 && d.alpha_v2.factors && d.alpha_v2.factors.length){
+      // New seven-factor transparent breakdown: points earned / possible + one-line reason.
+      var facs = d.alpha_v2.factors;
+      for(var i=0;i<facs.length;i++){
+        var f = facs[i];
+        var pct = f.possible ? Math.max(0, Math.min(1, f.earned / f.possible)) : 0;
+        var barCol = f.earned < 0 ? "#d1444a" : col;
+        h += "<div class=\"alphaFac\">" +
+          "<div class=\"alphaFacHead\"><span class=\"alphaFacName\">" + esc(f.name) + "</span>" +
+          "<span class=\"alphaFacPts\">" + f.earned + " / " + f.possible + "</span></div>" +
+          "<div class=\"alphaFacBar\"><div class=\"alphaFacFill\" style=\"width:" + Math.round(pct*100) + "%;background:" + barCol + "\"></div></div>" +
+          "<div class=\"alphaFacWhy\">" + esc(f.reason) + "</div></div>";
+      }
+      if(d.alpha_v2.overrides && d.alpha_v2.overrides.length){
+        h += "<div class=\"alphaOverride\">Verdict adjustments: " + esc(d.alpha_v2.overrides.join(" ")) + "</div>";
+      }
+    } else {
+      var items = (d && d.alpha_breakdown) ? d.alpha_breakdown : [];
+      for(var j=0;j<items.length;j++){
+        var cat = String(items[j]).split(":")[0].trim();
+        var why = ALPHA_WHY[cat] || "";
+        h += "<div class=\"alphaRow\"><span class=\"ard\" style=\"background:" + col + "\"></span><span class=\"alphaRowT\">" + esc(items[j]) + (why ? "<span class=\"alphaWhy\">" + esc(why) + "</span>" : "") + "</span></div>";
+      }
     }
     box.innerHTML = h;
-    box.style.display = "none";
+    box.style.display = "";
   }
   var tog = document.getElementById("alphaToggle");
   if(tog){ tog.textContent = "Show how this was calculated"; }
@@ -3098,16 +3126,24 @@ function run(){
     }
     document.getElementById("vconf").innerHTML = extHtml + alertHtml + (conf[v] || "");
 
-    var confLevel = d.confidence || "Medium";
-    var cmap = {
-      High: {t: "High", c: "cf-high", x: "The data came back complete and consistent. This is a full picture."},
-      Medium: {t: "Medium", c: "cf-med", x: "Some data was missing or worth a second look. A solid read, but verify the key points yourself."},
-      Low: {t: "Low", c: "cf-low", x: "Key data was missing or looked off. Lean on your own research here and treat this as a starting point only."}
-    };
-    var ci = cmap[confLevel] || cmap.Medium;
+    // Data completeness, stated as facts about what signals were used, not a confidence claim.
+    var signalDefs = [
+      ["price", typeof d.price === "number"],
+      ["fundamentals", d.pe_ratio != null || d.profit_margin != null],
+      ["insider", !!(d.insider && d.insider.length)],
+      ["congressional", !!(d.congressional && d.congressional.length)],
+      ["analyst", d.target_mean != null],
+      ["news", !!(d.news && d.news.length)],
+      ["moat", !!(d.apex_moat && d.apex_moat.rating)],
+      ["risk", d.beta != null]
+    ];
+    var have = signalDefs.filter(function(x){ return x[1]; });
+    var missing = signalDefs.filter(function(x){ return !x[1]; }).map(function(x){ return x[0]; });
     var ce = document.getElementById("vconfidence");
-    ce.className = "vconfidence " + ci.c;
-    ce.innerHTML = "<div class=\"cf-row\"><span class=\"cf-dot\"></span>DATA CONFIDENCE: " + ci.t.toUpperCase() + "</div><div class=\"cf-exp\">" + ci.x + "</div>";
+    ce.className = "vconfidence cf-neutral";
+    var line = "Data completeness: " + have.length + "/" + signalDefs.length + " core signals available";
+    if(missing.length){ line += " (missing: " + missing.join(", ") + ")"; }
+    ce.innerHTML = "<div class=\"cf-exp\" style=\"margin-top:0\">" + esc(line) + "</div>";
     ce.style.display = "block";
 
     var flags = d.flags || [];
