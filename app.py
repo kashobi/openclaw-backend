@@ -635,6 +635,22 @@ def score_to_conviction(score):
         return "Very Low"
 
 
+@app.route("/cron/house-trades")
+def cron_house_trades():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        from house_pipeline import fetch_house_trades
+    except Exception as e:
+        logger.error("house import failed: %s" % e)
+        return jsonify({"error": "house pipeline unavailable"}), 503
+    try:
+        return jsonify(fetch_house_trades(max_filings=int(request.args.get("max", 40))))
+    except Exception as e:
+        logger.error("house run error: %s" % e)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/cron/fda-approvals")
 def cron_fda_approvals():
     if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
@@ -3756,6 +3772,54 @@ def compute_full_report(symbol):
             logger.error("senate merge for %s: %s" % (symbol, _se))
             try:
                 _sconn.close()
+            except Exception:
+                pass
+
+        # Merge in our OWN House Clerk data too, completing the congressional picture from first-party
+        # sources. Same merge-not-replace pattern as Senate: adds coverage, deduped, tagged as ours.
+        try:
+            _hconn = get_db()
+            if _hconn is not None:
+                _hcur = _hconn.cursor()
+                _hcur.execute(
+                    "SELECT politician_name, party, state, transaction_type, amount, trade_date, filing_date "
+                    "FROM congressional_trades_house WHERE ticker = %s AND ticker IS NOT NULL "
+                    "AND transaction_type IS NOT NULL AND transaction_type != 'other' "
+                    "ORDER BY trade_date DESC NULLS LAST LIMIT 20", (symbol.upper(),))
+                _hseen = set()
+                for _c in congressional:
+                    _hseen.add((str(_c.get("politician", "")).strip().lower(), str(_c.get("date", ""))[:10],
+                                "purchase" if "purchase" in str(_c.get("action", "")).lower() else "sale"))
+                for _r in _hcur.fetchall():
+                    _pol, _party, _state, _ttype, _amt, _td, _fd = _r
+                    _act = "Purchase" if _ttype == "buy" else ("Sale" if _ttype == "sell" else (_ttype or "Unknown").title())
+                    _tds = _td.isoformat() if _td else ""
+                    _sig = (str(_pol or "").strip().lower(), str(_tds)[:10],
+                            "purchase" if _ttype == "buy" else "sale")
+                    if _sig in _hseen:
+                        continue
+                    _hseen.add(_sig)
+                    _coms = _committees_for(_pol)
+                    _lag = None
+                    try:
+                        if _td and _fd:
+                            _lag = (_fd - _td).days
+                    except Exception:
+                        _lag = None
+                    congressional.append({
+                        "politician": _pol, "party": _party if _party and _party != "Unknown" else "",
+                        "state": _state if _state and _state != "Unknown" else "",
+                        "action": _act, "amount": _amt or "", "date": _tds,
+                        "report_date": _fd.isoformat() if _fd else "", "filing_lag_days": _lag,
+                        "committees": _coms[:3], "committee_relevant": is_high_clout(_pol, _sector_for_cong),
+                        "source": "apexq_house",
+                    })
+                _hcur.close(); _hconn.close()
+                logger.info("congressional: merged own House data for %s" % symbol)
+        except Exception as _he:
+            logger.error("house merge for %s: %s" % (symbol, _he))
+            try:
+                _hconn.close()
             except Exception:
                 pass
 
