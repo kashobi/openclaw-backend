@@ -1260,7 +1260,7 @@ body{transition:background-color .3s ease,color .3s ease;}
 .cComms{font-size:11px;color:var(--muted);margin:2px 0 0 4px;line-height:1.4;}
 .cLagOk{font-size:11px;color:var(--muted);font-weight:600;}
 .cLagLong{font-size:11px;color:var(--yellow);font-weight:700;}
-</style>
+.ownSrcTag{font-size:10px;font-weight:800;color:var(--accent);background:rgba(var(--accent-rgb),.12);border:1px solid var(--accent);border-radius:12px;padding:2px 7px;margin-left:4px;white-space:nowrap;}</style>
 </head>
 <body>
 <div class="tkbar"><div class="tkwrap"><div class="tktrack" id="tktrack"><span class="tki"><span class="tsym">APEX Q</span><span class="tpx">Loading live market data...</span></span></div></div></div>
@@ -2353,6 +2353,9 @@ function renderCong(data){
     var cls = (t.action && t.action.toLowerCase().indexOf("purchase") >= 0) ? "buy" : "sell";
     var relevant = t.committee_relevant || t.high_clout;
     var clout = relevant ? "<span class='cloutBadge' title='This lawmaker sits on a committee tied to this stock&#39;s sector, an information edge worth noting.'>&#127919; Committee Tie</span>" : "";
+    // Trades sourced from our own Senate eFD pipeline get a quiet Apex Q tag, so our growing
+    // first-party coverage is visible next to the third-party feed.
+    var srcTag = (t.source === "apexq_senate") ? "<span class='ownSrcTag' title='Sourced directly from US Senate disclosures by Apex Q'>&#9889; Apex Q</span>" : "";
     // Filing lag: the audit asked us to make the delay between trading and disclosing visible.
     var lag = "";
     if(typeof t.filing_lag_days === "number" && t.filing_lag_days >= 0){
@@ -2363,7 +2366,7 @@ function renderCong(data){
     var st = t.state && t.state !== "Unknown" ? (" " + esc(t.state)) : "";
     return "<div class=\"cTrade\">" +
       "<div class=\"tr\"><span class=\"" + cls + "\">" + esc(t.action) + "</span>" +
-      "<span>" + esc(t.politician) + "</span>" + clout +
+      "<span>" + esc(t.politician) + "</span>" + clout + srcTag +
       "<span class=\"gray\">(" + esc(t.party) + st + ")</span>" +
       "<span class=\"gray\">" + esc(t.amount) + "</span>" +
       "<span class=\"gray\">" + esc(usDate(t.date)) + "</span>" + lag + "</div>" +
@@ -6473,6 +6476,11 @@ if(ib){
           if(msg){ msg.style.display = "flex"; msg.textContent = "Chart data is unavailable for this stock right now."; }
           return;
         }
+        // New IPOs (e.g. a stock public only a few weeks) have far less history than the requested
+        // window. Stretching a month of candles across a 1Y axis looks broken, so when the data is
+        // short we let the chart fit exactly what exists (fitContent handles the axis) and flag it,
+        // rather than showing sparse, gappy candles across a year-wide timeline.
+        var _shortHistory = d.data.length < 40;
         if(msg){ msg.style.display = "none"; }
         cont.style.display = "block";
         var c = _chartColors();
