@@ -2779,6 +2779,220 @@ def _five_day_change(ticker):
         return None
 
 
+def compute_alpha_v2(sig):
+    """Seven-factor transparent Alpha Score and Verdict engine.
+
+    Takes a dict of signals and returns a fully explainable result: a 0-100 score, a verdict
+    (APPROVE/WATCH/PASS), and a per-factor breakdown where every factor reports the points it
+    earned, the points possible, and a one-sentence reason. Designed to never raise; any missing
+    signal degrades gracefully to a documented default rather than failing.
+
+    Expected keys in sig (all optional, safe defaults applied):
+      r5, r1m, r3m: 5-day, 1-month, 3-month percent returns
+      up_days_5: how many of the last 5 days were up
+      chg_today: today's percent change
+      pe: price/earnings; profit_margin: net margin (fraction); debt_to_equity
+      ins_cbuys, ins_csells: C-level insider buy/sell counts; ins_buy_value, ins_sell_value
+      profitable: bool
+      cong_buys, cong_sells, cong_committee, cong_recent, cong_size_big, cong_has_data
+      analyst_rating (0-1 bullishness), analyst_coverage (int), analyst_upside (pct),
+        analyst_recent (+1 upgrade / -1 downgrade), analyst_has_data
+      beta; news_sentiment (-1..1), has_catalyst, news_has_data
+    """
+    factors = []
+
+    def add(name, earned, possible, reason):
+        e = max(-possible, min(possible, round(earned)))
+        factors.append({"name": name, "earned": int(e), "possible": possible, "reason": reason})
+        return int(e)
+
+    n = _alpha_num
+
+    # 1. MOMENTUM QUALITY (15)
+    r5, r1m, r3m = n(sig.get("r5")), n(sig.get("r1m")), n(sig.get("r3m"))
+    m = 0
+    m += 5 if (r5 or 0) > 3 else (3 if (r5 or 0) > 0 else 0)
+    m += 5 if (r1m or 0) > 5 else (3 if (r1m or 0) > 0 else 0)
+    m += 5 if (r3m or 0) > 8 else (3 if (r3m or 0) > 0 else 0)
+    if (sig.get("up_days_5") or 0) >= 4:
+        m += 2
+    ct = n(sig.get("chg_today")) or 0
+    if ct > 5 and (r1m or 0) < 0:
+        m = min(m, 7)  # mean-reversion penalty: a pop against a down month is suspect
+    mom_reason = "5d %s, 1m %s, 3m %s." % (
+        _pct(r5), _pct(r1m), _pct(r3m))
+    mom = add("Momentum Quality", m, 15, mom_reason)
+
+    # 2. FUNDAMENTAL HEALTH (15) with fundamentals floor
+    pe = n(sig.get("pe")); pm = n(sig.get("profit_margin")); de = n(sig.get("debt_to_equity"))
+    f = 0
+    if pe is None:
+        f += 3
+    elif pe <= 0:
+        f += 1
+    elif pe < 15:
+        f += 7
+    elif pe < 25:
+        f += 5
+    elif pe < 40:
+        f += 3
+    else:
+        f += 1
+    if de is None:
+        f += 2
+    elif de < 0.5:
+        f += 4
+    elif de < 1.0:
+        f += 2
+    elif de < 2.0:
+        f += 1
+    if pm is None:
+        f += 1
+    elif pm > 0.15:
+        f += 4
+    elif pm > 0:
+        f += 2
+    elif pm > -0.1:
+        f += 1
+    floored = False
+    if pe is None and (pm is not None and pm < 0):
+        f = min(f, 3)  # fundamentals floor: no earnings and losing money caps this factor
+        floored = True
+    fund_reason = "PE %s, margin %s, debt/equity %s.%s" % (
+        _num(pe), _pctf(pm), _num(de), " Floored: unprofitable with no PE." if floored else "")
+    fund = add("Fundamental Health", f, 15, fund_reason)
+
+    # 3. INSIDER CONVICTION (15)
+    cb = sig.get("ins_cbuys") or 0; cs = sig.get("ins_csells") or 0
+    profitable = bool(sig.get("profitable"))
+    ic = 8 if cb >= 3 else (5 if cb == 2 else (3 if cb == 1 else 0))
+    ic -= 5 if cs >= 3 else (3 if cs == 2 else (1 if cs == 1 else 0))
+    if (sig.get("ins_buy_value") or 0) > 1000000:
+        ic += 3
+    if (sig.get("ins_sell_value") or 0) > 20000000 and not profitable:
+        ic -= 3
+    ic = max(0, min(15, ic))
+    ins_reason = "%d C-level buy(s), %d sell(s)." % (cb, cs)
+    if cb == 0 and cs == 0:
+        ins_reason = "No recent C-level insider transactions."
+    ins = add("Insider Conviction", ic, 15, ins_reason)
+
+    # 4. CONGRESSIONAL HEAT (15)
+    if not sig.get("cong_has_data"):
+        cong = add("Congressional Heat", 8, 15, "No congressional trade data; neutral default applied.")
+    else:
+        cbn = sig.get("cong_buys") or 0; csn = sig.get("cong_sells") or 0
+        h = 8 if cbn >= 3 else (5 if cbn == 2 else (3 if cbn == 1 else 0))
+        h -= 3 if csn >= 2 else (1 if csn == 1 else 0)
+        if sig.get("cong_committee"):
+            h += 3
+        if sig.get("cong_recent"):
+            h += 2
+        if sig.get("cong_size_big"):
+            h += 2
+        h = max(0, min(15, h))
+        cong = add("Congressional Heat", h, 15,
+                   "%d lawmaker buy(s), %d sell(s)%s." % (cbn, csn,
+                   ", relevant committee" if sig.get("cong_committee") else ""))
+
+    # 5. ANALYST CONVICTION (10)
+    if not sig.get("analyst_has_data"):
+        anal = add("Analyst Conviction", 5, 10, "No analyst coverage data; neutral default applied.")
+    else:
+        ar = n(sig.get("analyst_rating"))
+        a = 5 if (ar or 0) >= 0.75 else (4 if (ar or 0) >= 0.6 else (2 if (ar or 0) >= 0.4 else 0))
+        cov = sig.get("analyst_coverage") or 0
+        a += 3 if cov >= 20 else (2 if cov >= 10 else (1 if cov >= 3 else 0))
+        up = n(sig.get("analyst_upside"))
+        a += 2 if (up or 0) > 15 else (1 if (up or 0) > 0 else 0)
+        a += 2 if (sig.get("analyst_recent") or 0) > 0 else (-2 if (sig.get("analyst_recent") or 0) < 0 else 0)
+        a = max(0, min(10, a))
+        anal = add("Analyst Conviction", a, 10,
+                   "%d analysts, target upside %s." % (cov, _pct(up)))
+
+    # 6. RISK-ADJUSTED RETURN (10)
+    beta = n(sig.get("beta"))
+    if beta and beta > 0:
+        rar_val = (r1m or 0) / beta
+        ra = 10 if rar_val > 5 else (7 if rar_val > 2 else (4 if rar_val > 0 else 0))
+        if beta > 2:
+            ra = min(ra, 7)
+        rar_reason = "1m return %s vs beta %s." % (_pct(r1m), _num(beta))
+    else:
+        ra = 7 if (r1m or 0) > 3 else (4 if (r1m or 0) > 0 else 0)
+        rar_reason = "No beta; using raw 1m return %s." % _pct(r1m)
+    rar = add("Risk-Adjusted Return", ra, 10, rar_reason)
+
+    # 7. NEWS & FILING SENTIMENT (10)
+    if not sig.get("news_has_data"):
+        news = add("News & Filing Sentiment", 5, 10, "No recent news; neutral default applied.")
+    else:
+        ns = n(sig.get("news_sentiment"))
+        nv = 10 if (ns or 0) > 0.35 else (7 if (ns or 0) > 0.1 else (5 if (ns or 0) >= -0.1 else (2 if (ns or 0) >= -0.35 else 0)))
+        if sig.get("has_catalyst"):
+            nv = min(10, nv + 3)
+        news = add("News & Filing Sentiment", nv, 10,
+                   "Headline sentiment %s%s." % (_num(ns), ", catalyst present" if sig.get("has_catalyst") else ""))
+
+    # 8. ALIGNMENT BONUS (10): reward when many factors are above their midpoint
+    core = [(mom, 15), (fund, 15), (ins, 15), (cong, 15), (anal, 10), (rar, 10), (news, 10)]
+    above = sum(1 for earned, poss in core if earned >= poss * 0.5)
+    align = 10 if above >= 6 else (7 if above >= 4 else (4 if above >= 2 else 0))
+    add("Alignment Bonus", align, 10, "%d of 7 factors above midpoint." % above)
+
+    total = sum(fc["earned"] for fc in factors)
+    total = max(0, min(100, int(round(total))))
+
+    # Verdict from score, then overrides.
+    if total >= 65:
+        verdict = "APPROVE"
+    elif total >= 40:
+        verdict = "WATCH"
+    else:
+        verdict = "PASS"
+
+    overrides = []
+    def cap_watch(reason):
+        # Only downgrade, never upgrade past APPROVE.
+        nonlocal verdict
+        if verdict == "APPROVE":
+            verdict = "WATCH"
+            overrides.append(reason)
+
+    if fund <= 3:
+        cap_watch("Fundamentals floor: weak or missing fundamentals cap this at WATCH.")
+    if (sig.get("analyst_recent") or 0) < 0:
+        cap_watch("Recent analyst downgrade caps this at WATCH.")
+    if cs >= 3 and not profitable:
+        cap_watch("Insider cluster selling at an unprofitable company caps this at WATCH.")
+    if (n(sig.get("chg_today")) or 0) <= -8:
+        cap_watch("Sharp drop today: holding at WATCH until the cause is understood.")
+    # Congressional boost: floor at WATCH (never below) when strong lawmaker buying with committee tie.
+    if sig.get("cong_has_data") and (sig.get("cong_buys") or 0) >= 3 and sig.get("cong_committee"):
+        if verdict == "PASS":
+            verdict = "WATCH"
+            overrides.append("Congressional support: strong committee-linked buying floors this at WATCH.")
+
+    return {"score": total, "verdict": verdict, "factors": factors, "overrides": overrides}
+
+
+def _pct(v):
+    v = _alpha_num(v)
+    if v is None:
+        return "n/a"
+    return ("+%.1f%%" % v) if v >= 0 else ("%.1f%%" % v)
+
+
+def _pctf(v):
+    v = _alpha_num(v)
+    return "n/a" if v is None else ("%.1f%%" % (v * 100))
+
+
+def _num(v):
+    v = _alpha_num(v)
+    return "n/a" if v is None else ("%.2f" % v)
+
+
 def compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector):
     """Return {'score': int 0..100, 'breakdown': [str, ...]}. Designed to never raise."""
     breakdown = []
@@ -3801,6 +4015,46 @@ def compute_full_report(symbol):
             alpha_score = 0
             alpha_breakdown = []
 
+        # New seven-factor transparent engine. Runs alongside the legacy score; its richer factor
+        # breakdown and aligned verdict are surfaced to the report. Built to never raise.
+        try:
+            _pm = info.get("profitMargins")
+            _pm = float(_pm) if _pm is not None else None
+            _beta_raw = info.get("beta")
+            _beta_raw = float(_beta_raw) if _beta_raw is not None else None
+            _profitable = (_pm is not None and _pm > 0)
+            _sig = {
+                "r5": eff_chg, "r1m": _alpha_num(locals().get("month_change")),
+                "r3m": _alpha_num(locals().get("three_month_change")),
+                "up_days_5": locals().get("up_days_5"),
+                "chg_today": eff_chg,
+                "pe": pe, "profit_margin": _pm, "debt_to_equity": debt_to_equity,
+                "ins_cbuys": ins_buys, "ins_csells": ins_sells,
+                "ins_buy_value": locals().get("exec_buy_value"),
+                "ins_sell_value": locals().get("exec_sell_value"),
+                "profitable": _profitable,
+                "cong_buys": cong_buys, "cong_sells": cong_sells,
+                "cong_committee": bool(locals().get("cong_committee_relevant")),
+                "cong_recent": bool(locals().get("cong_recent")),
+                "cong_size_big": bool(locals().get("cong_size_big")),
+                "cong_has_data": (cong_buys + cong_sells) > 0,
+                "analyst_rating": locals().get("analyst_bullishness"),
+                "analyst_coverage": locals().get("analyst_count"),
+                "analyst_upside": locals().get("target_upside_pct"),
+                "analyst_recent": locals().get("analyst_recent_dir"),
+                "analyst_has_data": bool(tgt),
+                "beta": _beta_raw,
+                "news_sentiment": locals().get("news_sentiment_score"),
+                "has_catalyst": bool(locals().get("has_catalyst")),
+                "news_has_data": bool(news),
+            }
+            _v2 = compute_alpha_v2(_sig)
+            alpha_score = _v2["score"]
+            alpha_v2 = _v2
+        except Exception as e:
+            logger.error("alpha v2 %s: %s" % (symbol, e))
+            alpha_v2 = None
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -3817,6 +4071,7 @@ def compute_full_report(symbol):
             "score": score,
             "alpha_score": alpha_score,
             "alpha_breakdown": alpha_breakdown,
+            "alpha_v2": alpha_v2,
             "pe_ratio": pe,
             "analyst_target": tgt,
             "market_cap": market_cap,
