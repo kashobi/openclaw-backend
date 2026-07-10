@@ -6480,42 +6480,10 @@ if(ib){
           _lwSma = _lwChart.addLineSeries({color: c.sma, lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false});
           _lwSma.setData(_sma(d.data, 200));
         }
-        // RSI and MACD indicator panes. Hidden on small screens to avoid clutter. Wrapped so that
-        // if an indicator ever throws on unusual data (e.g. a brand-new IPO with sparse history),
-        // the core candlestick chart still renders instead of the whole chart going blank.
-        try {
-        var showInd = window.innerWidth >= 768;
-        if(showInd && d.data.length > 35){
-          // Compress the main price into the top ~55% so the indicator panes have room.
-          _lwChart.priceScale("right").applyOptions({scaleMargins: {top: 0.02, bottom: 0.45}});
-          _lwChart.priceScale("vol").applyOptions({scaleMargins: {top: 0.50, bottom: 0.38}});
-          // RSI pane (middle band).
-          var rsiData = _rsi(d.data, 14);
-          if(rsiData.length){
-            _lwRsi = _lwChart.addLineSeries({priceScaleId: "rsi", color: c.rsi, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false});
-            _lwChart.priceScale("rsi").applyOptions({scaleMargins: {top: 0.62, bottom: 0.22}});
-            _lwRsi.setData(rsiData);
-            // Overbought 70 (red) and oversold 30 (green) reference lines.
-            _lwRsi.createPriceLine({price: 70, color: c.down, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "70"});
-            _lwRsi.createPriceLine({price: 30, color: c.up, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "30"});
-          }
-          // MACD pane (bottom band): histogram + macd line + signal line.
-          var macd = _macd(d.data);
-          if(macd.macd.length){
-            _lwMacdHist = _lwChart.addHistogramSeries({priceScaleId: "macd", priceLineVisible: false, lastValueVisible: false});
-            _lwChart.priceScale("macd").applyOptions({scaleMargins: {top: 0.80, bottom: 0.02}});
-            _lwMacdHist.setData(macd.hist.map(function(x){ return {time: x.time, value: x.value, color: x._pos ? c.up : c.down}; }));
-            _lwMacd = _lwChart.addLineSeries({priceScaleId: "macd", color: c.macd, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false});
-            _lwMacd.setData(macd.macd);
-            _lwMacdSig = _lwChart.addLineSeries({priceScaleId: "macd", color: c.signal, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false});
-            _lwMacdSig.setData(macd.signal);
-          }
-        }
-        } catch(indErr){
-          // Indicators failed; the candlestick chart above is unaffected. Reset price scale so the
-          // main chart uses full height instead of the compressed layout meant for the panes.
-          try { _lwChart.priceScale("right").applyOptions({scaleMargins: {top: 0.05, bottom: 0.25}}); } catch(e2){}
-        }
+        // Clean, full-height candlestick chart with volume. The RSI/MACD panes were compressing
+        // the price into a cramped top third, which looked bad; they are disabled here. If added
+        // back later they need their own dedicated height or a toggle, not squeezing the main chart.
+        // (indicators intentionally disabled)
         _lwChart.timeScale().fitContent();
         // Live refresh of the last candle on intraday views only.
         if(interval !== "1d"){
