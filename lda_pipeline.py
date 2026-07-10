@@ -282,6 +282,38 @@ def _store_filing(conn, f, summary):
 # Orchestration
 # --------------------------------------------------------------------------- #
 
+def _remap_existing_tickers(conn, summary):
+    """Re-map the ticker on every stored row using the current matcher.
+
+    Idempotency skips re-inserting known filings, so an improvement to the ticker map would
+    never reach rows already stored. This pass fixes that: it recomputes each row's ticker from
+    its client_name and updates any that changed. That makes the pipeline self-healing. When we
+    tightened the matcher to stop mapping "Klamath" to KLAC or "Stamford" to Ford, this pass
+    corrects those already-stored rows automatically, with no manual database work.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, client_name, client_ticker FROM lobbying_disclosures")
+        rows = cur.fetchall()
+        fixed = 0
+        for rid, client_name, current in rows:
+            correct = map_company_to_ticker(client_name)
+            if correct != current:
+                cur.execute("UPDATE lobbying_disclosures SET client_ticker = %s WHERE id = %s", (correct, rid))
+                fixed += 1
+        conn.commit()
+        cur.close()
+        summary["remapped"] = fixed
+        if fixed:
+            logger.info("remapped %s existing tickers", fixed)
+    except Exception as e:
+        logger.error("remap error: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 def fetch_lobbying_data(pages=3, filing_year=None):
     """Main entry point. Pull recent LDA filings and store them. Never raises.
 
@@ -296,6 +328,9 @@ def fetch_lobbying_data(pages=3, filing_year=None):
     try:
         conn = _connect()
         _create_table(conn)
+        # Self-heal: correct any stored rows whose ticker mapping has since improved. This is what
+        # fixes old false positives (Klamath, Stamford) without any manual database work.
+        _remap_existing_tickers(conn, summary)
         year = filing_year or date.today().year
         url = LDA_API
         params = {"filing_year": year, "page": 1}
