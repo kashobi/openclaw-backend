@@ -635,6 +635,59 @@ def score_to_conviction(score):
         return "Very Low"
 
 
+@app.route("/cron/fda-approvals")
+def cron_fda_approvals():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        from fda_pipeline import fetch_fda_approvals
+    except Exception as e:
+        logger.error("fda import failed: %s" % e)
+        return jsonify({"error": "fda pipeline unavailable"}), 503
+    try:
+        return jsonify(fetch_fda_approvals(days_back=30))
+    except Exception as e:
+        logger.error("fda run error: %s" % e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/fda")
+def api_fda():
+    symbol = (request.args.get("symbol") or "").strip().upper()
+    if not symbol:
+        return jsonify({"symbol": "", "approvals": []})
+    ck = "fda_" + symbol
+    cached = CACHE.get(ck)
+    if cached and (time.time() - cached[1]) < 900:
+        return jsonify(cached[0])
+    out = {"symbol": symbol, "approvals": []}
+    conn = get_db()
+    if conn is None:
+        return jsonify(out)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT drug_name, sponsor_name, approval_date, indication, kind "
+            "FROM fda_approvals WHERE sponsor_ticker = %s "
+            "ORDER BY approval_date DESC NULLS LAST LIMIT 15", (symbol,))
+        for r in cur.fetchall():
+            out["approvals"].append({
+                "drug_name": r[0], "sponsor_name": r[1],
+                "approval_date": r[2].isoformat() if r[2] else None,
+                "indication": r[3], "kind": r[4],
+            })
+        cur.close(); conn.close()
+    except Exception as e:
+        logger.error("api_fda: %s" % e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return jsonify(out)
+    CACHE[ck] = (out, time.time())
+    return jsonify(out)
+
+
 @app.route("/cron/lda-lobbying")
 def cron_lda_lobbying():
     if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
