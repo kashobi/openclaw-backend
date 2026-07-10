@@ -2355,7 +2355,7 @@ function renderCong(data){
     var clout = relevant ? "<span class='cloutBadge' title='This lawmaker sits on a committee tied to this stock&#39;s sector, an information edge worth noting.'>&#127919; Committee Tie</span>" : "";
     // Trades sourced from our own Senate eFD pipeline get a quiet Apex Q tag, so our growing
     // first-party coverage is visible next to the third-party feed.
-    var srcTag = (t.source === "apexq_senate") ? "<span class='ownSrcTag' title='Sourced directly from US Senate disclosures by Apex Q'>&#9889; Apex Q</span>" : "";
+    var srcTag = (t.source === "apexq_senate" || t.source === "apexq_house") ? "<span class='ownSrcTag' title='Sourced directly from congressional disclosures by Apex Q'>&#9889; Apex Q</span>" : "";
     // Filing lag: the audit asked us to make the delay between trading and disclosing visible.
     var lag = "";
     if(typeof t.filing_lag_days === "number" && t.filing_lag_days >= 0){
