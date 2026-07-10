@@ -111,20 +111,25 @@ COMPANY_TICKER_MAP = {
 
 
 def map_company_to_ticker(name):
-    """Return a ticker for a company name via normalized substring match, or None.
+    """Return a ticker for a company name via normalized word-boundary match, or None.
 
-    Shared by the FDA and DoD pipelines. Deliberately conservative: only maps when a
-    known company fragment appears, otherwise returns None so the record stores with a
-    null ticker rather than a wrong one.
+    Shared by the FDA and DoD pipelines. Deliberately conservative: matches a known company
+    fragment only on whole-word boundaries, so "Klamath Irrigation District" does NOT match the
+    "kla" in KLAC, and "Berkshire" only matches as a full word. Returns None rather than a wrong
+    ticker, since a false map is worse than no map.
     """
     if not name:
         return None
-    norm = re.sub(r"[^a-z0-9&\s\-']", "", str(name).lower()).strip()
+    norm = re.sub(r"[^a-z0-9&\s\-']", " ", str(name).lower())
+    norm = re.sub(r"\s+", " ", norm).strip()
     if not norm:
         return None
-    # Direct fragment match; longest keys first so "berkshire hathaway" beats a stray "berk".
+    # Longest keys first so multi-word names win over shorter fragments.
     for key in sorted(COMPANY_TICKER_MAP.keys(), key=len, reverse=True):
-        if key in norm:
+        # Word-boundary match: the key must appear as whole word(s), not inside another word.
+        # re.escape handles keys with special chars like "at&t" or "s&p global".
+        pattern = r"(?<![a-z0-9])" + re.escape(key) + r"(?![a-z0-9])"
+        if re.search(pattern, norm):
             return COMPANY_TICKER_MAP[key]
     return None
 
