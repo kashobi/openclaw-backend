@@ -2779,6 +2779,27 @@ def _five_day_change(ticker):
         return None
 
 
+def _moat_rationale(sector):
+    """One sentence on WHY a company in this sector can hold off competitors. Static by sector,
+    per the audit: real business logic beats reciting financial ratios."""
+    s = (sector or "").lower()
+    table = {
+        "healthcare": "Patent protection, complex manufacturing, and clinical trial data create years of exclusivity that rivals cannot quickly replicate.",
+        "technology": "Network effects, high switching costs, and entrenched developer ecosystems make it costly for customers to leave.",
+        "financial services": "Regulatory licenses, a low-cost deposit base, and switching friction protect incumbents from new entrants.",
+        "financial": "Regulatory licenses, a low-cost deposit base, and switching friction protect incumbents from new entrants.",
+        "consumer defensive": "Brand loyalty, shelf-space dominance, and distribution scale keep everyday staples hard to dislodge.",
+        "consumer cyclical": "Brand strength and scale in sourcing and logistics let leaders undercut smaller rivals on price and reach.",
+        "communication services": "Content libraries, subscriber scale, and network effects raise the cost of competing at scale.",
+        "industrials": "Long-cycle contracts, engineering know-how, and high capital requirements deter new competitors.",
+        "energy": "Control of reserves, pipelines, and refining capacity creates infrastructure advantages that take decades to build.",
+        "utilities": "Regulated monopolies and enormous fixed infrastructure make direct competition effectively impossible.",
+        "basic materials": "Ownership of low-cost mines and processing assets gives durable cost advantages competitors cannot match.",
+        "real estate": "Irreplaceable locations and long-term leases produce recurring income insulated from new supply.",
+    }
+    return table.get(s, "Durable competitive strengths are present; the specific source is not isolated for this sector.")
+
+
 def compute_alpha_v2(sig):
     """Seven-factor transparent Alpha Score and Verdict engine.
 
@@ -2974,6 +2995,89 @@ def compute_alpha_v2(sig):
             overrides.append("Congressional support: strong committee-linked buying floors this at WATCH.")
 
     return {"score": total, "verdict": verdict, "factors": factors, "overrides": overrides}
+
+
+def compute_verdict_conditions(v2, price, avg_volume, r1m):
+    """Generate up to 3 concrete, trackable conditions that would likely flip the verdict.
+
+    Answers the audit: "if you can't name the catalysts, you have a mood, not a position." Uses
+    the real score gap to APPROVE (65) or PASS (40), plus actual price and volume levels, so the
+    conditions are specific and falsifiable, not vague. Returns a list of strings.
+    """
+    conditions = []
+    try:
+        score = v2.get("score", 0)
+        verdict = v2.get("verdict")
+        factors = {f["name"]: f for f in v2.get("factors", [])}
+        p = _alpha_num(price)
+        vol = _alpha_num(avg_volume)
+
+        def price_level(pct):
+            if p is None:
+                return None
+            return round(p * (1 + pct / 100.0), 2)
+
+        def vol_str():
+            if vol and vol > 0:
+                return "on volume above %s (1.5x its average)" % _human_int(vol * 1.5)
+            return "on above-average volume"
+
+        if verdict in ("WATCH", "PASS"):
+            gap_to_approve = 65 - score
+            # Price breakout condition, scaled to how far the score must climb.
+            lvl = price_level(max(4, gap_to_approve * 0.4))
+            if lvl:
+                conditions.append("Likely to move toward APPROVE if price closes above $%s %s." % (_human_num(lvl), vol_str()))
+            # Weakest factor naming: what specific signal must improve.
+            weak = sorted(v2.get("factors", []), key=lambda f: f["earned"] / max(1, f["possible"]))
+            if weak:
+                w = weak[0]["name"]
+                fixes = {
+                    "Insider Conviction": "a C-level executive discloses an open-market purchase",
+                    "Congressional Heat": "a committee-relevant lawmaker discloses a new purchase",
+                    "Fundamental Health": "the next earnings report shows a return to profitability",
+                    "Analyst Conviction": "an analyst issues an upgrade or raises the price target",
+                    "News & Filing Sentiment": "a positive catalyst (approval, contract, or clearance) is filed",
+                    "Momentum Quality": "the stock strings together a multi-week uptrend",
+                    "Risk-Adjusted Return": "returns improve without a jump in volatility",
+                }
+                if w in fixes:
+                    conditions.append("The weakest factor is %s; it would strengthen if %s." % (w, fixes[w]))
+
+        if verdict in ("APPROVE", "WATCH"):
+            gap_to_pass = score - 40
+            lvl = price_level(-max(5, gap_to_pass * 0.4))
+            if lvl:
+                conditions.append("Likely to weaken toward PASS if price breaks below $%s %s." % (_human_num(lvl), vol_str()))
+
+        # Always give a concrete downside tripwire tied to insiders when relevant.
+        if verdict == "APPROVE":
+            conditions.append("A cluster of C-level insider selling, or a sharp single-day drop, would cap this at WATCH.")
+    except Exception:
+        pass
+    return conditions[:3]
+
+
+def _human_int(v):
+    v = _alpha_num(v)
+    if v is None:
+        return "n/a"
+    if v >= 1000000:
+        return "%.1fM" % (v / 1000000.0)
+    if v >= 1000:
+        return "%.0fK" % (v / 1000.0)
+    return str(int(v))
+
+
+def _human_num(v):
+    v = _alpha_num(v)
+    if v is None:
+        return "n/a"
+    return ("%.2f" % v).rstrip("0").rstrip(".") if v < 100 else "{:,.0f}".format(v)
+
+
+def compute_verdict_conditions_unused_guard():
+    return None
 
 
 def _pct(v):
@@ -3906,6 +4010,10 @@ def compute_full_report(symbol):
             else:
                 m_reason = "The fundamentals are mixed, with no clear durable edge standing out, so there is no real moat to point to yet."
             apex_moat = {"rating": m_rating, "score": mscore, "reason": m_reason}
+            # Business rationale: WHY this kind of company can hold off competitors, by sector.
+            # Answers the audit critique that "high ROE therefore moat" is not real analysis.
+            if m_rating in ("Wide", "Narrow"):
+                apex_moat["rationale"] = _moat_rationale(sector_name)
         else:
             apex_moat = {"rating": None, "score": 0, "reason": "Not enough data to estimate a moat for this one."}
 
@@ -4051,6 +4159,11 @@ def compute_full_report(symbol):
             _v2 = compute_alpha_v2(_sig)
             alpha_score = _v2["score"]
             alpha_v2 = _v2
+            try:
+                _avgvol = info.get("averageVolume") or info.get("averageDailyVolume10Day")
+                _v2["conditions"] = compute_verdict_conditions(_v2, cur, _avgvol, _alpha_num(locals().get("month_change")))
+            except Exception:
+                _v2["conditions"] = []
         except Exception as e:
             logger.error("alpha v2 %s: %s" % (symbol, e))
             alpha_v2 = None
