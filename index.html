@@ -2941,6 +2941,9 @@ function run(){
         document.getElementById("aboutBody").textContent = shortSumm;
         aboutCard.style.display = "";
       } else {
+        // No summary for this ticker (common for brand-new IPOs). Reset the title too and hide the
+        // card entirely, so a stale company name from the previous report can never linger.
+        document.getElementById("aboutTitle").textContent = "About " + (d.name || d.symbol || "");
         document.getElementById("aboutBody").textContent = "";
         aboutCard.style.display = "none";
       }
@@ -6477,7 +6480,10 @@ if(ib){
           _lwSma = _lwChart.addLineSeries({color: c.sma, lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false});
           _lwSma.setData(_sma(d.data, 200));
         }
-        // RSI and MACD indicator panes. Hidden on small screens to avoid clutter.
+        // RSI and MACD indicator panes. Hidden on small screens to avoid clutter. Wrapped so that
+        // if an indicator ever throws on unusual data (e.g. a brand-new IPO with sparse history),
+        // the core candlestick chart still renders instead of the whole chart going blank.
+        try {
         var showInd = window.innerWidth >= 768;
         if(showInd && d.data.length > 35){
           // Compress the main price into the top ~55% so the indicator panes have room.
@@ -6504,6 +6510,11 @@ if(ib){
             _lwMacdSig = _lwChart.addLineSeries({priceScaleId: "macd", color: c.signal, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false});
             _lwMacdSig.setData(macd.signal);
           }
+        }
+        } catch(indErr){
+          // Indicators failed; the candlestick chart above is unaffected. Reset price scale so the
+          // main chart uses full height instead of the compressed layout meant for the panes.
+          try { _lwChart.priceScale("right").applyOptions({scaleMargins: {top: 0.05, bottom: 0.25}}); } catch(e2){}
         }
         _lwChart.timeScale().fitContent();
         // Live refresh of the last candle on intraday views only.
