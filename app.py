@@ -3552,10 +3552,52 @@ def compute_full_report(symbol):
 
     try:
         ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="5d", timeout=15)
-        info = ticker.info
+        try:
+            hist = ticker.history(period="5d", timeout=15)
+        except Exception as _he:
+            logger.warning("yfinance history failed for %s: %s" % (symbol, _he))
+            hist = None
+        try:
+            info = ticker.info or {}
+        except Exception:
+            info = {}
 
-        if hist.empty:
+        # Yahoo blocks cloud IPs and breaks periodically. When its history is empty, do NOT give up:
+        # rebuild a minimal history from the Finnhub/FMP fallback chain and pull fundamentals from FMP,
+        # so the report still works on the data sources we already pay for. This is what keeps the app
+        # alive when Yahoo is down. All downstream scoring reads `hist` and `info` unchanged.
+        if hist is None or (hasattr(hist, "empty") and hist.empty):
+            rows = fetch_with_fallback(symbol, period="1mo", interval="1d")
+            if not rows:
+                return None
+            import pandas as _pd
+            _df = _pd.DataFrame([{
+                "Open": r.get("open"), "High": r.get("high"), "Low": r.get("low"),
+                "Close": r.get("close"), "Volume": r.get("volume", 0)
+            } for r in rows])
+            try:
+                _df.index = _pd.to_datetime([r.get("time") or r.get("date") for r in rows])
+            except Exception:
+                pass
+            hist = _df
+            if not info:
+                info = {}
+            try:
+                prof = fmp_get("/api/v3/profile/%s" % symbol)
+                if isinstance(prof, list) and prof:
+                    p = prof[0]
+                    info.setdefault("longName", p.get("companyName"))
+                    info.setdefault("sector", p.get("sector"))
+                    info.setdefault("industry", p.get("industry"))
+                    info.setdefault("longBusinessSummary", p.get("description"))
+                    info.setdefault("beta", p.get("beta"))
+                    if p.get("price"):
+                        info.setdefault("regularMarketPrice", p.get("price"))
+            except Exception as _pe:
+                logger.warning("FMP profile fallback failed for %s: %s" % (symbol, _pe))
+            logger.warning("analyze: served %s via fallback (yahoo unavailable)" % symbol)
+
+        if hist is None or (hasattr(hist, "empty") and hist.empty):
             return None
 
         # BACKEND UPGRADE: Finnhub real-time price fallback.
