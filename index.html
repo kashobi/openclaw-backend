@@ -1248,6 +1248,11 @@ body{transition:background-color .3s ease,color .3s ease;}
 .alphaFacWhy{font-size:11.5px;color:var(--muted);line-height:1.45;}
 .alphaOverride{margin-top:10px;padding:9px 11px;background:var(--s2);border-left:3px solid #f4b740;border-radius:7px;font-size:12px;color:var(--text);line-height:1.5;}
 .cf-neutral{background:var(--s2);border:1px solid var(--border);}
+/* Moat business rationale and What-Would-Change-My-Mind card. */
+.moatRationale{font-size:12.5px;color:var(--text);line-height:1.6;margin-top:8px;padding:9px 11px;background:var(--s2);border-radius:8px;border-left:3px solid var(--accent);}
+.cmList{display:flex;flex-direction:column;gap:9px;margin:4px 0;}
+.cmRow{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:1.55;color:var(--text);}
+.cmDot{color:var(--accent);font-size:10px;margin-top:4px;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -1483,6 +1488,7 @@ body{transition:background-color .3s ease,color .3s ease;}
       <div id="senateCard"></div>
       <div id="lobbyCard"></div>
       <div id="fdaCard"></div>
+      <div id="changeMindCard"></div>
       <div class="stitle">&#128188; The Corporate Insider Conviction Engine</div>
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">LOADING</div></div><div class="itxt aqSkel">Fetching the latest data. First analysis takes a few seconds, later loads are instant.</div></div></div>
       </div>
@@ -2991,12 +2997,14 @@ function run(){
       if(moat && moat.rating){
         var mcls = moat.rating === "Wide" ? "moatWide" : (moat.rating === "Narrow" ? "moatNarrow" : "moatNone");
         var mlabel = moat.rating === "Wide" ? "Wide Moat &#127984;" : (moat.rating === "Narrow" ? "Narrow Moat" : "No Moat");
-        moatWrap.innerHTML = "<span class=\"moatBadge " + mcls + "\">" + mlabel + "</span><div class=\"moatReason\">" + esc(moat.reason || "") + "</div>";
+        moatWrap.innerHTML = "<span class=\"moatBadge " + mcls + "\">" + mlabel + "</span><div class=\"moatReason\">" + esc(moat.reason || "") + "</div>" +
+          (moat.rationale ? "<div class=\"moatRationale\">&#128274; Why the moat holds: " + esc(moat.rationale) + "</div>" : "");
         moatWrap.style.display = "block";
       } else {
         moatWrap.innerHTML = ""; moatWrap.style.display = "none";
       }
     }
+    if(typeof injectChangeMind === "function"){ injectChangeMind(d); }
 
     // CHUNK: Feature 2: price vs analyst target gauge
     var gauge = document.getElementById("mtGauge");
@@ -6828,6 +6836,7 @@ if(ib){
     ["senateCard", "congress"],
     ["lobbyCard", "congress"],
     ["fdaCard", "more"],
+    ["changeMindCard", "overview"],
     ["ins", "insiders"], ["clusterCard", "insiders"],
     ["analystConsensus", "fundamentals"], ["deepFund", "fundamentals"],
     ["sectorCard", "fundamentals"], ["valGrid", "fundamentals"], ["grades", "fundamentals"],
@@ -7083,6 +7092,24 @@ if(ib){
     }).catch(function(){ card.innerHTML = ""; });
   }
   window.injectFda = injectFda;
+
+  // "What Would Change My Mind" card, driven by the engine's trackable conditions. Answers the
+  // audit: name the concrete events that would flip the verdict, not a vague mood.
+  function injectChangeMind(d){
+    var card = document.getElementById("changeMindCard");
+    if(!card){ return; }
+    var conds = (d && d.alpha_v2 && d.alpha_v2.conditions) ? d.alpha_v2.conditions : [];
+    if(!conds.length){ card.innerHTML = ""; return; }
+    var rows = conds.map(function(c){
+      return "<div class=\"cmRow\"><span class=\"cmDot\">&#9654;</span><span>" + esc(c) + "</span></div>";
+    }).join("");
+    card.innerHTML = "<div class=\"ic senateCardIc\"><div class=\"snHead\"><div class=\"snHeadL\">" +
+      "<div class=\"snIcon\">&#127919;</div><div><div class=\"snTitle\">What Would Change This Call</div>" +
+      "<div class=\"snSub\">Specific, trackable conditions</div></div></div></div>" +
+      "<div class=\"cmList\">" + rows + "</div>" +
+      "<div class=\"snFoot\">These are conditions to watch, not predictions.</div></div>";
+  }
+  window.injectChangeMind = injectChangeMind;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
