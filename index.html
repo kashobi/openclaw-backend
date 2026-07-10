@@ -1253,6 +1253,11 @@ body{transition:background-color .3s ease,color .3s ease;}
 .cmList{display:flex;flex-direction:column;gap:9px;margin:4px 0;}
 .cmRow{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:1.55;color:var(--text);}
 .cmDot{color:var(--accent);font-size:10px;margin-top:4px;flex-shrink:0;}
+/* Congressional trade context: committees, filing lag. */
+.cTrade{margin-bottom:6px;}
+.cComms{font-size:11px;color:var(--muted);margin:2px 0 0 4px;line-height:1.4;}
+.cLagOk{font-size:11px;color:var(--muted);font-weight:600;}
+.cLagLong{font-size:11px;color:var(--yellow);font-weight:700;}
 </style>
 </head>
 <body>
@@ -2345,8 +2350,23 @@ function renderCong(data){
   var bl = buys.length > sells.length ? "RECENT BUYING" : (sells.length > buys.length ? "RECENT SELLING" : "MIXED");
   var rows = data.map(function(t){
     var cls = (t.action && t.action.toLowerCase().indexOf("purchase") >= 0) ? "buy" : "sell";
-    var clout = t.high_clout ? "<span class='cloutBadge' title='This lawmaker sits on a committee tied to this stock&#39;s sector, an information edge worth noting.'>&#127919; High Clout</span>" : "";
-    return "<div class=\"tr\"><span class=\""+cls+"\">"+esc(t.action)+"</span><span>"+esc(t.politician)+"</span>"+clout+"<span class=\"gray\">("+esc(t.party)+")</span><span class=\"gray\">"+esc(t.amount)+"</span><span class=\"gray\">"+esc(usDate(t.date))+"</span></div>";
+    var relevant = t.committee_relevant || t.high_clout;
+    var clout = relevant ? "<span class='cloutBadge' title='This lawmaker sits on a committee tied to this stock&#39;s sector, an information edge worth noting.'>&#127919; Committee Tie</span>" : "";
+    // Filing lag: the audit asked us to make the delay between trading and disclosing visible.
+    var lag = "";
+    if(typeof t.filing_lag_days === "number" && t.filing_lag_days >= 0){
+      var lagCls = t.filing_lag_days > 45 ? "cLagLong" : "cLagOk";
+      lag = "<span class='" + lagCls + "'>disclosed " + t.filing_lag_days + "d later</span>";
+    }
+    var comms = (t.committees && t.committees.length) ? "<div class='cComms'>Committees: " + esc(t.committees.join(", ")) + "</div>" : "";
+    var st = t.state && t.state !== "Unknown" ? (" " + esc(t.state)) : "";
+    return "<div class=\"cTrade\">" +
+      "<div class=\"tr\"><span class=\"" + cls + "\">" + esc(t.action) + "</span>" +
+      "<span>" + esc(t.politician) + "</span>" + clout +
+      "<span class=\"gray\">(" + esc(t.party) + st + ")</span>" +
+      "<span class=\"gray\">" + esc(t.amount) + "</span>" +
+      "<span class=\"gray\">" + esc(usDate(t.date)) + "</span>" + lag + "</div>" +
+      comms + "</div>";
   }).join("");
   s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Congressional Trades</div><div class=\"ibdg "+bc+"\">"+bl+"</div></div><div class=\"itxt\">"+rows+"<div class=\"iwhy\">Why it matters: members of Congress must report trades by law. When several buy or sell the same name it can hint at policy moves coming that the wider market has not priced in yet.</div></div></div>";
 }
