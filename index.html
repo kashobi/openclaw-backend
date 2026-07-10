@@ -2890,11 +2890,27 @@ function run(){
   document.getElementById("ac").style.display = "none";
   document.getElementById("lb").classList.add("on");
   document.getElementById("rpt").style.opacity = "0.3";
+  // Clean slate: re-show core sections that a prior failed lookup may have hidden, so a successful
+  // report always renders fully regardless of what was shown before.
+  ["stockSections","vbox","alphaCard"].forEach(function(id){
+    var el = document.getElementById(id); if(el){ el.style.display = ""; }
+  });
 
   fetch(API + "/analyze?symbol=" + encodeURIComponent(val)).then(function(r){ return r.json(); }).then(function(d){
     if(d.error){
+      // Full reset on a failed lookup, so no field from the previously viewed stock can bleed
+      // through (which produced things like NKE showing the prior stock's sector and price under
+      // a NOT FOUND banner). Clear the header and hide the report body entirely.
       document.getElementById("sym").textContent = "NOT FOUND";
-      document.getElementById("sfull").textContent = d.error;
+      document.getElementById("sfull").textContent = d.error || ("Could not pull data for " + val + ".");
+      var _ss = document.getElementById("ssect"); if(_ss){ _ss.textContent = ""; }
+      ["price","change","aboutTitle","aboutBody"].forEach(function(id){
+        var el = document.getElementById(id); if(el){ el.textContent = ""; }
+      });
+      // Hide every report section so stale cards do not linger under the error.
+      ["stockSections","vbox","alphaCard","moatWrap","aboutCard","senateCard","lobbyCard","fdaCard","changeMindCard","cong","senateCard"].forEach(function(id){
+        var el = document.getElementById(id); if(el){ el.style.display = "none"; }
+      });
       document.getElementById("lb").classList.remove("on");
       document.getElementById("rpt").style.opacity = "1";
       currentSymbol = null;
