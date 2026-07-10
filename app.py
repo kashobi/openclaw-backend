@@ -3587,6 +3587,7 @@ def compute_full_report(symbol):
 
         # Congressional from Quiver
         congressional = []
+        _sector_for_cong = info.get("sector", "")
         if QUIVER_KEY:
             try:
                 url = f"https://api.quiverquant.com/beta/historical/congresstrading/{symbol}"
@@ -3594,12 +3595,44 @@ def compute_full_report(symbol):
                 r = requests.get(url, headers=h, timeout=8)
                 if r.status_code == 200:
                     for t in r.json()[:8]:
-                        congressional.append({"politician": t.get("Representative", "Unknown"), "party": t.get("Party", ""), "action": t.get("Transaction", "Unknown"), "amount": t.get("Range", ""), "date": t.get("TransactionDate", "")})
+                        pol = t.get("Representative", "Unknown")
+                        tdate = t.get("TransactionDate", "") or ""
+                        rdate = t.get("ReportDate", "") or t.get("Reported", "") or ""
+                        coms = _committees_for(pol)
+                        relevant = is_high_clout(pol, _sector_for_cong)
+                        # Filing lag: how many days between trading and disclosing. The audit called
+                        # this out; a long lag means the public learned late.
+                        lag = None
+                        try:
+                            if tdate and rdate:
+                                _d1 = datetime.strptime(tdate[:10], "%Y-%m-%d")
+                                _d2 = datetime.strptime(rdate[:10], "%Y-%m-%d")
+                                lag = (_d2 - _d1).days
+                        except Exception:
+                            lag = None
+                        congressional.append({
+                            "politician": pol, "party": t.get("Party", ""),
+                            "action": t.get("Transaction", "Unknown"),
+                            "amount": t.get("Range", ""), "date": tdate,
+                            "report_date": rdate, "filing_lag_days": lag,
+                            "committees": coms[:3], "committee_relevant": relevant,
+                        })
             except Exception as e:
                 logger.error(f"Congressional error: {e}")
 
         cong_buys = len([t for t in congressional if "purchase" in str(t.get("action", "")).lower()])
         cong_sells = len([t for t in congressional if "sale" in str(t.get("action", "")).lower()])
+        cong_committee_relevant = any(t.get("committee_relevant") for t in congressional)
+        # Recency: any trade within 30 days.
+        cong_recent = False
+        for t in congressional:
+            try:
+                if t.get("date") and (datetime.now() - datetime.strptime(t["date"][:10], "%Y-%m-%d")).days <= 30:
+                    cong_recent = True
+                    break
+            except Exception:
+                pass
+        cong_size_big = any("50,000" in str(t.get("amount", "")) or "100,000" in str(t.get("amount", "")) or "1,000,000" in str(t.get("amount", "")) for t in congressional)
         cong_net = cong_buys - cong_sells
         if cong_net >= 2:
             score += 2
