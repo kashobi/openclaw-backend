@@ -3132,7 +3132,7 @@ function run(){
       ["fundamentals", d.pe_ratio != null || d.profit_margin != null],
       ["insider", !!(d.insider && d.insider.length)],
       ["congressional", !!(d.congressional && d.congressional.length)],
-      ["analyst", d.target_mean != null],
+      ["analyst", (d.analyst_target != null && d.analyst_target !== "N/A") || d.target_mean != null || !!d.analyst_consensus],
       ["news", !!(d.news && d.news.length)],
       ["moat", !!(d.apex_moat && d.apex_moat.rating)],
       ["risk", d.beta != null]
