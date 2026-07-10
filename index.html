@@ -1472,6 +1472,7 @@ body{transition:background-color .3s ease,color .3s ease;}
       <div id="cong"><div class="ic"><div class="ih"><div class="it">Congressional Trades</div><div class="ibdg by">LOADING</div></div><div class="itxt aqSkel">Fetching the latest data. First analysis takes a few seconds, later loads are instant.</div></div></div>
       <div id="senateCard"></div>
       <div id="lobbyCard"></div>
+      <div id="fdaCard"></div>
       <div class="stitle">&#128188; The Corporate Insider Conviction Engine</div>
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">LOADING</div></div><div class="itxt aqSkel">Fetching the latest data. First analysis takes a few seconds, later loads are instant.</div></div></div>
       </div>
@@ -5340,6 +5341,7 @@ if(ib){
     setTimeout(injectCluster, 250);
     setTimeout(function(){ if(typeof injectSenate === "function"){ injectSenate(); } }, 350);
     setTimeout(function(){ if(typeof injectLobby === "function"){ injectLobby(); } }, 380);
+    setTimeout(function(){ if(typeof injectFda === "function"){ injectFda(); } }, 410);
     // Build the tab grouping once sections exist, then again after the async injectors have added
     // their cards, so late arrivals land in the correct tab instead of defaulting to overview.
     if(typeof applyReportTabs === "function"){
@@ -6789,6 +6791,7 @@ if(ib){
     ["cong", "congress"],
     ["senateCard", "congress"],
     ["lobbyCard", "congress"],
+    ["fdaCard", "more"],
     ["ins", "insiders"], ["clusterCard", "insiders"],
     ["analystConsensus", "fundamentals"], ["deepFund", "fundamentals"],
     ["sectorCard", "fundamentals"], ["valGrid", "fundamentals"], ["grades", "fundamentals"],
@@ -7011,6 +7014,39 @@ if(ib){
     }).catch(function(){ card.innerHTML = ""; });
   }
   window.injectLobby = injectLobby;
+
+  // FDA Catalysts card. Reads our own openFDA data via /api/fda. Drug approvals and device
+  // clearances are hard catalysts that move a stock; surfacing them per ticker is high value.
+  function injectFda(sym){
+    var card = document.getElementById("fdaCard");
+    if(!card){ return; }
+    var s = sym || currentSymbol || (document.getElementById("sym") || {}).textContent || "";
+    if(!s){ card.innerHTML = ""; return; }
+    fetch(API + "/api/fda?symbol=" + encodeURIComponent(s)).then(function(r){ return r.json(); }).then(function(d){
+      var apps = (d && d.approvals) || [];
+      var head = "<div class='snHead'><div class='snHeadL'><div class='snIcon'>&#128138;</div>" +
+        "<div><div class='snTitle'>FDA Catalysts</div><div class='snSub'>Approvals and clearances</div></div></div>" +
+        "<span class='snLive'>openFDA</span></div>";
+      if(!apps.length){
+        card.innerHTML = "<div class='ic senateCardIc'>" + head + "<div class='snEmpty'>No recent FDA approvals on record for " + esc(s) + ".</div></div>";
+        return;
+      }
+      var rows = apps.slice(0, 6).map(function(a){
+        var isDrug = a.kind === "drug";
+        var accent = isDrug ? "#a78bfa" : "#3b82f6";
+        var tag = isDrug ? "DRUG" : "DEVICE";
+        var tagCls = isDrug ? "snOther" : "snOther";
+        var meta = [a.indication, a.approval_date ? usDate(a.approval_date) : ""].filter(Boolean).join(" \u00b7 ");
+        return "<div class='snRow' style='border-left-color:" + accent + "'>" +
+          "<div class='snPillWrap'><span class='snPill snOther' style='color:" + accent + "'>" + tag + "</span></div>" +
+          "<div class='snRowMid'><div class='snTicker' style='font-family:var(--font-sans)'>" + esc(a.drug_name || "Approval") + "</div>" +
+          "<div class='snDate'>" + esc(meta) + "</div></div></div>";
+      }).join("");
+      card.innerHTML = "<div class='ic senateCardIc'>" + head + rows +
+        "<div class='snFoot'>&#128737;&#65039; Sourced from the FDA openFDA database</div></div>";
+    }).catch(function(){ card.innerHTML = ""; });
+  }
+  window.injectFda = injectFda;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
