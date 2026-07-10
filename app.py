@@ -3709,6 +3709,56 @@ def compute_full_report(symbol):
             except Exception as e:
                 logger.error(f"Congressional error: {e}")
 
+        # Merge in our OWN Senate eFD data alongside Quiver. This is the migration step: our data
+        # adds to Quiver's coverage rather than replacing it, so the app only gets better. We prefer
+        # our own record when the same trade appears in both (deduped by politician+date+action), and
+        # tag the source so we can watch our coverage grow toward eventually cutting Quiver.
+        try:
+            _sconn = get_db()
+            if _sconn is not None:
+                _scur = _sconn.cursor()
+                _scur.execute(
+                    "SELECT politician_name, party, state, transaction_type, amount, trade_date, filing_date "
+                    "FROM congressional_trades_senate WHERE ticker = %s AND ticker IS NOT NULL "
+                    "AND transaction_type IS NOT NULL ORDER BY trade_date DESC NULLS LAST LIMIT 20",
+                    (symbol.upper(),))
+                _seen = set()
+                for _c in congressional:
+                    _seen.add((str(_c.get("politician", "")).strip().lower(), str(_c.get("date", ""))[:10],
+                               "purchase" if "purchase" in str(_c.get("action", "")).lower() else "sale"))
+                for _r in _scur.fetchall():
+                    _pol, _party, _state, _ttype, _amt, _td, _fd = _r
+                    _act = "Purchase" if _ttype == "buy" else ("Sale" if _ttype == "sell" else (_ttype or "Unknown").title())
+                    _tds = _td.isoformat() if _td else ""
+                    _sig = (str(_pol or "").strip().lower(), str(_tds)[:10],
+                            "purchase" if _ttype == "buy" else "sale")
+                    if _sig in _seen:
+                        continue  # already have it from Quiver; do not double count
+                    _seen.add(_sig)
+                    _coms = _committees_for(_pol)
+                    _lag = None
+                    try:
+                        if _td and _fd:
+                            _lag = (_fd - _td).days
+                    except Exception:
+                        _lag = None
+                    congressional.append({
+                        "politician": _pol, "party": _party if _party and _party != "Unknown" else "",
+                        "state": _state if _state and _state != "Unknown" else "",
+                        "action": _act, "amount": _amt or "", "date": _tds,
+                        "report_date": _fd.isoformat() if _fd else "", "filing_lag_days": _lag,
+                        "committees": _coms[:3], "committee_relevant": is_high_clout(_pol, _sector_for_cong),
+                        "source": "apexq_senate",
+                    })
+                _scur.close(); _sconn.close()
+                logger.info("congressional: merged own Senate data for %s" % symbol)
+        except Exception as _se:
+            logger.error("senate merge for %s: %s" % (symbol, _se))
+            try:
+                _sconn.close()
+            except Exception:
+                pass
+
         cong_buys = len([t for t in congressional if "purchase" in str(t.get("action", "")).lower()])
         cong_sells = len([t for t in congressional if "sale" in str(t.get("action", "")).lower()])
         cong_committee_relevant = any(t.get("committee_relevant") for t in congressional)
