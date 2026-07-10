@@ -2779,6 +2779,53 @@ def _five_day_change(ticker):
         return None
 
 
+def _analyst_bullishness(rating_distribution, consensus_rating):
+    """Convert an analyst rating distribution into a 0-1 bullishness score for the engine.
+
+    Uses the strongBuy/buy/hold/sell/strongSell counts (weighted) when available; falls back to
+    the consensus rating word. This is the '31 buy, 2 hold, 0 sell' data the report already pulls.
+    """
+    rd = rating_distribution
+    if isinstance(rd, dict):
+        weights = {"strongBuy": 1.0, "buy": 0.75, "hold": 0.5, "sell": 0.25, "strongSell": 0.0}
+        total = sum(int(rd.get(k, 0) or 0) for k in weights)
+        if total > 0:
+            score = sum(int(rd.get(k, 0) or 0) * w for k, w in weights.items()) / float(total)
+            return round(score, 3)
+    cr = str(consensus_rating or "").lower()
+    if "strong buy" in cr:
+        return 0.9
+    if "buy" in cr:
+        return 0.75
+    if "hold" in cr:
+        return 0.5
+    if "sell" in cr:
+        return 0.2
+    return None
+
+
+def _target_upside(price, target):
+    """Percent upside from current price to mean analyst target, or None."""
+    p = _alpha_num(price)
+    t = _alpha_num(target)
+    if p is None or t is None or p <= 0:
+        return None
+    return round((t - p) / p * 100.0, 1)
+
+
+def _recent_rating_dir(recent_actions):
+    """+1 if the most recent analyst action was an upgrade, -1 if a downgrade, else 0."""
+    if not recent_actions:
+        return 0
+    for a in recent_actions:
+        act = str(a.get("action", "")).lower()
+        if "up" in act or "upgrade" in act or "initiat" in act:
+            return 1
+        if "down" in act or "downgrade" in act:
+            return -1
+    return 0
+
+
 def _moat_rationale(sector):
     """One sentence on WHY a company in this sector can hold off competitors. Static by sector,
     per the audit: real business logic beats reciting financial ratios."""
@@ -4179,11 +4226,11 @@ def compute_full_report(symbol):
                 "cong_recent": bool(locals().get("cong_recent")),
                 "cong_size_big": bool(locals().get("cong_size_big")),
                 "cong_has_data": (cong_buys + cong_sells) > 0,
-                "analyst_rating": locals().get("analyst_bullishness"),
-                "analyst_coverage": locals().get("analyst_count"),
-                "analyst_upside": locals().get("target_upside_pct"),
-                "analyst_recent": locals().get("analyst_recent_dir"),
-                "analyst_has_data": bool(tgt),
+                "analyst_rating": _analyst_bullishness(locals().get("rating_distribution"), locals().get("consensus_rating")),
+                "analyst_coverage": locals().get("num_analysts"),
+                "analyst_upside": _target_upside(cur, tgt),
+                "analyst_recent": _recent_rating_dir(locals().get("recent_actions")),
+                "analyst_has_data": bool(locals().get("num_analysts") or locals().get("rating_distribution") or (tgt and tgt != "N/A")),
                 "beta": _beta_raw,
                 "news_sentiment": locals().get("news_sentiment_score"),
                 "has_catalyst": bool(locals().get("has_catalyst")),
