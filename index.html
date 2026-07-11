@@ -3001,10 +3001,17 @@ function run(){
     if(vcBanner){
       if(d.verdict_changed){
         var vcCls = d.verdict === "APPROVE" ? "vchgUp" : (d.verdict === "PASS" ? "vchgDn" : "vchgNeu");
+        var vcArrow = d.verdict === "APPROVE" ? "&#8599;" : (d.verdict === "PASS" ? "&#8600;" : "&#8594;");
+        // Only show the reason if it is directionally coherent with the change. A downgrade to PASS
+        // must not be captioned with a bullish reason like "lawmakers buying" (that read as if a
+        // positive catalyst caused the downgrade). When in doubt, use a neutral, accurate caption.
         var vcReason = d.verdict_reason || "";
-        if(vcReason){ vcReason = vcReason.charAt(0).toUpperCase() + vcReason.slice(1); }
+        var bullishReason = /buying|upgrade|accumulat|positive|bullish/i.test(vcReason);
+        var bearishReason = /selling|downgrade|negative|bearish|drop|decline/i.test(vcReason);
+        var coherent = (d.verdict === "APPROVE" && bullishReason) || (d.verdict === "PASS" && bearishReason) || (d.verdict === "WATCH");
+        var caption = coherent && vcReason ? (vcReason.charAt(0).toUpperCase() + vcReason.slice(1) + ".") : "The balance of signals shifted.";
         vcBanner.className = "vchgBanner " + vcCls;
-        vcBanner.innerHTML = "&#8599; Verdict changed from " + esc(d.previous_verdict || "") + ". " + esc(vcReason) + ".";
+        vcBanner.innerHTML = vcArrow + " Verdict changed to " + esc(d.verdict) + " (was " + esc(d.previous_verdict || "") + "). " + esc(caption);
         vcBanner.style.display = "block";
         // Mark this change seen so it stops alerting. Fire and forget, failures are harmless.
         if(d.symbol){
@@ -3224,7 +3231,19 @@ function run(){
     if(v === "WATCH"){
       wg.innerHTML = "<div class=\"wg yellow\"><div class=\"wgt\">&#128064; What To Watch For</div><div class=\"wgtxt\">A clear price move above plus two percent on heavy volume. An analyst upgrade to Buy. A C level executive buying shares. A member of Congress disclosing a purchase. Any of these would tip the balance.</div></div><div class=\"wg blue\"><div class=\"wgt\">&#9889; What Changes The Verdict</div><div class=\"wgtxt\">To reach APPROVE the positive signals need to outweigh the negative ones. An analyst upgrade or insider buying are the fastest ways to get there. To slip to PASS the price would need to break down alongside a negative analyst call.</div></div>";
     } else if(v === "PASS"){
-      wg.innerHTML = "<div class=\"wg red\"><div class=\"wgt\">&#128064; Watch For Recovery Signs</div><div class=\"wgtxt\">Price finding a floor and holding above recent lows. An analyst upgrade. Insider or congressional buying. These would be the first hints the tide is turning.</div></div><div class=\"wg blue\"><div class=\"wgt\">&#9889; What Changes The Verdict</div><div class=\"wgtxt\">To climb to WATCH the price needs to stabilize and at least one negative signal needs to flip positive. To reach APPROVE several signals would need to line up positive at once.</div></div>";
+      // Data-aware: never tell the user to watch for congressional/insider buying the report already
+      // shows. Build the list from what is genuinely still missing, and call out what is already positive.
+      var congBuys = 0, insBuys = 0;
+      try { congBuys = (d.congressional || []).filter(function(t){ return /purchase/i.test(t.action || ""); }).length; } catch(e){}
+      try { insBuys = (d.insider || []).filter(function(t){ return /buy|purchase/i.test(t.type || t.transaction_type || ""); }).length; } catch(e){}
+      var signs = ["Price finding a floor and holding above recent lows", "An analyst upgrade"];
+      if(congBuys === 0){ signs.push("New congressional buying"); }
+      if(insBuys === 0){ signs.push("Insider buying by an executive"); }
+      var already = [];
+      if(congBuys > 0){ already.push(congBuys + " lawmaker purchase" + (congBuys > 1 ? "s" : "") + " already on record"); }
+      if(insBuys > 0){ already.push("insider buying already present"); }
+      var alreadyTxt = already.length ? "<div class=\"wgtxt\" style=\"margin-top:6px;color:var(--accent)\">Already positive: " + esc(already.join(", ")) + ". These are counted in the score above.</div>" : "";
+      wg.innerHTML = "<div class=\"wg red\"><div class=\"wgt\">&#128064; Watch For Recovery Signs</div><div class=\"wgtxt\">" + esc(signs.join(". ")) + ".</div>" + alreadyTxt + "</div><div class=\"wg blue\"><div class=\"wgt\">&#9889; What Changes The Verdict</div><div class=\"wgtxt\">To climb to WATCH the price needs to stabilize and at least one negative signal needs to flip positive. To reach APPROVE several signals would need to line up positive at once.</div></div>";
     } else {
       wg.innerHTML = "";
     }
