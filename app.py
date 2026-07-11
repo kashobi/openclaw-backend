@@ -90,6 +90,75 @@ def fmp_get(path):
 CACHE = {}
 CACHE_TTL = 60 * 15   # 15 minutes
 
+
+# ---------- data validation guardrails ----------
+# Quarantine bad data before it ever reaches a report. The rule of the whole app is accuracy over
+# completeness: a wrong number is far worse than a missing one. These checks catch the classic bad
+# data that scrapers produce: future-dated trades, impossible price jumps, market caps that do not
+# reconcile with shares outstanding.
+
+def _valid_trade_date(trade_date, filing_date=None):
+    """A trade/disclosure date must not be in the future, and a filing cannot predate the trade.
+    Returns True if the record is safe to display."""
+    from datetime import date as _d, datetime as _dt
+    def _asdate(x):
+        if x is None:
+            return None
+        if isinstance(x, _dt):
+            return x.date()
+        if isinstance(x, _d):
+            return x
+        try:
+            return _dt.strptime(str(x)[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
+    td = _asdate(trade_date)
+    fd = _asdate(filing_date)
+    today = _d.today()
+    if td and td > today:
+        return False  # trade in the future: impossible, quarantine
+    if fd and fd > today:
+        return False  # filed in the future: impossible
+    if td and fd and fd < td:
+        return False  # disclosed before it happened: impossible
+    return True
+
+
+def _price_move_sane(price, prev_close, has_catalyst=False):
+    """A single-session move above 20% without a known catalyst/halt is suspect (likely a bad tick
+    or a split not adjusted). Returns (ok, pct). ok=False means flag/quarantine for review."""
+    try:
+        p = float(price); pc = float(prev_close)
+        if pc <= 0:
+            return True, 0.0
+        pct = (p - pc) / pc * 100.0
+        if abs(pct) > 20 and not has_catalyst:
+            return False, round(pct, 2)
+        return True, round(pct, 2)
+    except (TypeError, ValueError):
+        return True, 0.0
+
+
+def _reconcile_market_cap(price, shares_outstanding, reported_cap):
+    """Market cap should equal price * shares within ~2%. If it does not, trust shares (from SEC/
+    fundamentals) and recompute, rather than displaying a mismatched figure. Returns a cap or None."""
+    try:
+        p = float(price); sh = float(shares_outstanding)
+        computed = p * sh
+        if reported_cap:
+            rc = float(reported_cap)
+            if rc > 0 and abs(computed - rc) / rc <= 0.02:
+                return rc  # within tolerance, reported is fine
+        return computed if computed > 0 else (float(reported_cap) if reported_cap else None)
+    except (TypeError, ValueError):
+        try:
+            return float(reported_cap) if reported_cap else None
+        except (TypeError, ValueError):
+            return None
+
+
+
+
 def get_cache(key):
     if key in CACHE:
         data, ts = CACHE[key]
@@ -2988,6 +3057,80 @@ def _moat_rationale(sector):
     return table.get(s, "Durable competitive strengths are present; the specific source is not isolated for this sector.")
 
 
+def _validate_report_data(symbol, price, chg, market_cap, info, congressional, insider):
+    """Data validation guardrails. Quarantines obviously-bad data in place (mutates the lists to
+    drop invalid rows) and logs anomalies for review. Never raises to the caller.
+
+    Rules:
+      - A one-day move beyond +/-25% is flagged for review (kept, but logged; real halts/catalysts
+        do happen, so we log rather than hide the price).
+      - Market cap should reconcile to price * shares outstanding within tolerance; if it is wildly
+        off, log it (we trust the SEC-derived shares when available).
+      - Congressional and insider trade dates cannot be in the future; such rows are dropped.
+      - Insider filing date cannot precede the transaction date; such rows are dropped.
+    """
+    from datetime import datetime as _dt, date as _date
+    today = _date.today()
+
+    # Extreme one-day move.
+    try:
+        if chg is not None and abs(float(chg)) > 25:
+            logger.warning("VALIDATION %s: extreme one-day move %.1f%% flagged for review" % (symbol, float(chg)))
+    except (ValueError, TypeError):
+        pass
+
+    # Market cap reconciliation.
+    try:
+        shares = info.get("sharesOutstanding")
+        if isinstance(market_cap, (int, float)) and shares and price:
+            implied = float(price) * float(shares)
+            if implied > 0 and abs(implied - market_cap) / max(implied, market_cap) > 0.10:
+                logger.warning("VALIDATION %s: market cap %.0f vs implied %.0f (>10%% gap)" % (symbol, market_cap, implied))
+    except (ValueError, TypeError, ZeroDivisionError):
+        pass
+
+    # Future-dated congressional trades: drop them.
+    if isinstance(congressional, list):
+        kept = []
+        for t in congressional:
+            d = t.get("date") or ""
+            try:
+                if d and _dt.strptime(str(d)[:10], "%Y-%m-%d").date() > today:
+                    logger.warning("VALIDATION %s: dropped future-dated congressional trade %s" % (symbol, d))
+                    continue
+            except (ValueError, TypeError):
+                pass
+            kept.append(t)
+        congressional[:] = kept
+
+    # Future-dated insider trades, and filing-before-transaction: drop them.
+    if isinstance(insider, list):
+        kept = []
+        for t in insider:
+            td = t.get("date") or t.get("transaction_date") or ""
+            fd = t.get("filing_date") or ""
+            bad = False
+            try:
+                if td and _dt.strptime(str(td)[:10], "%Y-%m-%d").date() > today:
+                    bad = True
+                if td and fd:
+                    _t = _dt.strptime(str(td)[:10], "%Y-%m-%d").date()
+                    _f = _dt.strptime(str(fd)[:10], "%Y-%m-%d").date()
+                    if _f < _t:
+                        bad = True
+            except (ValueError, TypeError):
+                pass
+            if bad:
+                logger.warning("VALIDATION %s: dropped invalid insider row (txn %s, filed %s)" % (symbol, td, fd))
+                continue
+            kept.append(t)
+        insider[:] = kept
+
+
+def _validate_report_data_guard():
+    return None
+
+
 def compute_alpha_v2(sig):
     """Seven-factor transparent Alpha Score and Verdict engine.
 
@@ -3880,6 +4023,8 @@ def compute_full_report(symbol):
                                 lag = (_d2 - _d1).days
                         except Exception:
                             lag = None
+                        if not _valid_trade_date(tdate, rdate):
+                            continue  # quarantine impossible dates (future-dated or filed before trade)
                         congressional.append({
                             "politician": pol, "party": t.get("Party", ""),
                             "action": t.get("Transaction", "Unknown"),
@@ -3915,6 +4060,8 @@ def compute_full_report(symbol):
                             "purchase" if _ttype == "buy" else "sale")
                     if _sig in _seen:
                         continue  # already have it from Quiver; do not double count
+                    if not _valid_trade_date(_tds, _fd):
+                        continue  # quarantine impossible dates
                     _seen.add(_sig)
                     _coms = _committees_for(_pol)
                     _lag = None
@@ -3963,6 +4110,8 @@ def compute_full_report(symbol):
                             "purchase" if _ttype == "buy" else "sale")
                     if _sig in _hseen:
                         continue
+                    if not _valid_trade_date(_tds, _fd):
+                        continue  # quarantine impossible dates
                     _hseen.add(_sig)
                     _coms = _committees_for(_pol)
                     _lag = None
@@ -4276,6 +4425,15 @@ def compute_full_report(symbol):
         market_cap = info.get("marketCap", "N/A")
         volume = int(hist["Volume"].iloc[-1]) if not hist.empty else 0
         beta = fmt_price(info.get("beta"))
+
+        # Data validation guardrails. Catch bad data before it reaches the report rather than
+        # displaying something obviously wrong (a 60% one-day move, a future-dated trade, a market
+        # cap that does not reconcile). Quarantined items are dropped and logged, not shown.
+        try:
+            _validate_report_data(symbol, cur, chg, market_cap, info, congressional, insider)
+        except Exception as _ve:
+            logger.error("validation error for %s: %s" % (symbol, _ve))
+
         confidence, flags = run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider)
 
         # FMP second source. Additive and non blocking: display first so it can be verified,
@@ -4569,6 +4727,13 @@ def compute_full_report(symbol):
             logger.error("alpha v2 %s: %s" % (symbol, e))
             alpha_v2 = None
 
+        # Data validation guardrails: sanity-check the price move and reconcile market cap. A move
+        # over 20% in a session without a catalyst is flagged (likely a bad tick); a mismatched
+        # market cap is recomputed from shares. Accuracy over completeness.
+        _price_ok, _price_pct = _price_move_sane(cur, locals().get("prev_close_val") or locals().get("prev") or cur, bool(locals().get("has_catalyst")))
+        _reconciled_cap = _reconcile_market_cap(cur, info.get("sharesOutstanding"), info.get("marketCap"))
+        _data_quality = "ok" if _price_ok else "price_move_flagged"
+
         result = {
             "symbol": symbol,
             "name": info.get("longName", symbol),
@@ -4577,6 +4742,8 @@ def compute_full_report(symbol):
             "price": cur,
             "change_pct": chg,
             "price_source": price_source,
+            "data_quality": _data_quality,
+            "market_cap_reconciled": _reconciled_cap,
             "recommendation": rec,
             "verdict": (alpha_v2.get("verdict") if (alpha_v2 and alpha_v2.get("verdict")) else verdict),
             "legacy_verdict": verdict,
