@@ -2108,24 +2108,147 @@ def _fmp_history_rows(symbol, period):
         return []
 
 
+def _fmp_stable_history(symbol, period):
+    """FMP 'stable' EOD price endpoint. Available on more plan tiers than the v3 endpoints."""
+    key = os.environ.get("FMP_KEY", "").strip()
+    if not key:
+        return []
+    try:
+        r = requests.get("https://financialmodelingprep.com/stable/historical-price-eod/full",
+                         params={"symbol": symbol, "apikey": key}, timeout=12)
+        d = r.json()
+        bars = d if isinstance(d, list) else (d.get("historical") if isinstance(d, dict) else None)
+        if not bars:
+            return []
+        import datetime as _dt
+        rows = []
+        for bar in bars:
+            try:
+                ds = bar.get("date") or bar.get("datetime")
+                ts = int(_dt.datetime.strptime(str(ds)[:10], "%Y-%m-%d").timestamp())
+                _c = bar.get("close", 0) or 0
+                rows.append({"time": ts, "open": round(bar.get("open") or _c, 2), "high": round(bar.get("high") or _c, 2),
+                             "low": round(bar.get("low") or _c, 2), "close": round(_c, 2),
+                             "volume": int(bar.get("volume", 0) or 0)})
+            except (ValueError, KeyError, TypeError):
+                continue
+        rows.sort(key=lambda x: x["time"])
+        return rows
+    except Exception as e:
+        logger.error("fmp stable history %s: %s" % (symbol, e))
+        return []
+
+
+def _alphavantage_history(symbol, period):
+    """Alpha Vantage daily prices. Free tier (key AV_KEY); a reliable independent backstop."""
+    key = os.environ.get("AV_KEY", "").strip()
+    if not key:
+        return []
+    try:
+        r = requests.get("https://www.alphavantage.co/query",
+                         params={"function": "TIME_SERIES_DAILY", "symbol": symbol,
+                                 "outputsize": "compact", "apikey": key}, timeout=15)
+        d = r.json()
+        series = d.get("Time Series (Daily)")
+        if not series:
+            return []
+        import datetime as _dt
+        rows = []
+        for ds, bar in series.items():
+            try:
+                ts = int(_dt.datetime.strptime(ds, "%Y-%m-%d").timestamp())
+                rows.append({"time": ts, "open": round(float(bar["1. open"]), 2),
+                             "high": round(float(bar["2. high"]), 2), "low": round(float(bar["3. low"]), 2),
+                             "close": round(float(bar["4. close"]), 2), "volume": int(float(bar["5. volume"]))})
+            except (ValueError, KeyError, TypeError):
+                continue
+        rows.sort(key=lambda x: x["time"])
+        return rows
+    except Exception as e:
+        logger.error("alphavantage history %s: %s" % (symbol, e))
+        return []
+
+
+def _stooq_history(symbol, period):
+    """Stooq CSV daily prices. Completely free, no key, no auth. A dependable last-resort source
+    that does not block cloud IPs the way Yahoo does, so it works from Railway."""
+    try:
+        s = symbol.lower()
+        if "." not in s:
+            s = s + ".us"
+        r = requests.get("https://stooq.com/q/d/l/", params={"s": s, "i": "d"}, timeout=12)
+        if r.status_code != 200 or not r.text or "Date" not in r.text[:50]:
+            return []
+        import datetime as _dt, csv as _csv, io as _io
+        rows = []
+        reader = _csv.DictReader(_io.StringIO(r.text))
+        for bar in reader:
+            try:
+                ts = int(_dt.datetime.strptime(bar["Date"], "%Y-%m-%d").timestamp())
+                _c = float(bar["Close"])
+                rows.append({"time": ts, "open": round(float(bar.get("Open") or _c), 2),
+                             "high": round(float(bar.get("High") or _c), 2), "low": round(float(bar.get("Low") or _c), 2),
+                             "close": round(_c, 2), "volume": int(float(bar.get("Volume") or 0))})
+            except (ValueError, KeyError, TypeError):
+                continue
+        rows.sort(key=lambda x: x["time"])
+        return rows
+    except Exception as e:
+        logger.error("stooq history %s: %s" % (symbol, e))
+        return []
+
+
 def fetch_with_fallback(symbol, period="1y", interval="1d"):
-    """OHLCV rows for a symbol, yfinance first, then Finnhub, then FMP. Same shape from each."""
+    """OHLCV rows for a symbol, trying every available source until one returns data.
+
+    Full fallback chain, because every source can fail independently: Yahoo blocks cloud IPs,
+    Finnhub deprecated its candle endpoint, and FMP price endpoints require specific plan tiers.
+    So we try them ALL and let whichever works win, logging which source served each request:
+
+        1. yfinance            (free, but blocks cloud IPs)
+        2. Stooq               (free, no key, works from cloud)  <- reliable on Railway
+        3. FMP v3 history      (needs a plan tier with price data)
+        4. FMP stable history  (available on more tiers)
+        5. Finnhub candle      (deprecated for most, kept just in case)
+        6. Alpha Vantage       (free key, independent backstop)
+    """
     try:
         rows = _yf_history_rows(symbol, period, interval)
         if rows:
             return rows
-        logger.warning("fetch_with_fallback: yfinance empty for %s, trying fallbacks" % symbol)
+        logger.warning("fallback: yfinance empty for %s" % symbol)
     except Exception as e:
-        logger.warning("fetch_with_fallback: yfinance failed for %s (%s), trying fallbacks" % (symbol, e))
-    if interval == "1d":
-        rows = _finnhub_history_rows(symbol, period)
-        if rows:
-            logger.warning("fetch_with_fallback: served %s from Finnhub" % symbol)
-            return rows
-        rows = _fmp_history_rows(symbol, period)
-        if rows:
-            logger.warning("fetch_with_fallback: served %s from FMP" % symbol)
-            return rows
+        logger.warning("fallback: yfinance failed for %s (%s)" % (symbol, e))
+
+    if interval != "1d":
+        return []
+
+    rows = _stooq_history(symbol, period)
+    if rows:
+        logger.warning("fallback: served %s from Stooq" % symbol)
+        return rows
+
+    rows = _fmp_history_rows(symbol, period)
+    if rows:
+        logger.warning("fallback: served %s from FMP v3" % symbol)
+        return rows
+
+    rows = _fmp_stable_history(symbol, period)
+    if rows:
+        logger.warning("fallback: served %s from FMP stable" % symbol)
+        return rows
+
+    rows = _finnhub_history_rows(symbol, period)
+    if rows:
+        logger.warning("fallback: served %s from Finnhub" % symbol)
+        return rows
+
+    rows = _alphavantage_history(symbol, period)
+    if rows:
+        logger.warning("fallback: served %s from Alpha Vantage" % symbol)
+        return rows
+
+    logger.error("fallback: ALL price sources failed for %s" % symbol)
     return []
 
 
