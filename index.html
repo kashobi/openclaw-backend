@@ -5182,7 +5182,7 @@ function showView(name){
   if(name === "home"){ loadHomeContext(); loadDashboard(); }
   if(name === "backtest"){ initBacktest(); }
   if(name === "trade"){ initTrade(); }
-  if(name === "alerts" && typeof loadAlerts === "function"){ loadAlerts(); }
+  if(name === "alerts" && typeof loadCustomAlerts === "function"){ loadCustomAlerts(); }
   window.scrollTo(0, 0);
 }
 var _tabs = document.querySelectorAll(".tab");
@@ -6587,7 +6587,7 @@ if(ib){
     if(t === "earnings_tomorrow"){ return "\uD83D\uDCC5"; }
     return "\uD83D\uDD14";
   }
-  function loadAlerts(){
+  function loadCustomAlerts(){
     var gate = document.getElementById("alGate");
     var main = document.getElementById("alMain");
     if(!currentUser){ if(gate) gate.style.display = "block"; if(main) main.style.display = "none"; return; }
@@ -6612,13 +6612,13 @@ if(ib){
       var tgs = list.querySelectorAll(".alToggle");
       for(var t = 0; t < tgs.length; t++){
         tgs[t].onclick = function(){
-          fetch(API + "/alerts/toggle", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: +this.getAttribute("data-id")})}).then(function(){ loadAlerts(); });
+          fetch(API + "/alerts/toggle", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: +this.getAttribute("data-id")})}).then(function(){ loadCustomAlerts(); });
         };
       }
       var dels = list.querySelectorAll(".alDel");
       for(var x = 0; x < dels.length; x++){
         dels[x].onclick = function(){
-          fetch(API + "/alerts/delete", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: +this.getAttribute("data-id")})}).then(function(){ loadAlerts(); });
+          fetch(API + "/alerts/delete", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: +this.getAttribute("data-id")})}).then(function(){ loadCustomAlerts(); });
         };
       }
     }).catch(function(){});
@@ -6689,7 +6689,7 @@ if(ib){
               document.getElementById("alSym").value = "";
               document.getElementById("alPol").value = "";
               document.getElementById("alPrice").value = "";
-              loadAlerts();
+              loadCustomAlerts();
             } else if(err){ err.textContent = (d && d.error) ? d.error : "Could not save."; err.style.display = "block"; }
           }).catch(function(){ if(err){ err.textContent = "Connection issue."; err.style.display = "block"; } });
       };
