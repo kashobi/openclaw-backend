@@ -2084,7 +2084,7 @@ def _fmp_history_rows(symbol, period):
         return []
     try:
         r = requests.get("https://financialmodelingprep.com/api/v3/historical-price-full/" + symbol,
-                         params={"apikey": key, "serietype": "line"}, timeout=12)
+                         params={"apikey": key}, timeout=12)
         d = r.json()
         hist = d.get("historical") if isinstance(d, dict) else None
         if not hist:
@@ -2094,8 +2094,10 @@ def _fmp_history_rows(symbol, period):
         for bar in hist:
             try:
                 ts = int(_dt.datetime.strptime(bar["date"], "%Y-%m-%d").timestamp())
-                rows.append({"time": ts, "open": round(bar.get("open", 0), 2), "high": round(bar.get("high", 0), 2),
-                             "low": round(bar.get("low", 0), 2), "close": round(bar.get("close", 0), 2),
+                # Fall back to close for any missing OHLC field so a bar is never zeroed out.
+                _c = bar.get("close", 0) or 0
+                rows.append({"time": ts, "open": round(bar.get("open") or _c, 2), "high": round(bar.get("high") or _c, 2),
+                             "low": round(bar.get("low") or _c, 2), "close": round(_c, 2),
                              "volume": int(bar.get("volume", 0) or 0)})
             except (ValueError, KeyError, TypeError):
                 continue
@@ -3599,16 +3601,42 @@ def compute_full_report(symbol):
         if hist is None or (hasattr(hist, "empty") and hist.empty):
             rows = fetch_with_fallback(symbol, period="6mo", interval="1d")
             if not rows:
-                return None
+                # Last resort: all history sources failed (Yahoo blocked, Finnhub candle endpoint
+                # deprecated, FMP history down or over quota). A single current quote is the most
+                # reliable call there is, so build a minimal one-bar history from FMP's quote so the
+                # engine still runs instead of returning NOT FOUND on a major, liquid stock.
+                q = fmp_get("/api/v3/quote/%s" % symbol)
+                if isinstance(q, list) and q:
+                    qd = q[0]
+                    px = qd.get("price")
+                    if px:
+                        prev = qd.get("previousClose") or px
+                        rows = [
+                            {"time": int(time.time()) - 86400, "open": prev, "high": prev, "low": prev, "close": prev, "volume": qd.get("volume", 0) or 0},
+                            {"time": int(time.time()), "open": qd.get("open", px) or px, "high": qd.get("dayHigh", px) or px, "low": qd.get("dayLow", px) or px, "close": px, "volume": qd.get("volume", 0) or 0},
+                        ]
+                        if not info:
+                            info = {}
+                        info.setdefault("longName", qd.get("name"))
+                        info.setdefault("regularMarketPrice", px)
+                        info.setdefault("marketCap", qd.get("marketCap"))
+                        info.setdefault("trailingPE", qd.get("pe"))
+                        logger.warning("analyze: served %s from FMP quote (all history sources down)" % symbol)
+                if not rows:
+                    logger.error("analyze: ALL sources failed for %s (yahoo+finnhub+fmp history+fmp quote)" % symbol)
+                    return None
             import pandas as _pd
             _df = _pd.DataFrame([{
                 "Open": r.get("open"), "High": r.get("high"), "Low": r.get("low"),
                 "Close": r.get("close"), "Volume": r.get("volume", 0)
             } for r in rows])
             try:
-                _df.index = _pd.to_datetime([r.get("time") or r.get("date") for r in rows])
+                _df.index = _pd.to_datetime([r.get("time") or r.get("date") for r in rows], unit="s", errors="coerce")
             except Exception:
-                pass
+                try:
+                    _df.index = _pd.to_datetime([r.get("time") or r.get("date") for r in rows])
+                except Exception:
+                    pass
             hist = _df
             if not info:
                 info = {}
