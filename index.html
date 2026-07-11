@@ -2922,6 +2922,7 @@ function run(){
     }
 
     currentSymbol = d.symbol || val;
+    window.currentSector = d.sector || "";
     currentName = d.name || "";
     window._lastReport = d;
     updateSaveBtn();
@@ -3508,6 +3509,31 @@ var authMode = "login";
 var watchSymbols = [];
 var _verdictFlips = {};
 var currentSymbol = null;
+window.currentSector = "";
+
+// Sector-aware module eligibility. A module only renders for tickers whose sector is eligible, so
+// we never show an FDA card on a retailer or a macro card on a biotech. Congressional and lobbying
+// apply to every company, so they are universal. This is what stops "No FDA approvals" noise on
+// non-healthcare names, the module is simply absent, not empty.
+var MODULE_ELIGIBILITY = {
+  fdaCard: ["Healthcare", "Biotechnology", "Pharmaceuticals", "Medical Devices", "Drug Manufacturers", "Diagnostics & Research", "Medical Instruments & Supplies"],
+  macroCard: ["Financial Services", "Financials", "Energy", "Real Estate", "Basic Materials", "Materials"],
+  regulatoryCard: ["Financial Services", "Financials", "Energy", "Utilities", "Communication Services", "Telecommunications"],
+  productCard: ["Technology", "Consumer Cyclical", "Consumer Defensive", "Communication Services"]
+  // senateCard, lobbyCard, congressional: universal (every sector), so not listed here.
+};
+
+function moduleEligible(cardId, sector){
+  var elig = MODULE_ELIGIBILITY[cardId];
+  if(!elig){ return true; }  // not gated => universal (congressional, lobbying, etc.)
+  var s = (sector || window.currentSector || "").trim();
+  if(!s){ return true; }  // unknown sector => don't hide, degrade gracefully
+  for(var i = 0; i < elig.length; i++){
+    if(elig[i].toLowerCase() === s.toLowerCase()){ return true; }
+  }
+  return false;
+}
+window.moduleEligible = moduleEligible;
 var currentName = "";
 
 function setAuthMode(mode){
@@ -7110,6 +7136,12 @@ if(ib){
     if(!card){ return; }
     var s = sym || currentSymbol || (document.getElementById("sym") || {}).textContent || "";
     if(!s){ card.innerHTML = ""; return; }
+    // Sector gate: FDA catalysts only matter for healthcare-type names. For everyone else the
+    // module is completely absent, no empty "no approvals" message cluttering the report.
+    if(!moduleEligible("fdaCard", window.currentSector)){
+      card.innerHTML = ""; card.style.display = "none"; return;
+    }
+    card.style.display = "";
     fetch(API + "/api/fda?symbol=" + encodeURIComponent(s)).then(function(r){ return r.json(); }).then(function(d){
       var apps = (d && d.approvals) || [];
       var head = "<div class='snHead'><div class='snHeadL'><div class='snIcon'>&#128138;</div>" +
