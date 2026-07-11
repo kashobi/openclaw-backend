@@ -2895,16 +2895,25 @@ def compute_alpha_v2(sig):
     # 1. MOMENTUM QUALITY (15)
     r5, r1m, r3m = n(sig.get("r5")), n(sig.get("r1m")), n(sig.get("r3m"))
     m = 0
-    m += 5 if (r5 or 0) > 3 else (3 if (r5 or 0) > 0 else 0)
-    m += 5 if (r1m or 0) > 5 else (3 if (r1m or 0) > 0 else 0)
-    m += 5 if (r3m or 0) > 8 else (3 if (r3m or 0) > 0 else 0)
+    # Score each window; when a window is genuinely missing (None), award a neutral half-credit
+    # instead of zero, so a healthy stock is not punished for absent data (e.g. a large-cap served
+    # via the fallback path that returns limited history). Zero is for a KNOWN bad return, not unknown.
+    def _mom_pts(r):
+        if r is None:
+            return 2.5  # neutral: unknown, not bad
+        return 5 if r > 3 else (3 if r > 0 else 0)
+    m += _mom_pts(r5) if r5 is not None else _mom_pts(None)
+    m += _mom_pts(r1m)
+    m += _mom_pts(r3m)
     if (sig.get("up_days_5") or 0) >= 4:
         m += 2
     ct = n(sig.get("chg_today")) or 0
     if ct > 5 and (r1m or 0) < 0:
         m = min(m, 7)  # mean-reversion penalty: a pop against a down month is suspect
-    mom_reason = "5d %s, 1m %s, 3m %s." % (
-        _pct(r5), _pct(r1m), _pct(r3m))
+    _miss = [lbl for lbl, v in [("1m", r1m), ("3m", r3m)] if v is None]
+    mom_reason = "5d %s, 1m %s, 3m %s.%s" % (
+        _pct(r5), _pct(r1m), _pct(r3m),
+        (" Some windows lack history; scored neutral, not negative." if _miss else ""))
     mom = add("Momentum Quality", m, 15, mom_reason)
 
     # 2. FUNDAMENTAL HEALTH (15) with fundamentals floor
@@ -2996,14 +3005,19 @@ def compute_alpha_v2(sig):
 
     # 6. RISK-ADJUSTED RETURN (10)
     beta = n(sig.get("beta"))
-    if beta and beta > 0:
-        rar_val = (r1m or 0) / beta
+    if r1m is None:
+        # Return data missing: score neutral rather than zero so a healthy name is not punished for
+        # absent history. Half credit reflects genuine uncertainty, not a bad signal.
+        ra = 5
+        rar_reason = "1m return not available; scored neutral. Beta %s." % _num(beta)
+    elif beta and beta > 0:
+        rar_val = r1m / beta
         ra = 10 if rar_val > 5 else (7 if rar_val > 2 else (4 if rar_val > 0 else 0))
         if beta > 2:
             ra = min(ra, 7)
         rar_reason = "1m return %s vs beta %s." % (_pct(r1m), _num(beta))
     else:
-        ra = 7 if (r1m or 0) > 3 else (4 if (r1m or 0) > 0 else 0)
+        ra = 7 if r1m > 3 else (4 if r1m > 0 else 0)
         rar_reason = "No beta; using raw 1m return %s." % _pct(r1m)
     rar = add("Risk-Adjusted Return", ra, 10, rar_reason)
 
@@ -3583,7 +3597,7 @@ def compute_full_report(symbol):
         # so the report still works on the data sources we already pay for. This is what keeps the app
         # alive when Yahoo is down. All downstream scoring reads `hist` and `info` unchanged.
         if hist is None or (hasattr(hist, "empty") and hist.empty):
-            rows = fetch_with_fallback(symbol, period="1mo", interval="1d")
+            rows = fetch_with_fallback(symbol, period="6mo", interval="1d")
             if not rows:
                 return None
             import pandas as _pd
