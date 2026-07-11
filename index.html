@@ -1260,7 +1260,15 @@ body{transition:background-color .3s ease,color .3s ease;}
 .cComms{font-size:11px;color:var(--muted);margin:2px 0 0 4px;line-height:1.4;}
 .cLagOk{font-size:11px;color:var(--muted);font-weight:600;}
 .cLagLong{font-size:11px;color:var(--yellow);font-weight:700;}
-.ownSrcTag{font-size:10px;font-weight:800;color:var(--accent);background:rgba(var(--accent-rgb),.12);border:1px solid var(--accent);border-radius:12px;padding:2px 7px;margin-left:4px;white-space:nowrap;}</style>
+.ownSrcTag{font-size:10px;font-weight:800;color:var(--accent);background:rgba(var(--accent-rgb),.12);border:1px solid var(--accent);border-radius:12px;padding:2px 7px;margin-left:4px;white-space:nowrap;}/* News tiering: section headers, staleness, aggregation, collapsible broad market. */
+.newsTierHead{font-size:12px;font-weight:800;letter-spacing:.02em;color:var(--muted);text-transform:uppercase;margin:14px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border);}
+.newsTierHead:first-child{margin-top:0;}
+.newsTierToggle{cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;}
+.newsTierToggle .nChev{transition:transform .2s;font-size:10px;}
+.newsTierToggle.open .nChev{transform:rotate(90deg);}
+.nStale{font-size:10px;color:var(--muted);background:var(--s2);border-radius:8px;padding:1px 6px;margin-left:6px;opacity:.7;}
+.nAlso{font-size:11px;color:var(--muted);margin-top:4px;font-style:italic;}
+</style>
 </head>
 <body>
 <div class="tkbar"><div class="tkwrap"><div class="tktrack" id="tktrack"><span class="tki"><span class="tsym">APEX Q</span><span class="tpx">Loading live market data...</span></span></div></div></div>
@@ -2433,27 +2441,99 @@ function timeAgo(ts){
   var dt = new Date(Number(ts) * 1000);
   return dt.toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"});
 }
-function renderNews(data){
+function _newsTier(n, sym, company, sector){
+  // Classify an article: TIER 1 = mentions the ticker or company; TIER 2 = mentions the sector or a
+  // known competitor; TIER 3 = broad market. This pushes ticker-specific news to the top and sinks
+  // generic market noise, fixing the "WD-40 and Dow-movers cluttering the HD report" problem.
+  var text = ((n.headline || "") + " " + (n.summary || "") + " " + (n.summary_long || "")).toLowerCase();
+  var s = (sym || "").toLowerCase();
+  if(s && (new RegExp("\\b" + s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b")).test(text)){ return 1; }
+  if(company){
+    // Match the distinctive first word of the company name (e.g. "Home Depot" -> "home depot", "Apple").
+    var cn = company.toLowerCase().replace(/,?\s+(inc|corp|corporation|company|co|ltd|plc|holdings|group|the)\b.*/g, "").trim();
+    if(cn && cn.length > 2 && text.indexOf(cn) >= 0){ return 1; }
+  }
+  var comps = (window.COMPETITOR_MAP && window.COMPETITOR_MAP[(sym||"").toUpperCase()]) || [];
+  for(var i = 0; i < comps.length; i++){
+    if(text.indexOf(comps[i].toLowerCase()) >= 0){ return 2; }
+  }
+  var sec = (sector || window.currentSector || "").toLowerCase();
+  if(sec && text.indexOf(sec) >= 0){ return 2; }
+  return 3;
+}
+
+function _dedupeNews(data){
+  // Collapse the same story reported by multiple outlets. Keep the earliest, aggregate the rest as
+  // "Also reported by". Matches on a normalized headline prefix.
+  var seen = {}; var out = [];
+  data.forEach(function(n){
+    var key = (n.headline || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").split(" ").slice(0, 8).join(" ");
+    if(seen[key] !== undefined){
+      var idx = seen[key];
+      out[idx]._also = out[idx]._also || [];
+      if(n.source && out[idx]._also.indexOf(n.source) < 0 && n.source !== out[idx].source){ out[idx]._also.push(n.source); }
+    } else {
+      seen[key] = out.length; out.push(n);
+    }
+  });
+  return out;
+}
+
+function renderNews(data, sym, company){
   var s = document.getElementById("news");
   if(!data || !data.length){
     s.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">News Feed</div><div class=\"ibdg by\">NO RESULTS</div></div><div class=\"itxt\">No articles found in the last sixty days. Light coverage is not automatically bad. Some of the best opportunities sit in names the headlines have not found yet.</div></div>";
     return;
   }
-  var isGen = data.some(function(n){ return n.source && n.source.indexOf("General") >= 0; });
-  var pre = isGen ? "<div class=\"ic\" style=\"margin-bottom:8px\"><div class=\"ih\"><div class=\"it\">General Market News</div><div class=\"ibdg by\">NO COMPANY NEWS</div></div><div class=\"itxt\" style=\"font-size:12px\">No company specific news in the last sixty days. Showing general market news instead.</div></div>" : "";
-  var items = data.map(function(n){
-    var sum = n.summary ? ("<div class=\"nsum\">"+esc(n.summary)+"</div>") : "";
-    var when = n.ts ? ("<span class=\"ntime\">"+esc(timeAgo(n.ts))+"</span>") : "";
+  var symU = sym || currentSymbol || "";
+  var comp = company || "";
+  data = _dedupeNews(data);
+  // Tier every article.
+  data.forEach(function(n){ n._tier = _newsTier(n, symU, comp, window.currentSector); });
+  var t1 = data.filter(function(n){ return n._tier === 1; });
+  var t2 = data.filter(function(n){ return n._tier === 2; });
+  var t3 = data.filter(function(n){ return n._tier === 3; });
+
+  function itemHtml(n){
+    var sum = n.summary ? ("<div class=\"nsum\">" + esc(n.summary) + "</div>") : "";
+    var when = n.ts ? ("<span class=\"ntime\">" + esc(timeAgo(n.ts)) + "</span>") : "";
+    // Staleness: articles older than 48h get a quiet marker (SEC filings exempt).
+    var stale = "";
+    if(n.ts){
+      var ageH = (Date.now() / 1000 - n.ts) / 3600;
+      var isFiling = /sec|filing|form|edgar/i.test((n.source || "") + (n.headline || ""));
+      if(ageH > 48 && !isFiling){ stale = "<span class=\"nStale\">older</span>"; }
+    }
+    var also = (n._also && n._also.length) ? ("<div class=\"nAlso\">Also reported by: " + esc(n._also.slice(0, 4).join(", ")) + "</div>") : "";
     var longTxt = n.summary_long || n.summary || "";
     var safeUrl = (n.url && /^https?:\/\//i.test(n.url)) ? n.url : "";
-    return "<div class=\"ni newsItem\" data-headline=\""+esc(n.headline)+"\" data-source=\""+esc(n.source)+"\" data-long=\""+esc(longTxt)+"\" data-url=\""+esc(safeUrl)+"\">"
-      + "<div class=\"ns\">"+esc(n.source)+when+"</div>"
-      + "<div class=\"nh\">"+esc(n.headline)+"</div>"
-      + sum
+    return "<div class=\"ni newsItem\" data-headline=\"" + esc(n.headline) + "\" data-source=\"" + esc(n.source) + "\" data-long=\"" + esc(longTxt) + "\" data-url=\"" + esc(safeUrl) + "\">"
+      + "<div class=\"ns\">" + esc(n.source) + when + stale + "</div>"
+      + "<div class=\"nh\">" + esc(n.headline) + "</div>"
+      + sum + also
       + "<div class=\"ntap\">Tap to read more &#8594;</div>"
       + "</div>";
-  }).join("");
-  s.innerHTML = pre + items;
+  }
+
+  var html = "";
+  var label = symU ? esc(symU) : "Company";
+  if(t1.length){
+    html += "<div class=\"newsTierHead\">" + label + "-Specific News</div>" + t1.map(itemHtml).join("");
+  }
+  if(t2.length){
+    html += "<div class=\"newsTierHead\">Sector Context</div>" + t2.map(itemHtml).join("");
+  }
+  if(t3.length){
+    // Broad market news: collapsed by default, and fully suppressed when there is strong direct coverage.
+    if(t1.length >= 3){
+      // plenty of direct news; suppress broad market entirely
+    } else {
+      html += "<div class=\"newsTierHead newsTierToggle\" onclick=\"var e=this.nextElementSibling;e.style.display=e.style.display==='none'?'':'none';this.classList.toggle('open');\">Broad Market News <span class=\"nChev\">&#9656;</span></div><div class=\"newsBroad\" style=\"display:none\">" + t3.map(itemHtml).join("") + "</div>";
+    }
+  }
+  if(!html){ html = t1.concat(t2, t3).map(itemHtml).join(""); }
+  s.innerHTML = html;
+
   var nodes = s.querySelectorAll(".newsItem");
   nodes.forEach(function(item){
     item.addEventListener("click", function(){
@@ -2645,7 +2725,7 @@ function renderETFReport(d){
   }
 
   // News, identical pipeline and tappable modal as the stock report
-  renderNews(d.news || []);
+  renderNews(d.news || [], d.symbol, d.name);
 }
 
 function loadTicker(sym){
@@ -3256,7 +3336,7 @@ function run(){
 
     renderCong(d.congressional || []);
     renderIns(d.insider || [], d.insider_sell_value || 0, d.insider_big_block || false);
-    renderNews(d.news || []);
+    renderNews(d.news || [], d.symbol, d.name);
     // Recent analyst moves are now part of the Analyst Consensus card above, so the old standalone section is not rendered.
 
     var vc = v === "APPROVE" ? "va" : (v === "PASS" ? "vp" : "vw");
@@ -3534,6 +3614,24 @@ function moduleEligible(cardId, sector){
   return false;
 }
 window.moduleEligible = moduleEligible;
+
+// Competitor map for the biggest names, so sector-context news (a Lowe's story on the HD page)
+// is recognized as TIER 2 rather than dropped to broad market. Falls back to sector-keyword match
+// for names not listed. Kept short and high-value; not meant to be exhaustive.
+window.COMPETITOR_MAP = {
+  HD: ["lowe's", "lowes", "home improvement"], LOW: ["home depot", "home improvement"],
+  JPM: ["bank of america", "wells fargo", "citigroup", "goldman"], BAC: ["jpmorgan", "wells fargo", "citigroup"],
+  WFC: ["jpmorgan", "bank of america", "citigroup"], C: ["jpmorgan", "bank of america", "wells fargo"],
+  KO: ["pepsi", "pepsico"], PEP: ["coca-cola", "coca cola", "coke"],
+  AAPL: ["samsung", "google", "android"], MSFT: ["google", "amazon", "aws", "azure"],
+  GOOGL: ["microsoft", "meta", "facebook"], META: ["google", "tiktok", "snap"],
+  NVDA: ["amd", "intel"], AMD: ["nvidia", "intel"], INTC: ["amd", "nvidia"],
+  WMT: ["target", "costco", "amazon"], TGT: ["walmart", "costco"], COST: ["walmart", "target"],
+  F: ["general motors", "gm", "tesla", "stellantis"], GM: ["ford", "tesla", "stellantis"],
+  UPS: ["fedex"], FDX: ["ups"], V: ["mastercard"], MA: ["visa"],
+  XOM: ["chevron", "shell", "bp"], CVX: ["exxon", "shell", "bp"],
+  PFE: ["moderna", "merck", "johnson"], MRK: ["pfizer", "bristol"], LLY: ["novo nordisk", "pfizer"]
+};
 var currentName = "";
 
 function setAuthMode(mode){
