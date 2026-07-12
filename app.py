@@ -668,11 +668,17 @@ def resolve_ticker(query):
         return INDEX_ALIASES[up]
     if up.startswith("^") or "=F" in up or up.endswith("-USD"):
         return up
+    # If the query already LOOKS like a ticker (short, no spaces, letters plus maybe a dot or dash),
+    # use it directly. Never round-trip it through Yahoo's search, which is unreliable from a cloud
+    # IP and has returned faulty data for plain symbols like AAPL, resolving them into nothing and
+    # breaking the whole report. Searching is only for company-name queries.
+    if re.match(r"^[A-Z]{1,6}([.\-][A-Z]{1,4})?$", up):
+        return up
     try:
         s = yf.Search(query, max_results=1)
         if s.quotes:
             return s.quotes[0].get("symbol", query.upper())
-    except:
+    except Exception:
         pass
     return query.upper()
 
@@ -2267,6 +2273,122 @@ def _stooq_history(symbol, period):
         return []
 
 
+def _tiingo_history(symbol, period):
+    """Tiingo daily prices. Set DATA_PROVIDER=tiingo and TIINGO_KEY to make this the primary source.
+
+    NOTE ON LICENSING: Tiingo's self-serve tiers are 'Internal Use Only'. That is fine for testing
+    and development, but a commercial/redistribution license is required BEFORE showing this data to
+    public users. Do not launch on an internal-use license.
+    """
+    key = os.environ.get("TIINGO_KEY", "").strip()
+    if not key:
+        return []
+    try:
+        from datetime import date as _date, timedelta as _td2
+        days = {"5d": 10, "1mo": 40, "3mo": 100, "6mo": 190, "1y": 380, "5y": 1850}.get(period, 380)
+        start = (_date.today() - _td2(days=days)).isoformat()
+        r = requests.get("https://api.tiingo.com/tiingo/daily/%s/prices" % symbol.lower(),
+                         params={"startDate": start, "token": key},
+                         headers={"Content-Type": "application/json"}, timeout=15)
+        if r.status_code != 200:
+            logger.warning("tiingo %s: HTTP %s" % (symbol, r.status_code))
+            return []
+        bars = r.json()
+        if not isinstance(bars, list) or not bars:
+            return []
+        import datetime as _dt
+        rows = []
+        for bar in bars:
+            try:
+                ts = int(_dt.datetime.strptime(str(bar["date"])[:10], "%Y-%m-%d").timestamp())
+                _c = float(bar.get("adjClose") or bar.get("close") or 0)
+                if _c <= 0:
+                    continue
+                rows.append({"time": ts,
+                             "open": round(float(bar.get("adjOpen") or bar.get("open") or _c), 2),
+                             "high": round(float(bar.get("adjHigh") or bar.get("high") or _c), 2),
+                             "low": round(float(bar.get("adjLow") or bar.get("low") or _c), 2),
+                             "close": round(_c, 2),
+                             "volume": int(bar.get("adjVolume") or bar.get("volume") or 0)})
+            except (ValueError, KeyError, TypeError):
+                continue
+        rows.sort(key=lambda x: x["time"])
+        return rows
+    except Exception as e:
+        logger.error("tiingo history %s: %s" % (symbol, e))
+        return []
+
+
+def _polygon_history(symbol, period):
+    """Polygon.io daily aggregates. Set DATA_PROVIDER=polygon and POLYGON_KEY to use as primary."""
+    key = os.environ.get("POLYGON_KEY", "").strip()
+    if not key:
+        return []
+    try:
+        from datetime import date as _date, timedelta as _td2
+        days = {"5d": 10, "1mo": 40, "3mo": 100, "6mo": 190, "1y": 380, "5y": 1850}.get(period, 380)
+        end = _date.today().isoformat()
+        start = (_date.today() - _td2(days=days)).isoformat()
+        r = requests.get("https://api.polygon.io/v2/aggs/ticker/%s/range/1/day/%s/%s"
+                         % (symbol.upper(), start, end),
+                         params={"adjusted": "true", "sort": "asc", "limit": 5000, "apiKey": key},
+                         timeout=15)
+        if r.status_code != 200:
+            logger.warning("polygon %s: HTTP %s" % (symbol, r.status_code))
+            return []
+        d = r.json()
+        bars = d.get("results") or []
+        rows = []
+        for bar in bars:
+            try:
+                ts = int(bar["t"] / 1000)  # polygon uses ms epoch
+                _c = float(bar.get("c") or 0)
+                if _c <= 0:
+                    continue
+                rows.append({"time": ts, "open": round(float(bar.get("o") or _c), 2),
+                             "high": round(float(bar.get("h") or _c), 2),
+                             "low": round(float(bar.get("l") or _c), 2),
+                             "close": round(_c, 2), "volume": int(bar.get("v") or 0)})
+            except (ValueError, KeyError, TypeError):
+                continue
+        rows.sort(key=lambda x: x["time"])
+        return rows
+    except Exception as e:
+        logger.error("polygon history %s: %s" % (symbol, e))
+        return []
+
+
+# Provider registry. Set DATA_PROVIDER in the environment to make one of these the PRIMARY source,
+# tried before everything else. Swapping providers is a one-line env change, no code edits, so you
+# can test a provider on a cheap tier and move to the commercial license later without a rewrite.
+PRIMARY_PROVIDERS = {
+    "tiingo": _tiingo_history,
+    "polygon": _polygon_history,
+    "fmp": lambda s, p: _fmp_history_rows(s, p) or _fmp_stable_history(s, p),
+}
+
+
+def _primary_history(symbol, period):
+    """Try the configured primary provider first, if one is set. Returns [] when unset or on failure,
+    so the free fallback chain still runs underneath."""
+    name = os.environ.get("DATA_PROVIDER", "").strip().lower()
+    if not name:
+        return []
+    fn = PRIMARY_PROVIDERS.get(name)
+    if not fn:
+        logger.warning("DATA_PROVIDER '%s' is not a known provider; ignoring" % name)
+        return []
+    try:
+        rows = fn(symbol, period)
+        if rows:
+            logger.info("primary provider %s served %s (%d bars)" % (name, symbol, len(rows)))
+            return rows
+        logger.warning("primary provider %s returned nothing for %s; falling back" % (name, symbol))
+    except Exception as e:
+        logger.error("primary provider %s failed for %s: %s" % (name, symbol, e))
+    return []
+
+
 def fetch_with_fallback(symbol, period="1y", interval="1d"):
     """OHLCV rows for a symbol, trying every available source until one returns data.
 
@@ -2281,6 +2403,13 @@ def fetch_with_fallback(symbol, period="1y", interval="1d"):
         5. Finnhub candle      (deprecated for most, kept just in case)
         6. Alpha Vantage       (free key, independent backstop)
     """
+    # 0. The configured PRIMARY provider (paid, licensed) always runs first when DATA_PROVIDER is set.
+    # Everything below it is a free backstop for when the primary is unset, down, or over quota.
+    if interval == "1d":
+        rows = _primary_history(symbol, period)
+        if rows:
+            return rows
+
     try:
         rows = _yf_history_rows(symbol, period, interval)
         if rows:
