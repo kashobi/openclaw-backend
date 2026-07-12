@@ -1,9 +1,9 @@
-From flask import Flask, jsonify, request, Response, session, redirect
+from flask import Flask, jsonify, request, Response, session, redirect
 from flask_cors import CORS
 import yfinance as yf
 import requests
 import os
-import timf
+import time
 import json
 import re
 import html
