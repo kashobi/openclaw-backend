@@ -509,8 +509,9 @@ def ensure_db():
         logger.info("ensure_db: tables ready")
         try:
             snap_create_tables()
+            fs_create_tables()
         except Exception as _sce:
-            logger.error("snap_create_tables at boot: %s" % _sce)
+            logger.error("snapshot table create at boot: %s" % _sce)
     except Exception as e:
         logger.error("ensure_db error: %s" % e)
     finally:
@@ -4933,6 +4934,10 @@ def compute_full_report(symbol):
         try:
             snap_universe_add(symbol)
             record_analyst_snapshot(symbol, info)
+            # Point-in-time feature store: record what the engine knew and decided TODAY, before the
+            # outcome exists. Labels get attached later by /cron/label-outcomes. This is the row a
+            # future backtest reads, and it is the reason that backtest will be honest.
+            record_feature_snapshot(symbol, result, info)
         except Exception as _se:
             logger.warning("snapshot capture skipped for %s: %s" % (symbol, _se))
 
@@ -10559,6 +10564,432 @@ def api_snapshot_status():
 
 # =========================================================================== #
 # END ANALYST SNAPSHOT + REVISION MOMENTUM ENGINE
+# =========================================================================== #
+
+
+
+# =========================================================================== #
+# POINT-IN-TIME FEATURE STORE + OUTCOME LABELER
+#
+# The rule this whole module exists to enforce: a row is written on the day the
+# engine made its call, BEFORE the outcome exists, and its feature columns are
+# never rewritten afterwards. Outcome labels are filled in later by a separate
+# job that may only look at prices dated AFTER the snapshot.
+#
+# That is what makes a backtest honest. Reconstructed backtests -- pull today's
+# data, pretend you had it in 2023 -- are how people fool themselves: today's
+# fundamentals are restated, today's index membership survivor-biased, today's
+# estimates already know the answer. Recording forward in time makes lookahead
+# bias structurally impossible rather than merely discouraged.
+#
+# So: features are INSERT-only per (symbol, day). Labels are UPDATE-only, and
+# only on rows old enough to have matured.
+# =========================================================================== #
+
+# Horizons we label. Keep in sync with the columns in feature_snapshots.
+_FS_HORIZONS = (5, 20, 60)
+_FS_BENCH = "SPY"
+
+
+def _fs_count(seq, key, want):
+    """Count transactions of a given direction in insider/congress lists. Never raises."""
+    n = 0
+    try:
+        for row in (seq or []):
+            v = str((row or {}).get(key, "")).lower()
+            if want in v:
+                n += 1
+    except Exception:
+        pass
+    return n
+
+
+def fs_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS feature_snapshots ("
+            "id SERIAL PRIMARY KEY,"
+            "symbol TEXT NOT NULL,"
+            "snap_date DATE NOT NULL,"
+            "snap_ts TIMESTAMP DEFAULT NOW(),"
+            # -- what the engine decided, pulled out as columns so we can query them fast
+            "price DOUBLE PRECISION,"
+            "alpha_score INTEGER,"
+            "verdict TEXT,"
+            "confidence TEXT,"
+            "data_quality TEXT,"
+            "price_source TEXT,"
+            "sector TEXT,"
+            # -- everything else the engine knew, schema-free so adding a factor needs no migration
+            "features JSONB,"
+            # -- OUTCOME LABELS. NULL at write time. Filled only once the future has happened.
+            "fwd_ret_5d DOUBLE PRECISION,"
+            "fwd_ret_20d DOUBLE PRECISION,"
+            "fwd_ret_60d DOUBLE PRECISION,"
+            "fwd_max_dd_20d DOUBLE PRECISION,"
+            "bench_ret_20d DOUBLE PRECISION,"
+            "excess_ret_20d DOUBLE PRECISION,"
+            "labeled_at TIMESTAMP,"
+            "CONSTRAINT uq_fs UNIQUE (symbol, snap_date))"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_fs_sym_date ON feature_snapshots(symbol, snap_date DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_fs_unlabeled ON feature_snapshots(snap_date) WHERE labeled_at IS NULL")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_fs_score ON feature_snapshots(alpha_score)")
+        conn.commit()
+        cur.close()
+        logger.info("feature store: tables ready")
+    except Exception as e:
+        logger.error("fs_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def record_feature_snapshot(symbol, result, info=None):
+    """Write what the engine knew about `symbol` today. INSERT-only on the feature side.
+
+    If a row already exists for today, the features are refreshed (a later run on the same day is
+    simply a better-informed end-of-day view) but any labels already attached are left alone. What
+    is never allowed is a label leaking backwards into the features.
+    """
+    if not symbol or not isinstance(result, dict) or not result:
+        return False
+    conn = get_db()
+    if not conn:
+        return False
+    try:
+        info = info or {}
+        ins = result.get("insider") or []
+        cong = result.get("congressional") or []
+
+        feats = {
+            # raw fundamentals as known today
+            "change_pct": result.get("change_pct"),
+            "pe_ratio": result.get("pe_ratio"),
+            "peg_ratio": result.get("peg_ratio"),
+            "price_to_book": result.get("price_to_book"),
+            "price_to_sales": result.get("price_to_sales"),
+            "ev_to_ebitda": result.get("ev_to_ebitda"),
+            "roe": result.get("roe"),
+            "fcf_yield": result.get("fcf_yield"),
+            "profit_margin": result.get("profit_margin"),
+            "revenue_growth": result.get("revenue_growth"),
+            "debt_to_equity": result.get("debt_to_equity"),
+            "beta": result.get("beta"),
+            "market_cap": result.get("market_cap"),
+            "volume": result.get("volume"),
+            "analyst_target": result.get("analyst_target"),
+            "analyst_consensus": result.get("analyst_consensus"),
+            # engine output, layer by layer -- this is "what did it know and when"
+            "alpha_breakdown": result.get("alpha_breakdown"),
+            "alpha_v2": result.get("alpha_v2"),
+            "legacy_verdict": result.get("legacy_verdict"),
+            "verdict_signal_reason": result.get("verdict_signal_reason"),
+            "conviction": result.get("conviction"),
+            "score": result.get("score"),
+            "apex_moat": result.get("apex_moat"),
+            "active_cluster": result.get("active_cluster"),
+            "flags": result.get("flags"),
+            # event flags / counts, derived so the row stays small
+            "insider_buys": _fs_count(ins, "type", "buy") or _fs_count(ins, "transaction", "buy"),
+            "insider_sells": _fs_count(ins, "type", "sell") or _fs_count(ins, "transaction", "sell"),
+            "insider_big_block": result.get("insider_big_block"),
+            "insider_sell_value": result.get("insider_sell_value"),
+            "cong_buys": _fs_count(cong, "type", "purchase") or _fs_count(cong, "transaction", "buy"),
+            "cong_sells": _fs_count(cong, "type", "sale") or _fs_count(cong, "transaction", "sell"),
+            "news_count": len(result.get("news") or []),
+            # source freshness -- so we can later ask "was this call made on stale data?"
+            "data_timestamp": result.get("data_timestamp"),
+            "market_cap_reconciled": result.get("market_cap_reconciled"),
+            "fmp": bool(result.get("fmp")),
+        }
+
+        conf = result.get("confidence")
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO feature_snapshots "
+            "(symbol, snap_date, price, alpha_score, verdict, confidence, data_quality,"
+            " price_source, sector, features) "
+            "VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (symbol, snap_date) DO UPDATE SET "
+            "snap_ts=NOW(), price=EXCLUDED.price, alpha_score=EXCLUDED.alpha_score,"
+            "verdict=EXCLUDED.verdict, confidence=EXCLUDED.confidence,"
+            "data_quality=EXCLUDED.data_quality, price_source=EXCLUDED.price_source,"
+            "sector=EXCLUDED.sector, features=EXCLUDED.features",
+            (
+                symbol.upper(),
+                _snap_f(result.get("price") or info.get("currentPrice") or info.get("regularMarketPrice")),
+                _snap_i(result.get("alpha_score")),
+                (result.get("verdict") or None),
+                (str(conf) if conf is not None else None),
+                (str(result.get("data_quality")) if result.get("data_quality") is not None else None),
+                (result.get("price_source") or None),
+                (info.get("sector") or None),
+                _SecJson(feats),
+            ),
+        )
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        logger.warning("record_feature_snapshot %s: %s" % (symbol, e))
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def _fs_closes(symbol, days=130):
+    """Daily closes as [(date, close), ...] ascending. Uses the existing fallback chain."""
+    out = []
+    try:
+        rows = fetch_with_fallback(symbol, period="6mo", interval="1d")
+        for r in (rows or []):
+            t = r.get("time")
+            c = _snap_f(r.get("close"))
+            if t and c:
+                out.append((datetime.utcfromtimestamp(int(t)).date(), c))
+    except Exception as e:
+        logger.warning("_fs_closes %s: %s" % (symbol, e))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def label_outcomes(max_rows=300):
+    """Attach realized outcomes to matured snapshots.
+
+    THE POINT-IN-TIME GUARANTEE LIVES HERE: every price used is strictly AFTER the snapshot date.
+    A row is only labeled once enough calendar time has passed for the horizon to be real. Feature
+    columns are never touched.
+    """
+    started = time.time()
+    summary = {"labeled": 0, "skipped": 0, "symbols": 0, "errors": 0}
+    conn = get_db()
+    if not conn:
+        summary["error"] = "no database"
+        return summary
+
+    # Rows old enough that the shortest horizon has actually elapsed (calendar slack for weekends).
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT symbol FROM feature_snapshots "
+            "WHERE labeled_at IS NULL AND snap_date <= CURRENT_DATE - %s "
+            "ORDER BY symbol LIMIT %s",
+            (_FS_HORIZONS[0] + 3, max(1, max_rows // 5)),
+        )
+        symbols = [r[0] for r in (cur.fetchall() or [])]
+        cur.close()
+    except Exception as e:
+        conn.close()
+        logger.error("label_outcomes query: %s" % e)
+        return {"error": str(e)}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    if not symbols:
+        summary["elapsed_sec"] = round(time.time() - started, 1)
+        return summary
+
+    bench = _fs_closes(_FS_BENCH)
+    bench_map = dict(bench)
+    bench_dates = [d for d, _ in bench]
+
+    def _forward(series, dates, start_date, n):
+        """Close n TRADING days after start_date, using only bars strictly after it."""
+        fut = [i for i, d in enumerate(dates) if d > start_date]
+        if len(fut) < n:
+            return None
+        return series[dates[fut[n - 1]]]
+
+    for sym in symbols:
+        summary["symbols"] += 1
+        closes = _fs_closes(sym)
+        if len(closes) < 10:
+            summary["errors"] += 1
+            continue
+        cmap = dict(closes)
+        cdates = [d for d, _ in closes]
+
+        conn = get_db()
+        if not conn:
+            break
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, snap_date, price FROM feature_snapshots "
+                "WHERE symbol=%s AND labeled_at IS NULL AND snap_date <= CURRENT_DATE - %s",
+                (sym, _FS_HORIZONS[0] + 3),
+            )
+            rows = cur.fetchall() or []
+
+            for rid, sdate, spx in rows:
+                base = _snap_f(spx) or cmap.get(sdate)
+                if not base:
+                    # Fall back to the last close on or before the snapshot date -- still never after it.
+                    prior = [d for d in cdates if d <= sdate]
+                    if not prior:
+                        summary["skipped"] += 1
+                        continue
+                    base = cmap[prior[-1]]
+
+                rets = {}
+                for h in _FS_HORIZONS:
+                    px = _forward(cmap, cdates, sdate, h)
+                    rets[h] = ((px - base) / base * 100.0) if (px and base) else None
+
+                # Max drawdown across the 20-day forward window, again only bars after the snapshot.
+                dd = None
+                fut_idx = [i for i, d in enumerate(cdates) if d > sdate][:20]
+                if fut_idx and base:
+                    lo = min(cmap[cdates[i]] for i in fut_idx)
+                    dd = (lo - base) / base * 100.0
+
+                # Benchmark over the same window, so we can measure skill rather than beta.
+                b_ret = None
+                if bench_dates:
+                    b_prior = [d for d in bench_dates if d <= sdate]
+                    b_fwd = _forward(bench_map, bench_dates, sdate, 20)
+                    if b_prior and b_fwd:
+                        b_base = bench_map[b_prior[-1]]
+                        if b_base:
+                            b_ret = (b_fwd - b_base) / b_base * 100.0
+
+                excess = None
+                if rets.get(20) is not None and b_ret is not None:
+                    excess = rets[20] - b_ret
+
+                # Only stamp labeled_at once the longest horizon has resolved; otherwise leave the
+                # row open so a later pass can complete it. Partial labels are written meanwhile.
+                done = rets.get(60) is not None
+                cur.execute(
+                    "UPDATE feature_snapshots SET fwd_ret_5d=%s, fwd_ret_20d=%s, fwd_ret_60d=%s,"
+                    "fwd_max_dd_20d=%s, bench_ret_20d=%s, excess_ret_20d=%s,"
+                    "labeled_at=CASE WHEN %s THEN NOW() ELSE NULL END WHERE id=%s",
+                    (rets.get(5), rets.get(20), rets.get(60), dd, b_ret, excess, done, rid),
+                )
+                summary["labeled"] += 1
+
+            conn.commit()
+            cur.close()
+        except Exception as e:
+            summary["errors"] += 1
+            logger.warning("label_outcomes %s: %s" % (sym, e))
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            conn.close()
+        time.sleep(0.2)
+
+    summary["elapsed_sec"] = round(time.time() - started, 1)
+    logger.info("label_outcomes: %s" % summary)
+    return summary
+
+
+@app.route("/cron/label-outcomes")
+def cron_label_outcomes():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        fs_create_tables()
+        return jsonify(label_outcomes())
+    except Exception as e:
+        logger.error("cron_label_outcomes: %s" % e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/backtest")
+def api_backtest():
+    """Does the Alpha Score actually predict anything?
+
+    Buckets every labeled snapshot by score and reports the mean forward return and mean EXCESS
+    return per bucket. Excess is the honest column: beating the market is skill, rising with it is
+    beta. If the buckets do not separate, the score does not work -- and you will be able to see
+    that here rather than believe otherwise for a year.
+    """
+    horizon = request.args.get("horizon", "20d")
+    col = {"5d": "fwd_ret_5d", "20d": "fwd_ret_20d", "60d": "fwd_ret_60d"}.get(horizon, "fwd_ret_20d")
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT width_bucket(alpha_score, 0, 100, 5) AS b, COUNT(*), "
+            "ROUND(AVG(" + col + ")::numeric, 2), ROUND(AVG(excess_ret_20d)::numeric, 2), "
+            "MIN(alpha_score), MAX(alpha_score) "
+            "FROM feature_snapshots "
+            "WHERE alpha_score IS NOT NULL AND " + col + " IS NOT NULL "
+            "GROUP BY b ORDER BY b"
+        )
+        buckets = []
+        for b, n, avg_ret, avg_exc, lo, hi in (cur.fetchall() or []):
+            buckets.append({
+                "bucket": int(b) if b is not None else None,
+                "score_range": "%s-%s" % (lo, hi),
+                "n": int(n),
+                "mean_return_pct": float(avg_ret) if avg_ret is not None else None,
+                "mean_excess_vs_spy_pct": float(avg_exc) if avg_exc is not None else None,
+            })
+        cur.execute("SELECT COUNT(*) FROM feature_snapshots WHERE " + col + " IS NOT NULL")
+        n_labeled = (cur.fetchone() or [0])[0]
+        cur.execute("SELECT COUNT(*) FROM feature_snapshots")
+        n_total = (cur.fetchone() or [0])[0]
+        cur.close()
+
+        note = None
+        if n_labeled < 200:
+            note = ("Only %d labeled observations. This is far too few to conclude anything. "
+                    "Treat these numbers as a plumbing check, not a result." % n_labeled)
+        return jsonify({
+            "horizon": horizon, "buckets": buckets,
+            "labeled_observations": n_labeled, "total_snapshots": n_total,
+            "warning": note,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/feature-store-status")
+def api_feature_store_status():
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(snap_date), MAX(snap_date),"
+            "COUNT(fwd_ret_20d), COUNT(labeled_at) FROM feature_snapshots")
+        rows, syms, first, last, lab20, done = cur.fetchone() or (0, 0, None, None, 0, 0)
+        cur.close()
+        return jsonify({
+            "total_snapshots": rows, "symbols_covered": syms,
+            "first_snapshot": str(first) if first else None,
+            "latest_snapshot": str(last) if last else None,
+            "days_of_history": (last - first).days if (first and last) else 0,
+            "labeled_20d": lab20, "fully_labeled": done,
+            "awaiting_maturity": rows - lab20,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+# =========================================================================== #
+# END POINT-IN-TIME FEATURE STORE
 # =========================================================================== #
 
 
