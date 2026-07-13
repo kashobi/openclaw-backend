@@ -4701,7 +4701,10 @@ def compute_full_report(symbol):
             # Business rationale: WHY this kind of company can hold off competitors, by sector.
             # Answers the audit critique that "high ROE therefore moat" is not real analysis.
             if m_rating in ("Wide", "Narrow"):
-                apex_moat["rationale"] = _moat_rationale(sector_name)
+                # BUGFIX: this used to read sector_name, which is not assigned until ~37 lines
+                # below, so every Wide/Narrow moat stock (AAPL, NVDA) raised UnboundLocalError and
+                # the whole report returned None -> "Could not pull data". Read from info directly.
+                apex_moat["rationale"] = _moat_rationale(info.get("sector", ""))
         else:
             apex_moat = {"rating": None, "score": 0, "reason": "Not enough data to estimate a moat for this one."}
 
