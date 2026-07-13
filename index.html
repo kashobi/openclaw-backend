@@ -1484,6 +1484,31 @@ body{transition:background-color .3s ease,color .3s ease;}
    terminal identity, and a gold-on-navy hero is the brand. Only the app below
    it follows the theme toggle. */
 
+
+/* Economic Calendar card. Compact table, not a calendar grid. Uses the existing surface/border
+   tokens so it inherits the light/dark theme with no extra work. */
+.ecoTbl{width:100%;border-collapse:collapse;margin-top:4px;}
+.ecoTbl tr{border-bottom:1px solid var(--border);}
+.ecoTbl tr:last-child{border-bottom:none;}
+.ecoTbl td{padding:11px 8px;vertical-align:top;font-size:13.5px;}
+.ecoDate{white-space:nowrap;font-family:var(--font-mono);font-size:12px;color:var(--muted);width:1%;}
+.ecoDay{display:block;font-size:10.5px;color:var(--muted);opacity:.75;margin-top:2px;}
+.ecoName{font-weight:700;color:var(--text);display:block;margin-bottom:3px;}
+.ecoWhy{color:var(--muted);font-size:12.5px;line-height:1.5;}
+.ecoBdg{font-size:9.5px;font-weight:800;letter-spacing:.08em;padding:3px 9px;border-radius:999px;
+  font-family:var(--font-mono);white-space:nowrap;display:inline-block;}
+.ecoHigh{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.ecoMed{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
+.ecoHit{background:rgba(var(--accent-rgb),.06);border-left:3px solid var(--accent);}
+.ecoHitTag{display:inline-block;margin-top:6px;font-size:11px;font-weight:700;color:var(--accent);}
+.ecoEst{font-size:11px;color:var(--muted);opacity:.8;margin-top:8px;font-style:italic;}
+.ecoMacro{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;padding-top:11px;border-top:1px solid var(--border);}
+.ecoMi{font-size:11px;color:var(--muted);}
+.ecoMv{font-family:var(--font-mono);font-weight:600;color:var(--text);margin-left:5px;}
+.ecoEmpty{color:var(--muted);font-size:13.5px;padding:6px 2px;}
+/* Macro warning inside "What Would Change This Call". */
+.cmMacro{margin-top:10px;padding:11px 13px;border-radius:10px;background:var(--ybg);
+  border:1px solid var(--yellow);color:var(--text);font-size:13px;line-height:1.55;}
 </style>
 </head>
 <body>
@@ -1805,6 +1830,7 @@ body{transition:background-color .3s ease,color .3s ease;}
       <div id="lobbyCard"></div>
       <div id="fdaCard"></div>
       <div id="changeMindCard"></div>
+      <div id="econCard"></div>
       <div class="stitle">&#128188; The Corporate Insider Conviction Engine</div>
       <div id="ins"><div class="ic"><div class="ih"><div class="it">Insider Trades</div><div class="ibdg by">LOADING</div></div><div class="itxt aqSkel">Fetching the latest data. First analysis takes a few seconds, later loads are instant.</div></div></div>
       </div>
@@ -3444,6 +3470,7 @@ function run(){
       }
     }
     if(typeof injectChangeMind === "function"){ injectChangeMind(d); }
+    if(typeof injectEconCalendar === "function"){ injectEconCalendar(d); }
 
     // CHUNK: Feature 2: price vs analyst target gauge
     var gauge = document.getElementById("mtGauge");
@@ -7593,6 +7620,17 @@ if(ib){
 
   // "What Would Change My Mind" card, driven by the engine's trackable conditions. Answers the
   // audit: name the concrete events that would flip the verdict, not a vague mood.
+  // When a confirmed macro event is inside 48h, say so right where the user is deciding.
+  function _cmMacroNote(d){
+    var e = d && d.economic_event;
+    if(!e){ return ""; }
+    var dt = new Date(e.date + "T12:00:00");
+    var ds = dt.toLocaleDateString(undefined, {weekday: "long", month: "long", day: "numeric"});
+    return "<div class=\"cmMacro\">Note: a <b>" + esc(e.name) + "</b> is scheduled for " + esc(ds) +
+      " at " + esc(e.time || "") + ". Macro events can override individual stock signals. " +
+      "Consider waiting until after the event if the setup is borderline.</div>";
+  }
+
   function injectChangeMind(d){
     var card = document.getElementById("changeMindCard");
     if(!card){ return; }
@@ -7605,9 +7643,70 @@ if(ib){
       "<div class=\"snIcon\">&#127919;</div><div><div class=\"snTitle\">What Would Change This Call</div>" +
       "<div class=\"snSub\">Specific, trackable conditions</div></div></div></div>" +
       "<div class=\"cmList\">" + rows + "</div>" +
+      _cmMacroNote(d) +
       "<div class=\"snFoot\">These are conditions to watch, not predictions.</div></div>";
   }
   window.injectChangeMind = injectChangeMind;
+
+  // Economic Calendar card. Compact: the next three events, importance badge, one-line note. When
+  // an event's sensitive sectors include this stock's sector, the row is highlighted -- that is the
+  // difference between "the market may move" and "this stock is in the blast radius".
+  function injectEconCalendar(d){
+    var card = document.getElementById("econCard");
+    if(!card){ return; }
+    var mySector = (d && d.sector) ? String(d.sector) : "";
+    card.innerHTML = "";
+    fetch(API + "/api/economic-calendar?days_ahead=7&days_back=0")
+      .then(function(r){ return r.json(); })
+      .then(function(c){
+        if(!c || c.error){ return; }
+        var ev = (c.upcoming || []).slice(0, 3);
+        var head = "<div class=\"ic senateCardIc\"><div class=\"snHead\"><div class=\"snHeadL\">" +
+          "<div class=\"snIcon\">&#128197;</div><div><div class=\"snTitle\">Economic Calendar</div>" +
+          "<div class=\"snSub\">Macro events that can move the whole market</div></div></div></div>";
+
+        var body;
+        if(!ev.length){
+          body = "<div class=\"ecoEmpty\">No major macro events in the next 7 days.</div>";
+        } else {
+          var rows = ev.map(function(e){
+            var hit = !!(mySector && (e.sectors || []).some(function(x){
+              return String(x).toLowerCase() === mySector.toLowerCase();
+            }));
+            var when = e.days_out === 0 ? "Today" : (e.days_out === 1 ? "Tomorrow" : ("In " + e.days_out + " days"));
+            var dt = new Date(e.date + "T12:00:00");
+            var ds = dt.toLocaleDateString(undefined, {month: "short", day: "numeric"});
+            var bdg = e.importance === "High" ? "ecoHigh" : "ecoMed";
+            return "<tr class=\"" + (hit ? "ecoHit" : "") + "\">" +
+              "<td class=\"ecoDate\">" + esc(ds) + "<span class=\"ecoDay\">" + esc(when) + "</span></td>" +
+              "<td><span class=\"ecoName\">" + esc(e.name) + "</span>" +
+                "<span class=\"ecoWhy\">" + esc(e.why) + "</span>" +
+                (hit ? "<span class=\"ecoHitTag\">&#9888;&#65039; " + esc(mySector) + " is typically sensitive to this</span>" : "") +
+              "</td>" +
+              "<td style=\"text-align:right\"><span class=\"ecoBdg " + bdg + "\">" + esc(e.importance) + "</span>" +
+                "<div class=\"ecoDay\">" + esc(e.time || "") + "</div></td></tr>";
+          }).join("");
+          body = "<table class=\"ecoTbl\">" + rows + "</table>";
+        }
+
+        var m = c.macro || {};
+        var mi = [];
+        if(m.fed_funds_upper){ mi.push("Fed funds<span class=\"ecoMv\">" + esc(m.fed_funds_upper.value) + "%</span>"); }
+        if(m.cpi_yoy){ mi.push("CPI YoY<span class=\"ecoMv\">" + esc(m.cpi_yoy.value) + "%</span>"); }
+        if(m.unemployment_rate){ mi.push("Unemployment<span class=\"ecoMv\">" + esc(m.unemployment_rate.value) + "%</span>"); }
+        if(m.gdp_qoq_annualized){ mi.push("GDP QoQ<span class=\"ecoMv\">" + esc(m.gdp_qoq_annualized.value) + "%</span>"); }
+        var macro = mi.length ? "<div class=\"ecoMacro\">" + mi.map(function(x){
+          return "<span class=\"ecoMi\">" + x + "</span>"; }).join("") + "</div>" : "";
+
+        var est = c.dates_estimated
+          ? "<div class=\"ecoEst\">Release dates are approximate right now and are not being used to adjust any score.</div>" : "";
+
+        card.innerHTML = head + body + macro + est +
+          "<div class=\"snFoot\">Dates from the FRED release calendar and the published FOMC schedule. Informational only.</div></div>";
+      })
+      .catch(function(){});
+  }
+  window.injectEconCalendar = injectEconCalendar;
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
