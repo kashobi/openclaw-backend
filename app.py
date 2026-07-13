@@ -670,25 +670,16 @@ def resolve_ticker(query):
         return up
     # If the query already LOOKS like a ticker (short, no spaces, letters plus maybe a dot or dash),
     # use it directly. Never round-trip it through Yahoo's search, which is unreliable from a cloud
-   if re.match(r"^[A-Z]{1,6}([.\-][A-Z]{1,4})?$", up):
+    # IP and has returned faulty data for plain symbols like AAPL, resolving them into nothing and
+    # breaking the whole report. Searching is only for company-name queries.
+    if re.match(r"^[A-Z]{1,6}([.\-][A-Z]{1,4})?$", up):
         return up
-    # Company name search: try FMP first
-    if FMP_KEY:
-        try:
-            data = fmp_get("/api/v3/search?query=" + query)
-            if data:
-                for result in data:
-                    if result.get("symbol"):
-                        return result["symbol"]
-        except Exception:
-            pass
     try:
         s = yf.Search(query, max_results=1)
         if s.quotes:
             return s.quotes[0].get("symbol", query.upper())
     except Exception:
         pass
-    return query.upper()
     return query.upper()
 
 
