@@ -6697,13 +6697,20 @@ if(ib){
   // Guba retail sentiment card for Chinese stocks. When the report symbol is an A share, the
   // injector asks the backend for the Guba read and drops a card under the Alpha Score. Nothing
   // shows for other markets or when the feed is unavailable, honesty over decoration.
+  var _gubaSeq = 0;
   function injectGuba(){
     var symEl = document.getElementById("sym");
     var sym = symEl ? (symEl.textContent || "").trim().toUpperCase() : "";
-    var oldG = document.getElementById("gubaCard");
-    if(oldG){ oldG.remove(); }
-    if(!/^\d{6}(\.(SS|SZ))?$/.test(sym)){ return; }
+    if(!/^\d{6}(\.(SS|SZ))?$/.test(sym)){
+      var stale = document.getElementById("gubaCard");
+      if(stale){ stale.remove(); }
+      return;
+    }
+    // Same duplicate-card race as injectPatterns: the dedupe must happen immediately before the
+    // insert, not before the fetch, or two in-flight calls both insert a card.
+    var gseq = ++_gubaSeq;
     fetch(API + "/guba?symbol=" + encodeURIComponent(sym)).then(function(r){ return r.json(); }).then(function(d){
+      if(gseq !== _gubaSeq){ return; }
       if(!d || !d.guba_label){ return; }
       var host = document.getElementById("stockSections");
       var alphaC = document.getElementById("alphaCard");
@@ -6716,6 +6723,8 @@ if(ib){
         "<div style='font-size:15px;font-weight:800;color:" + col + "'>" + d.guba_label +
         " <span style='font-size:12px;color:var(--muted);font-weight:600'>(" + Math.round(d.guba_sentiment * 100) + "% positive, " + d.guba_post_count + " posts)</span></div>" +
         "<div class='stNote'>What everyday investors on China's Guba boards are saying right now. Crowd mood, not a forecast.</div>";
+      var oldG = document.getElementById("gubaCard");
+      if(oldG){ oldG.remove(); }
       if(alphaC && alphaC.parentNode === host){ host.insertBefore(card, alphaC.nextSibling); }
       else { host.insertBefore(card, host.firstChild); }
     }).catch(function(){});
@@ -6783,15 +6792,21 @@ if(ib){
   // Chart patterns card. Pulls the daily history, which now carries detected candlestick patterns,
   // and lists them under the chart. Each row expands to a plain English meaning on tap. Silent for
   // non stock assets and when nothing is found beyond the honest empty state.
+  var _patSeq = 0;
   function injectPatterns(){
     var symEl = document.getElementById("sym");
     var sym = symEl ? (symEl.textContent || "").trim().toUpperCase() : "";
     if(!sym || sym === "APEX Q"){ return; }
-    var old = document.getElementById("patCard");
-    if(old){ old.remove(); }
+    // focusReport() fires from both the render path and the reportArea visibility watcher, so this
+    // runs twice for one report. The old code removed the existing card BEFORE the fetch and
+    // appended the new one AFTER it, so both in-flight calls appended and the card rendered twice.
+    // The dedupe now happens immediately before the append, and a sequence token discards any
+    // response that a newer call has already superseded (fast ticker switching).
+    var seq = ++_patSeq;
     fetch(API + "/history/" + encodeURIComponent(sym) + "?period=3mo&interval=1d")
       .then(function(r){ return r.json(); })
       .then(function(d){
+        if(seq !== _patSeq){ return; }
         if(!d || d.error){ return; }
         var host = document.getElementById("stockSections");
         if(!host){ return; }
@@ -6812,6 +6827,8 @@ if(ib){
           }
         }
         card.innerHTML = h;
+        var oldPat = document.getElementById("patCard");
+        if(oldPat){ oldPat.remove(); }
         host.appendChild(card);
         var rows = card.querySelectorAll(".patRow");
         for(var k = 0; k < rows.length; k++){
