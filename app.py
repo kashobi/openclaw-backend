@@ -3,6 +3,7 @@ from flask_cors import CORS
 import yfinance as yf
 import requests
 import os
+import traceback
 import time
 import json
 import re
@@ -506,6 +507,10 @@ def ensure_db():
         conn.commit()
         cur.close()
         logger.info("ensure_db: tables ready")
+        try:
+            snap_create_tables()
+        except Exception as _sce:
+            logger.error("snap_create_tables at boot: %s" % _sce)
     except Exception as e:
         logger.error("ensure_db error: %s" % e)
     finally:
@@ -4921,10 +4926,23 @@ def compute_full_report(symbol):
         }
 
         set_cache(f"full_{symbol}", result)
+
+        # Every analyze writes today's analyst state to the snapshot table and enrolls the symbol in
+        # the daily sweep, so the revision dataset accumulates from real traffic as well as from
+        # cron. Wrapped tightly: a snapshot failure must never take down a report.
+        try:
+            snap_universe_add(symbol)
+            record_analyst_snapshot(symbol, info)
+        except Exception as _se:
+            logger.warning("snapshot capture skipped for %s: %s" % (symbol, _se))
+
         return result
 
     except Exception as e:
-        logger.error(f"Analyze error for {symbol}: {e}")
+        # This catch-all hides the real cause of every failure inside this ~950-line function; it is
+        # what disguised the sector_name UnboundLocalError as a data problem for weeks. The full
+        # traceback now reaches the log, so the next bug takes minutes instead of a night.
+        logger.error("Analyze error for %s: %s\n%s" % (symbol, e, traceback.format_exc()))
         return None
 
 
@@ -10102,6 +10120,446 @@ def cron_sec_edgar():
     except Exception as e:
         logger.error("sec-edgar run error: %s" % e)
         return jsonify({"error": str(e)}), 500
+
+
+
+# =========================================================================== #
+# ANALYST SNAPSHOT + REVISION MOMENTUM ENGINE
+#
+# Why this exists: estimate-revision momentum is the most predictive forward
+# factor in the literature, and it is the thing Bloomberg actually sells. No
+# vendor will sell it cheaply, because it is not a field you fetch — it is a
+# field you accumulate. So we accumulate it ourselves.
+#
+# Every time anyone analyzes a stock, we write that day's analyst state to
+# analyst_snapshots. A daily cron sweeps the universe so coverage does not
+# depend on user traffic. One row per symbol per day, forever. After 30 days we
+# can compute 30-day revision momentum. After a year we own a dataset that
+# cannot be bought. The universe grows on its own: every symbol anyone looks up
+# is added to it and swept from then on.
+#
+# Integrity rule: until a symbol has real history, the revision score reports
+# "building" and returns None. It never invents a number to look complete.
+# =========================================================================== #
+
+SNAP_SEED_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "BRK-B", "LLY",
+    "JPM", "V", "XOM", "UNH", "MA", "COST", "HD", "PG", "JNJ", "WMT",
+    "NFLX", "CRM", "BAC", "AMD", "ORCL", "KO", "PEP", "MRK", "ABBV", "CVX",
+    "ADBE", "TMO", "MCD", "CSCO", "ACN", "LIN", "INTC", "PFE", "DIS", "QCOM",
+    "SPY", "QQQ", "SOFI", "PLTR", "COIN", "HOOD", "SMCI", "MU", "ARM", "UBER",
+]
+
+
+def _snap_f(v):
+    """Coerce to float or None. Never raises."""
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        if f != f or f in (float("inf"), float("-inf")):
+            return None
+        return f
+    except Exception:
+        return None
+
+
+def _snap_i(v):
+    f = _snap_f(v)
+    return int(f) if f is not None else None
+
+
+def snap_create_tables():
+    """Idempotent. Safe to call on every boot."""
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS analyst_snapshots ("
+            "id SERIAL PRIMARY KEY,"
+            "symbol TEXT NOT NULL,"
+            "snap_date DATE NOT NULL,"
+            "price DOUBLE PRECISION,"
+            "market_cap DOUBLE PRECISION,"
+            "target_mean DOUBLE PRECISION,"
+            "target_high DOUBLE PRECISION,"
+            "target_low DOUBLE PRECISION,"
+            "analyst_count INTEGER,"
+            "reco_key TEXT,"
+            "reco_mean DOUBLE PRECISION,"
+            "trailing_pe DOUBLE PRECISION,"
+            "forward_pe DOUBLE PRECISION,"
+            "eps_forward DOUBLE PRECISION,"
+            "eps_trailing DOUBLE PRECISION,"
+            "earnings_growth DOUBLE PRECISION,"
+            "revenue_growth DOUBLE PRECISION,"
+            "sector TEXT,"
+            "created_at TIMESTAMP DEFAULT NOW(),"
+            "CONSTRAINT uq_snap UNIQUE (symbol, snap_date))"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_snap_sym_date ON analyst_snapshots(symbol, snap_date DESC)")
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS snapshot_universe ("
+            "symbol TEXT PRIMARY KEY,"
+            "added_at TIMESTAMP DEFAULT NOW(),"
+            "last_snap DATE,"
+            "hits INTEGER DEFAULT 1,"
+            "active BOOLEAN DEFAULT true)"
+        )
+        for s in SNAP_SEED_UNIVERSE:
+            cur.execute(
+                "INSERT INTO snapshot_universe (symbol) VALUES (%s) ON CONFLICT (symbol) DO NOTHING",
+                (s,),
+            )
+        conn.commit()
+        cur.close()
+        logger.info("snap: tables ready, universe seeded")
+    except Exception as e:
+        logger.error("snap_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def snap_universe_add(symbol):
+    """Every symbol anyone analyzes joins the daily sweep from then on."""
+    if not symbol:
+        return
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO snapshot_universe (symbol) VALUES (%s) "
+            "ON CONFLICT (symbol) DO UPDATE SET hits = snapshot_universe.hits + 1, active = true",
+            (symbol.upper(),),
+        )
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.warning("snap_universe_add %s: %s" % (symbol, e))
+    finally:
+        conn.close()
+
+
+def record_analyst_snapshot(symbol, info):
+    """Write today's analyst state for one symbol. One row per symbol per day.
+
+    Re-running on the same day overwrites rather than duplicating, so this is safe to call from
+    the analyze path AND the cron without producing double rows.
+    """
+    if not symbol or not isinstance(info, dict) or not info:
+        return False
+    conn = get_db()
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO analyst_snapshots "
+            "(symbol, snap_date, price, market_cap, target_mean, target_high, target_low,"
+            " analyst_count, reco_key, reco_mean, trailing_pe, forward_pe, eps_forward,"
+            " eps_trailing, earnings_growth, revenue_growth, sector) "
+            "VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (symbol, snap_date) DO UPDATE SET "
+            "price=EXCLUDED.price, market_cap=EXCLUDED.market_cap, target_mean=EXCLUDED.target_mean,"
+            "target_high=EXCLUDED.target_high, target_low=EXCLUDED.target_low,"
+            "analyst_count=EXCLUDED.analyst_count, reco_key=EXCLUDED.reco_key,"
+            "reco_mean=EXCLUDED.reco_mean, trailing_pe=EXCLUDED.trailing_pe,"
+            "forward_pe=EXCLUDED.forward_pe, eps_forward=EXCLUDED.eps_forward,"
+            "eps_trailing=EXCLUDED.eps_trailing, earnings_growth=EXCLUDED.earnings_growth,"
+            "revenue_growth=EXCLUDED.revenue_growth, sector=EXCLUDED.sector",
+            (
+                symbol.upper(),
+                _snap_f(info.get("currentPrice") or info.get("regularMarketPrice")),
+                _snap_f(info.get("marketCap")),
+                _snap_f(info.get("targetMeanPrice")),
+                _snap_f(info.get("targetHighPrice")),
+                _snap_f(info.get("targetLowPrice")),
+                _snap_i(info.get("numberOfAnalystOpinions")),
+                (info.get("recommendationKey") or None),
+                _snap_f(info.get("recommendationMean")),
+                _snap_f(info.get("trailingPE")),
+                _snap_f(info.get("forwardPE")),
+                _snap_f(info.get("forwardEps")),
+                _snap_f(info.get("trailingEps")),
+                _snap_f(info.get("earningsGrowth")),
+                _snap_f(info.get("revenueGrowth")),
+                (info.get("sector") or None),
+            ),
+        )
+        cur.execute(
+            "INSERT INTO snapshot_universe (symbol, last_snap) VALUES (%s, CURRENT_DATE) "
+            "ON CONFLICT (symbol) DO UPDATE SET last_snap = CURRENT_DATE, active = true",
+            (symbol.upper(),),
+        )
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        logger.warning("record_analyst_snapshot %s: %s" % (symbol, e))
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+# Ratings ranked worst to best so we can measure whether the street moved up or down.
+_RECO_RANK = {
+    "strong_sell": 1, "sell": 2, "underperform": 2, "hold": 3, "neutral": 3,
+    "buy": 4, "outperform": 4, "strong_buy": 5,
+}
+
+
+def compute_revision_momentum(symbol, window_days=30):
+    """Compare today's analyst state against `window_days` ago.
+
+    Returns a dict. `score` is 0-100, or None when there is not enough history yet — in which
+    case `status` is "building" and `days_of_history` tells the UI how far along we are. It never
+    fabricates a number to look finished.
+    """
+    out = {
+        "status": "building", "score": None, "days_of_history": 0, "window_days": window_days,
+        "target_change_pct": None, "analyst_count_change": None,
+        "rating_direction": None, "notes": [],
+    }
+    if not symbol:
+        return out
+    conn = get_db()
+    if not conn:
+        out["status"] = "unavailable"
+        return out
+    try:
+        cur = conn.cursor()
+        sym = symbol.upper()
+        cur.execute("SELECT COUNT(*), MIN(snap_date) FROM analyst_snapshots WHERE symbol=%s", (sym,))
+        row = cur.fetchone() or (0, None)
+        n_rows = row[0] or 0
+        if row[1]:
+            out["days_of_history"] = (_sec_date.today() - row[1]).days
+        # Latest snapshot.
+        cur.execute(
+            "SELECT snap_date, target_mean, analyst_count, reco_key, price FROM analyst_snapshots "
+            "WHERE symbol=%s ORDER BY snap_date DESC LIMIT 1", (sym,))
+        cur_row = cur.fetchone()
+        # Closest snapshot at or before the window start.
+        cur.execute(
+            "SELECT snap_date, target_mean, analyst_count, reco_key, price FROM analyst_snapshots "
+            "WHERE symbol=%s AND snap_date <= CURRENT_DATE - %s ORDER BY snap_date DESC LIMIT 1",
+            (sym, window_days))
+        old_row = cur.fetchone()
+        cur.close()
+
+        if not cur_row or not old_row:
+            out["notes"].append(
+                "Revision history is still building for %s. %d day(s) recorded; %d needed."
+                % (sym, out["days_of_history"], window_days))
+            return out
+
+        _, t_now, a_now, r_now, _p_now = cur_row
+        _, t_old, a_old, r_old, _p_old = old_row
+
+        pts = 0.0
+        weight = 0.0
+
+        # 1. Target price revision. The core signal: is the street marking this up or down?
+        if t_now is not None and t_old not in (None, 0):
+            chg = (float(t_now) - float(t_old)) / abs(float(t_old)) * 100.0
+            out["target_change_pct"] = round(chg, 2)
+            if chg >= 5:
+                p = 100.0
+            elif chg >= 2:
+                p = 80.0
+            elif chg > 0:
+                p = 65.0
+            elif chg == 0:
+                p = 50.0
+            elif chg > -2:
+                p = 35.0
+            elif chg > -5:
+                p = 20.0
+            else:
+                p = 0.0
+            pts += p * 0.55
+            weight += 0.55
+            out["notes"].append(
+                "Consensus target %s %.1f%% over %d days."
+                % ("raised" if chg > 0 else ("cut" if chg < 0 else "unchanged"), abs(chg), window_days))
+
+        # 2. Rating drift. Downgrades are treated as more informative than upgrades, which is the
+        #    asymmetry the research supports — sell-side ratings are structurally biased long, so a
+        #    downgrade carries more information than an upgrade of the same size.
+        rn = _RECO_RANK.get((r_now or "").lower())
+        ro = _RECO_RANK.get((r_old or "").lower())
+        if rn and ro:
+            d = rn - ro
+            if d > 0:
+                p = 75.0
+                out["rating_direction"] = "upgrade"
+                out["notes"].append("Street rating improved to %s." % r_now)
+            elif d < 0:
+                p = 5.0
+                out["rating_direction"] = "downgrade"
+                out["notes"].append("Street rating cut to %s. Downgrades carry more signal than upgrades." % r_now)
+            else:
+                p = 50.0
+                out["rating_direction"] = "unchanged"
+            pts += p * 0.25
+            weight += 0.25
+
+        # 3. Coverage breadth. More analysts picking it up is a real, if quiet, forward signal.
+        if a_now is not None and a_old is not None:
+            d = int(a_now) - int(a_old)
+            out["analyst_count_change"] = d
+            if d >= 2:
+                p = 85.0
+            elif d == 1:
+                p = 68.0
+            elif d == 0:
+                p = 50.0
+            elif d == -1:
+                p = 35.0
+            else:
+                p = 20.0
+            pts += p * 0.20
+            weight += 0.20
+            if d != 0:
+                out["notes"].append(
+                    "%d analyst(s) %s coverage." % (abs(d), "added" if d > 0 else "dropped"))
+
+        if weight <= 0:
+            out["notes"].append("Snapshots exist but carry no analyst fields for %s." % sym)
+            return out
+
+        out["score"] = int(round(pts / weight))
+        out["status"] = "ok"
+        out["rows"] = n_rows
+        return out
+    except Exception as e:
+        logger.error("compute_revision_momentum %s: %s" % (symbol, e))
+        out["status"] = "error"
+        return out
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def snap_sweep(max_symbols=100):
+    """Snapshot the stalest symbols in the universe. Designed to be called on a schedule.
+
+    Processes oldest-first, so repeated runs cycle through the whole universe. Because the row is
+    keyed (symbol, snap_date), a symbol already captured today is refreshed rather than duplicated,
+    and running the cron five times a day costs nothing but keeps coverage complete.
+    """
+    started = time.time()
+    summary = {"attempted": 0, "stored": 0, "failed": 0, "universe": 0}
+    conn = get_db()
+    if not conn:
+        summary["error"] = "no database"
+        return summary
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM snapshot_universe WHERE active")
+        summary["universe"] = (cur.fetchone() or [0])[0]
+        cur.execute(
+            "SELECT symbol FROM snapshot_universe WHERE active "
+            "AND (last_snap IS NULL OR last_snap < CURRENT_DATE) "
+            "ORDER BY last_snap ASC NULLS FIRST, hits DESC LIMIT %s",
+            (max_symbols,),
+        )
+        symbols = [r[0] for r in (cur.fetchall() or [])]
+        cur.close()
+    except Exception as e:
+        logger.error("snap_sweep query: %s" % e)
+        summary["error"] = str(e)
+        return summary
+    finally:
+        conn.close()
+
+    for sym in symbols:
+        summary["attempted"] += 1
+        try:
+            info = yf.Ticker(sym).info or {}
+            if record_analyst_snapshot(sym, info):
+                summary["stored"] += 1
+            else:
+                summary["failed"] += 1
+        except Exception as e:
+            summary["failed"] += 1
+            logger.warning("snap_sweep %s: %s" % (sym, e))
+        time.sleep(0.35)  # be a good citizen; yfinance rate-limits hard otherwise
+
+    summary["elapsed_sec"] = round(time.time() - started, 1)
+    logger.info("snap_sweep complete: %s" % summary)
+    return summary
+
+
+@app.route("/cron/analyst-snapshot")
+def cron_analyst_snapshot():
+    """Daily (or hourly) capture. Token-gated like the other crons.
+
+    Run it hourly. Each pass takes the stalest 100 symbols, so the universe stays fully covered as
+    it grows, and no single request runs long enough to time out.
+    """
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        limit = int(request.args.get("limit", 100))
+    except Exception:
+        limit = 100
+    limit = max(1, min(limit, 400))
+    try:
+        snap_create_tables()
+        return jsonify(snap_sweep(max_symbols=limit))
+    except Exception as e:
+        logger.error("cron_analyst_snapshot: %s" % e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/revision/<symbol>")
+def api_revision(symbol):
+    """Revision momentum for one symbol. Honest 'building' state until history exists."""
+    try:
+        window = int(request.args.get("window", 30))
+    except Exception:
+        window = 30
+    return jsonify(compute_revision_momentum(symbol, window_days=max(7, min(window, 180))))
+
+
+@app.route("/api/snapshot-status")
+def api_snapshot_status():
+    """How big is the dataset? Useful to watch the moat compound."""
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(snap_date), MAX(snap_date) FROM analyst_snapshots")
+        rows, syms, first, last = cur.fetchone() or (0, 0, None, None)
+        cur.execute("SELECT COUNT(*) FROM snapshot_universe WHERE active")
+        uni = (cur.fetchone() or [0])[0]
+        cur.close()
+        return jsonify({
+            "total_snapshots": rows, "symbols_covered": syms, "universe_size": uni,
+            "first_snapshot": str(first) if first else None,
+            "latest_snapshot": str(last) if last else None,
+            "days_of_history": (last - first).days if (first and last) else 0,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+# =========================================================================== #
+# END ANALYST SNAPSHOT + REVISION MOMENTUM ENGINE
+# =========================================================================== #
 
 
 if __name__ == "__main__":
