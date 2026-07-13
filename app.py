@@ -3577,30 +3577,196 @@ def _num(v):
     return "n/a" if v is None else ("%.2f" % v)
 
 
-def compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector):
+
+# =========================================================================== #
+# TECHNICAL MOMENTUM v2
+#
+# The old factor scored 20 points -- a fifth of the whole Alpha Score -- off
+# `eff_chg`, today's single-day percent move. A stock down 2% at 11am on nothing
+# lost a fifth of its score. That is noise, not momentum.
+#
+# Worse, it was pointed the wrong way. The momentum literature (Jegadeesh &
+# Titman, and the thirty years since) consistently finds SHORT-term price moves
+# mean-REVERT, while INTERMEDIATE-term moves -- roughly 3 to 12 months --
+# persist. Rewarding a stock for being up today is closer to a contrarian
+# signal than a momentum one.
+#
+# So v2 measures what actually persists:
+#   - 60-day return          .... intermediate-term momentum, the real effect
+#   - 20-day relative strength vs SPY .... is it beating the market, or just rising with it
+#   - price vs 50-day SMA    .... trend confirmation
+#   - price vs 200-day SMA   .... regime filter
+#
+# Today's move is deliberately worth nothing. It is in the breakdown text for
+# the user to see, and it does not touch the score.
+#
+# When history is unavailable it returns None rather than a middling default,
+# so the caller can say "unavailable" instead of quietly inventing 10/20.
+# =========================================================================== #
+
+def _mom_closes(symbol, period="1y"):
+    """Daily closes ascending, cached 1h. Uses the existing fallback chain, so this keeps working
+    when Yahoo is down -- the same reason the rest of the report survives."""
+    ckey = "mom_" + str(symbol) + "_" + period
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < 3600:
+        return cached[0]
+    closes = []
+    try:
+        rows = fetch_with_fallback(symbol, period=period, interval="1d")
+        for r in (rows or []):
+            c = _alpha_num(r.get("close"))
+            if c and c > 0:
+                closes.append(float(c))
+    except Exception as e:
+        logger.warning("_mom_closes %s: %s" % (symbol, e))
+    CACHE[ckey] = (closes, time.time())
+    return closes
+
+
+def _pct_change_over(closes, n):
+    """Percent change across the last n bars. None when there is not enough history."""
+    if not closes or len(closes) < n + 1:
+        return None
+    old = closes[-(n + 1)]
+    new = closes[-1]
+    if not old or old <= 0:
+        return None
+    return (new - old) / old * 100.0
+
+
+def _sma_of(closes, n):
+    if not closes or len(closes) < n:
+        return None
+    window = closes[-n:]
+    return sum(window) / float(n)
+
+
+def compute_momentum(symbol):
+    """Technical Momentum, 0-20. Returns {'points', 'note', 'detail'} or None if no history.
+
+    Point budget:
+      60-day return .................. 7
+      20-day relative strength vs SPY  7
+      above 50-day SMA ............... 4
+      above 200-day SMA .............. 2
+    Today's move: 0. Reported, never scored.
+    """
+    closes = _mom_closes(symbol)
+    if len(closes) < 25:
+        return None
+
+    pts = 0
+    detail = {}
+    bits = []
+
+    # 1. Intermediate-term momentum (60 trading days ~ 3 months). The effect that actually persists.
+    r60 = _pct_change_over(closes, 60)
+    detail["ret_60d"] = round(r60, 2) if r60 is not None else None
+    if r60 is None:
+        # Not enough history for the real window; fall back to what we have and say so.
+        r20_only = _pct_change_over(closes, 20)
+        if r20_only is not None:
+            pts += 4 if r20_only > 0 else 1
+            bits.append("only %d days of history, using 20-day trend" % len(closes))
+    else:
+        if r60 >= 20:
+            pts += 7
+        elif r60 >= 10:
+            pts += 6
+        elif r60 >= 3:
+            pts += 5
+        elif r60 > -3:
+            pts += 3
+        elif r60 > -12:
+            pts += 1
+        else:
+            pts += 0
+        bits.append("%s %.1f%% over 3 months" % ("up" if r60 >= 0 else "down", abs(r60)))
+
+    # 2. Relative strength. Beating the market is skill; rising with it is beta. This is the factor
+    #    that separates the two, and it is the one most retail scores leave out.
+    r20 = _pct_change_over(closes, 20)
+    spy = _mom_closes("SPY")
+    b20 = _pct_change_over(spy, 20) if spy else None
+    rs = None
+    if r20 is not None and b20 is not None:
+        rs = r20 - b20
+        detail["rel_strength_20d"] = round(rs, 2)
+        if rs >= 8:
+            pts += 7
+        elif rs >= 3:
+            pts += 6
+        elif rs >= 0:
+            pts += 4
+        elif rs > -3:
+            pts += 3
+        elif rs > -8:
+            pts += 1
+        else:
+            pts += 0
+        bits.append("%s the market by %.1f%% over 20 days"
+                    % ("beating" if rs >= 0 else "lagging", abs(rs)))
+    detail["ret_20d"] = round(r20, 2) if r20 is not None else None
+
+    # 3 & 4. Trend and regime. Cheap, robust, and they keep the factor from rewarding a falling knife
+    #        that happens to have bounced.
+    last = closes[-1]
+    s50 = _sma_of(closes, 50)
+    s200 = _sma_of(closes, 200)
+    if s50:
+        detail["above_50d_sma"] = bool(last > s50)
+        if last > s50:
+            pts += 4
+            bits.append("above its 50-day average")
+        else:
+            bits.append("below its 50-day average")
+    if s200:
+        detail["above_200d_sma"] = bool(last > s200)
+        if last > s200:
+            pts += 2
+        else:
+            bits.append("below its 200-day average")
+
+    pts = max(0, min(20, pts))
+    note = "; ".join(bits) if bits else "limited price history"
+    return {"points": pts, "note": note, "detail": detail}
+
+
+def compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector, symbol=None):
     """Return {'score': int 0..100, 'breakdown': [str, ...]}. Designed to never raise."""
     breakdown = []
 
-    # a. Technical Momentum (0 to 20)
+    # a. Technical Momentum (0 to 20) -- multi-window, see compute_momentum above.
+    # Today's move is shown for context but is NOT scored: short-horizon moves mean-revert, so
+    # rewarding them was actively counterproductive. Intermediate-term trend and relative strength
+    # are what carry signal.
     ec = _alpha_num(eff_chg)
     if ec is None:
         ec = 0.0
-    if ec > 2:
-        tech_raw = 5
-    elif ec > 0:
-        tech_raw = 3
-    elif ec > -2:
-        tech_raw = 1
-    else:
-        tech_raw = 0
-    tech = tech_raw * 4
     if ec > 0:
         move = "up %s%% today" % ec
     elif ec < 0:
         move = "down %s%% today" % abs(ec)
     else:
         move = "flat today"
-    breakdown.append("Technical Momentum: +%d pts (%s)" % (tech, move))
+
+    mom = None
+    if symbol:
+        try:
+            mom = compute_momentum(symbol)
+        except Exception as _me:
+            logger.warning("compute_momentum %s: %s" % (symbol, _me))
+            mom = None
+
+    if mom:
+        tech = mom["points"]
+        breakdown.append("Technical Momentum: +%d pts (%s; %s)" % (tech, mom["note"], move))
+    else:
+        # No usable price history. Say so rather than inventing a middling default -- an absent
+        # signal must not quietly prop the score up.
+        tech = 0
+        breakdown.append("Technical Momentum: +0 pts (not enough price history to judge trend; %s)" % move)
 
     # b. Fundamental Health (0 to 20): PE up to 10, debt to equity up to 10
     pe_num = _alpha_num(pe)
@@ -4812,7 +4978,7 @@ def compute_full_report(symbol):
         }
 
         try:
-            _alpha = compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector_name)
+            _alpha = compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector_name, symbol=symbol)
             alpha_score = _alpha["score"]
             alpha_breakdown = _alpha["breakdown"]
         except Exception as e:
