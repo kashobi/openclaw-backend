@@ -4737,6 +4737,15 @@ def compute_full_report(symbol):
 
         confidence, flags = run_referee(cur, chg, pe, tgt, rec, market_cap, volume, beta, hist, news, congressional, insider)
 
+        # Macro overlay. A confirmed High-importance event inside 48 hours knocks confidence down one
+        # level and raises a flag, because on those days the whole market can move regardless of what
+        # this one stock's signals say. Estimated dates are excluded on purpose -- see econ module.
+        _econ_event = None
+        try:
+            confidence, flags, _econ_event = apply_econ_overlay(confidence, flags, info.get("sector", ""))
+        except Exception as _ee:
+            logger.warning("econ overlay skipped for %s: %s" % (symbol, _ee))
+
         # FMP second source. Additive and non blocking: display first so it can be verified,
         # then it will sharpen the verdict in a later step. Behind the 4 hour cache below.
         fmp = {"grades": [], "insider_stats": None}
@@ -5065,6 +5074,7 @@ def compute_full_report(symbol):
             "beta": beta,
             "confidence": confidence,
             "flags": flags,
+            "economic_event": _econ_event,
             "fmp": fmp,
             "insider_sell_value": insider_sell_value,
             "holder_sell_value": holder_sell_value,
@@ -11157,6 +11167,373 @@ def api_feature_store_status():
 # =========================================================================== #
 # END POINT-IN-TIME FEATURE STORE
 # =========================================================================== #
+
+
+
+# =========================================================================== #
+# ECONOMIC CALENDAR
+#
+# Two sources, no new paid API:
+#   1. FRED's release-dates endpoint gives the REAL scheduled dates for CPI,
+#      PPI, the Employment Situation, GDP, Retail Sales and jobless claims.
+#      This matters: guessing "second week of the month" would sometimes
+#      downgrade a stock's confidence on the wrong day and miss the right one,
+#      which is worse than having no calendar at all.
+#   2. FOMC dates are hardcoded from the Fed's published 2026 calendar, because
+#      FOMC is not a FRED "release". Confirmed against federalreserve.gov.
+#
+# FRED also supplies the latest actual values (fed funds, CPI YoY, unemployment,
+# GDP), cached 6 hours.
+#
+# If FRED is unreachable or no key is set, the calendar degrades to rule-derived
+# dates that are explicitly marked estimated=True, and estimated events never
+# trigger the confidence downgrade. An approximate date is fine to show a user;
+# it is not fine to silently move a score with.
+# =========================================================================== #
+
+FRED_API_KEY = os.environ.get("FRED_API_KEY", "") or os.environ.get("FRED_KEY", "")
+FRED_BASE = "https://api.stlouisfed.org/fred"
+
+# Confirmed FOMC rate-decision days (second day of each two-day meeting), 2026-2027.
+# Source: federalreserve.gov FOMC calendar. 2027 dates are the Fed's tentative schedule.
+# NOTE TO FUTURE MAINTAINER: refresh this list each year; the Fed publishes it in advance.
+FOMC_DECISION_DAYS = [
+    "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
+    "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
+    "2027-01-27", "2027-03-17", "2027-04-28", "2027-06-16",
+    "2027-07-28", "2027-09-22", "2027-11-03", "2027-12-15",
+]
+
+# Which sectors historically move most on each event. Used to tell a user when the macro
+# event is not just market-wide noise but points directly at the stock they are looking at.
+ECON_EVENT_SPECS = {
+    "FOMC": {
+        "name": "FOMC Interest Rate Decision",
+        "importance": "High",
+        "time_et": "2:00 PM ET",
+        "why": "The Fed sets the price of money. A surprise on rates repositions every asset class at once, and the press conference half an hour later often moves markets more than the decision itself.",
+        "sectors": ["Financial Services", "Financials", "Real Estate", "Utilities", "Technology"],
+    },
+    "CPI": {
+        "name": "CPI Inflation Report",
+        "importance": "High",
+        "time_et": "8:30 AM ET",
+        "why": "The most-watched inflation print. It lands an hour before the open, so the first repricing happens in thin premarket liquidity, and it drives what the market expects the Fed to do next.",
+        "sectors": ["Consumer Cyclical", "Consumer Discretionary", "Consumer Defensive", "Consumer Staples", "Real Estate", "Utilities"],
+    },
+    "NFP": {
+        "name": "Non-Farm Payrolls / Employment Situation",
+        "importance": "High",
+        "time_et": "8:30 AM ET",
+        "why": "The monthly jobs report. A hot number can push rate-cut expectations out; a cold one can pull them forward. It moves the whole market, not one sector.",
+        "sectors": [],  # broad market
+    },
+    "GDP": {
+        "name": "GDP Report",
+        "importance": "High",
+        "time_et": "8:30 AM ET",
+        "why": "The broadest read on whether the economy is growing or contracting. Cyclical and industrial names carry the most sensitivity to it.",
+        "sectors": ["Industrials", "Basic Materials", "Energy", "Consumer Cyclical"],
+    },
+    "PPI": {
+        "name": "PPI Producer Prices",
+        "importance": "Medium",
+        "time_et": "8:30 AM ET",
+        "why": "Input-cost inflation before it reaches the shelf. It often previews the direction of CPI and squeezes margins for companies that cannot pass costs on.",
+        "sectors": ["Industrials", "Basic Materials", "Consumer Defensive", "Consumer Staples"],
+    },
+    "RETAIL": {
+        "name": "Retail Sales",
+        "importance": "Medium",
+        "time_et": "8:30 AM ET",
+        "why": "Whether households are still spending. It is the cleanest monthly read on consumer strength.",
+        "sectors": ["Consumer Cyclical", "Consumer Discretionary", "Consumer Defensive", "Consumer Staples"],
+    },
+    "CLAIMS": {
+        "name": "Initial Jobless Claims",
+        "importance": "Medium",
+        "time_et": "8:30 AM ET",
+        "why": "A weekly pulse on layoffs. One print rarely matters; a trend does, and it is the earliest signal the labour market is cracking.",
+        "sectors": [],
+    },
+}
+
+# FRED release names -> our event keys. Matched loosely so a small wording change upstream does
+# not silently drop an event from the calendar.
+_FRED_RELEASE_MATCH = [
+    ("consumer price index", "CPI"),
+    ("employment situation", "NFP"),
+    ("producer price index", "PPI"),
+    ("gross domestic product", "GDP"),
+    ("advance monthly sales for retail", "RETAIL"),
+    ("retail trade", "RETAIL"),
+    ("unemployment insurance weekly claims", "CLAIMS"),
+]
+
+
+def _fred_get(path, params=None, cache_hours=6):
+    """Call FRED. Cached. Returns parsed JSON or None. Never raises."""
+    if not FRED_API_KEY:
+        return None
+    p = dict(params or {})
+    p["api_key"] = FRED_API_KEY
+    p["file_type"] = "json"
+    ckey = "fred_" + path + "_" + "&".join("%s=%s" % (k, v) for k, v in sorted(p.items()) if k != "api_key")
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < cache_hours * 3600:
+        return cached[0]
+    try:
+        r = requests.get(FRED_BASE + path, params=p, timeout=12)
+        if r.status_code != 200:
+            logger.warning("FRED %s -> %s" % (path, r.status_code))
+            return None
+        data = r.json()
+        CACHE[ckey] = (data, time.time())
+        return data
+    except Exception as e:
+        logger.warning("FRED %s failed: %s" % (path, e))
+        return None
+
+
+def fred_latest(series_id, n=2):
+    """Most recent observations for a FRED series, newest first. [] on failure."""
+    d = _fred_get("/series/observations", {
+        "series_id": series_id, "sort_order": "desc", "limit": n,
+    })
+    out = []
+    for o in ((d or {}).get("observations") or []):
+        v = o.get("value")
+        if v in (None, ".", ""):
+            continue
+        try:
+            out.append({"date": o.get("date"), "value": float(v)})
+        except Exception:
+            continue
+    return out
+
+
+def fred_macro_snapshot():
+    """Latest actual values for the headline macro series. Cached 6h inside _fred_get."""
+    snap = {}
+    try:
+        ff = fred_latest("DFEDTARU", 1)  # fed funds target, upper bound
+        if ff:
+            snap["fed_funds_upper"] = {"value": ff[0]["value"], "as_of": ff[0]["date"], "unit": "%"}
+
+        # CPI year-over-year has to be computed; FRED publishes the index level, not the YoY rate.
+        cpi = fred_latest("CPIAUCSL", 13)
+        if len(cpi) >= 13 and cpi[12]["value"]:
+            yoy = (cpi[0]["value"] - cpi[12]["value"]) / cpi[12]["value"] * 100.0
+            snap["cpi_yoy"] = {"value": round(yoy, 1), "as_of": cpi[0]["date"], "unit": "%"}
+
+        un = fred_latest("UNRATE", 1)
+        if un:
+            snap["unemployment_rate"] = {"value": un[0]["value"], "as_of": un[0]["date"], "unit": "%"}
+
+        gdp = fred_latest("A191RL1Q225SBEA", 1)  # real GDP, % change from preceding quarter, annualized
+        if gdp:
+            snap["gdp_qoq_annualized"] = {"value": gdp[0]["value"], "as_of": gdp[0]["date"], "unit": "%"}
+    except Exception as e:
+        logger.warning("fred_macro_snapshot: %s" % e)
+    return snap
+
+
+def _econ_fred_release_dates(start, end):
+    """Real scheduled release dates from FRED. Returns [(date, event_key)]. [] if FRED is down."""
+    d = _fred_get("/releases/dates", {
+        "realtime_start": start.isoformat(),
+        "realtime_end": end.isoformat(),
+        "include_release_dates_with_no_data": "true",
+        "limit": 400,
+        "sort_order": "asc",
+    })
+    out = []
+    for rd in ((d or {}).get("release_dates") or []):
+        nm = str(rd.get("release_name", "")).lower()
+        ds = rd.get("date")
+        if not ds:
+            continue
+        for needle, key in _FRED_RELEASE_MATCH:
+            if needle in nm:
+                try:
+                    out.append((_sec_date.fromisoformat(ds), key))
+                except Exception:
+                    pass
+                break
+    return out
+
+
+def _econ_estimated_dates(start, end):
+    """Rule-derived fallback used only when FRED is unavailable. Explicitly marked estimated:
+    NFP is the first Friday, claims are every Thursday, and the monthly BLS/Census prints land
+    roughly mid-month. These are close, not exact -- which is why they never move a score."""
+    out = []
+    day = start
+    while day <= end:
+        if day.weekday() == 4 and day.day <= 7:
+            out.append((day, "NFP"))
+        if day.weekday() == 3:
+            out.append((day, "CLAIMS"))
+        if day.day == 12:
+            out.append((day, "CPI"))
+        if day.day == 15:
+            out.append((day, "PPI"))
+        if day.day == 16:
+            out.append((day, "RETAIL"))
+        day += timedelta(days=1)
+    return out
+
+
+def build_economic_calendar(days_ahead=7, days_back=3):
+    """Recent and upcoming macro events. Always returns a dict; never raises."""
+    today = _sec_date.today()
+    start = today - timedelta(days=days_back)
+    end = today + timedelta(days=days_ahead)
+
+    events = []
+    estimated = False
+
+    pairs = _econ_fred_release_dates(start, end)
+    if not pairs:
+        estimated = True
+        pairs = _econ_estimated_dates(start, end)
+
+    # FOMC is not a FRED release, so it is layered in from the Fed's published calendar.
+    for ds in FOMC_DECISION_DAYS:
+        try:
+            d = _sec_date.fromisoformat(ds)
+        except Exception:
+            continue
+        if start <= d <= end:
+            pairs.append((d, "FOMC"))
+
+    macro = fred_macro_snapshot()
+    prev_for = {
+        "FOMC": macro.get("fed_funds_upper"),
+        "CPI": macro.get("cpi_yoy"),
+        "NFP": macro.get("unemployment_rate"),
+        "GDP": macro.get("gdp_qoq_annualized"),
+    }
+
+    seen = set()
+    for d, key in sorted(pairs, key=lambda x: x[0]):
+        spec = ECON_EVENT_SPECS.get(key)
+        if not spec:
+            continue
+        sig = (d.isoformat(), key)
+        if sig in seen:
+            continue
+        seen.add(sig)
+
+        # FOMC dates are always confirmed; FRED-sourced dates are confirmed; the rule-derived
+        # fallback is not. Only confirmed events are allowed to move a stock's confidence.
+        is_est = estimated and key != "FOMC"
+        prev = prev_for.get(key)
+        days_out = (d - today).days
+
+        events.append({
+            "key": key,
+            "name": spec["name"],
+            "date": d.isoformat(),
+            "time": spec["time_et"],
+            "importance": spec["importance"],
+            "why": spec["why"],
+            "sectors": spec["sectors"],
+            "days_out": days_out,
+            "is_past": days_out < 0,
+            "estimated_date": bool(is_est),
+            "previous": prev,
+            "forecast": None,  # no free forecast source; left honest rather than invented
+        })
+
+    upcoming = [e for e in events if not e["is_past"]]
+    return {
+        "generated": datetime.utcnow().isoformat() + "Z",
+        "window": {"from": start.isoformat(), "to": end.isoformat()},
+        "macro": macro,
+        "events": events,
+        "upcoming": upcoming,
+        "next_high_impact": next((e for e in upcoming if e["importance"] == "High"), None),
+        "dates_estimated": estimated,
+        "source": "FRED release calendar + published FOMC schedule" if not estimated
+                  else "estimated (FRED unavailable — dates approximate, not used for scoring)",
+    }
+
+
+def econ_event_within(hours=48):
+    """The next High-importance, CONFIRMED-date event inside `hours`, or None.
+
+    Estimated dates are deliberately excluded: a guessed date must never move a score.
+    """
+    try:
+        cal = build_economic_calendar(days_ahead=max(1, int(hours / 24) + 1), days_back=0)
+        limit_days = hours / 24.0
+        for e in cal.get("upcoming") or []:
+            if e["importance"] != "High":
+                continue
+            if e.get("estimated_date"):
+                continue
+            if e["days_out"] <= limit_days:
+                return e
+    except Exception as e:
+        logger.warning("econ_event_within: %s" % e)
+    return None
+
+
+def econ_downgrade(confidence):
+    """High -> Medium -> Low. Low stays Low."""
+    return {"High": "Medium", "Medium": "Low", "Low": "Low"}.get(confidence, confidence)
+
+
+def apply_econ_overlay(confidence, flags, sector):
+    """Apply the macro overlay to a report's confidence and flags.
+
+    Returns (confidence, flags, event_or_None). Safe: on any failure the inputs come back untouched.
+    """
+    try:
+        ev = econ_event_within(48)
+        if not ev:
+            return confidence, flags, None
+
+        when = "today" if ev["days_out"] == 0 else ("tomorrow" if ev["days_out"] == 1 else "in %d days" % ev["days_out"])
+        flags = list(flags or [])
+        flags.append({
+            "level": "warn",
+            "text": ("A major economic event (%s) is scheduled %s at %s. This can move the entire "
+                     "market regardless of this stock's individual signals."
+                     % (ev["name"], when, ev["time"])),
+        })
+
+        sec = (sector or "").strip()
+        if sec and ev["sectors"] and any(sec.lower() == s.lower() for s in ev["sectors"]):
+            flags.append({
+                "level": "warn",
+                "text": "%s stocks are typically sensitive to this kind of event." % sec,
+            })
+            ev = dict(ev)
+            ev["sector_match"] = True
+
+        return econ_downgrade(confidence), flags, ev
+    except Exception as e:
+        logger.warning("apply_econ_overlay: %s" % e)
+        return confidence, flags, None
+
+
+@app.route("/api/economic-calendar")
+def api_economic_calendar():
+    try:
+        ahead = int(request.args.get("days_ahead", 7))
+        back = int(request.args.get("days_back", 3))
+    except Exception:
+        ahead, back = 7, 3
+    try:
+        return jsonify(build_economic_calendar(
+            days_ahead=max(1, min(ahead, 60)),
+            days_back=max(0, min(back, 30)),
+        ))
+    except Exception as e:
+        logger.error("api_economic_calendar: %s" % e)
+        return jsonify({"error": str(e), "events": [], "upcoming": []}), 500
 
 
 if __name__ == "__main__":
