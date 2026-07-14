@@ -1,0 +1,365 @@
+"""
+=============================================================================
+CLINICALTRIALS.GOV DIFF ENGINE
+=============================================================================
+
+For a clinical-stage biotech, a trial status change IS the company. A Phase 3
+termination can erase most of the equity value in a morning; an advance to
+Phase 3 can double it. ClinicalTrials.gov publishes all of it, free, via a
+public API -- and almost nobody diffs it daily, because the value is in noticing
+the CHANGE, not in reading the current state.
+
+So this stores state and compares. The signal is the delta.
+
+THE HARD PART -- and the reason this usually doesn't get built -- is that
+ClinicalTrials.gov names sponsors as "Hoffmann-La Roche" or "Bristol-Myers
+Squibb Company", not as tickers. We already solved that problem for DoD
+contracts: organizations_mapping, seeded by hand and expanded from SEC 10-K
+Exhibit 21 subsidiary lists. Same crosswalk, reused. A trial run by
+"Genentech, Inc." rolls up to RHHBY the same way a contract awarded to
+"Sikorsky Aircraft" rolls up to LMT.
+
+API: https://clinicaltrials.gov/api/v2/studies  (no key required)
+=============================================================================
+"""
+
+import os
+import re
+import json
+import time
+import logging
+from datetime import date, datetime, timedelta
+
+import requests
+
+logger = logging.getLogger("ctgov")
+
+CTGOV_API = "https://clinicaltrials.gov/api/v2/studies"
+UA = {"User-Agent": "ApexQ/1.0 (clinical trial research; contact@apexq.io)"}
+
+# The fields whose CHANGE is the signal. Everything else is noise.
+WATCHED_FIELDS = (
+    "overall_status",
+    "phase",
+    "enrollment_count",
+    "primary_outcome",
+    "completion_date",
+)
+
+# Status changes that matter, and how much. Terminated/suspended/withdrawn on a lead program is
+# often the worst single day in a biotech's life. "Completed" is neutral-to-good but ambiguous --
+# a trial can complete and still miss its endpoint, so it is NOT scored as a win.
+STATUS_BAD = {"TERMINATED", "SUSPENDED", "WITHDRAWN", "NO_LONGER_AVAILABLE"}
+STATUS_GOOD = {"RECRUITING", "ACTIVE_NOT_RECRUITING", "ENROLLING_BY_INVITATION"}
+STATUS_NEUTRAL = {"COMPLETED", "UNKNOWN", "NOT_YET_RECRUITING"}
+
+_PHASE_RANK = {
+    "EARLY_PHASE1": 1, "PHASE1": 2, "PHASE1/PHASE2": 3, "PHASE2": 4,
+    "PHASE2/PHASE3": 5, "PHASE3": 6, "PHASE4": 7, "NA": 0,
+}
+
+
+SCHEMA = """
+-- Current known state of every trial we track. Overwritten each run; the previous row is what
+-- we diff against, which is the entire point.
+CREATE TABLE IF NOT EXISTS clinical_trial_state (
+    nct_id              TEXT PRIMARY KEY,
+    ticker              TEXT,
+    sponsor             TEXT,
+    brief_title         TEXT,
+    overall_status      TEXT,
+    phase               TEXT,
+    enrollment_count    INTEGER,
+    primary_outcome     TEXT,
+    completion_date     TEXT,
+    conditions          TEXT,
+    last_seen           DATE,
+    updated_at          TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ix_cts_ticker ON clinical_trial_state(ticker);
+
+-- The diffs. This is the product.
+CREATE TABLE IF NOT EXISTS clinical_trial_changes (
+    id                  SERIAL PRIMARY KEY,
+    nct_id              TEXT NOT NULL,
+    ticker              TEXT,
+    sponsor             TEXT,
+    brief_title         TEXT,
+    field_changed       TEXT NOT NULL,
+    old_value           TEXT,
+    new_value           TEXT,
+    direction           TEXT,      -- 'advance' | 'setback' | 'neutral'
+    significance        INTEGER,   -- 0-100, how much this change should matter
+    plain_english       TEXT,
+    change_date         DATE NOT NULL,
+    created_at          TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uq_ctc UNIQUE (nct_id, field_changed, change_date)
+);
+CREATE INDEX IF NOT EXISTS ix_ctc_ticker ON clinical_trial_changes(ticker, change_date DESC);
+CREATE INDEX IF NOT EXISTS ix_ctc_date ON clinical_trial_changes(change_date DESC);
+"""
+
+
+def _s(v):
+    if v is None:
+        return None
+    if isinstance(v, (list, tuple)):
+        return "; ".join(str(x) for x in v)[:1000]
+    return str(v)[:1000]
+
+
+def _fetch_sponsor_trials(sponsor, page_size=100):
+    """Active/recent interventional trials for one sponsor."""
+    out = []
+    try:
+        params = {
+            "query.spons": sponsor,
+            "filter.overallStatus": "RECRUITING|ACTIVE_NOT_RECRUITING|NOT_YET_RECRUITING|"
+                                    "ENROLLING_BY_INVITATION|SUSPENDED|TERMINATED|WITHDRAWN|COMPLETED",
+            "pageSize": page_size,
+            "fields": "NCTId|BriefTitle|OverallStatus|Phase|EnrollmentCount|"
+                      "PrimaryOutcomeMeasure|CompletionDate|LeadSponsorName|Condition",
+        }
+        r = requests.get(CTGOV_API, params=params, headers=UA, timeout=25)
+        if r.status_code != 200:
+            logger.warning("ctgov %s -> %s", sponsor, r.status_code)
+            return out
+        for st in (r.json().get("studies") or []):
+            p = st.get("protocolSection") or {}
+            idm = p.get("identificationModule") or {}
+            sm = p.get("statusModule") or {}
+            dm = p.get("designModule") or {}
+            om = p.get("outcomesModule") or {}
+            spm = p.get("sponsorCollaboratorsModule") or {}
+            cm = p.get("conditionsModule") or {}
+
+            phases = (dm.get("phases") or [])
+            enroll = (dm.get("enrollmentInfo") or {}).get("count")
+            prim = [o.get("measure") for o in (om.get("primaryOutcomes") or []) if o.get("measure")]
+            comp = ((sm.get("completionDateStruct") or {}).get("date")
+                    or (sm.get("primaryCompletionDateStruct") or {}).get("date"))
+
+            out.append({
+                "nct_id": idm.get("nctId"),
+                "brief_title": _s(idm.get("briefTitle")),
+                "sponsor": _s((spm.get("leadSponsor") or {}).get("name")) or sponsor,
+                "overall_status": _s(sm.get("overallStatus")),
+                "phase": _s(phases[0] if phases else "NA"),
+                "enrollment_count": int(enroll) if enroll else None,
+                "primary_outcome": _s(prim),
+                "completion_date": _s(comp),
+                "conditions": _s(cm.get("conditions")),
+            })
+    except Exception as e:
+        logger.warning("_fetch_sponsor_trials %s: %s", sponsor, e)
+    return out
+
+
+def classify_change(field, old, new, title=""):
+    """What does this change MEAN? Returns (direction, significance 0-100, plain english).
+
+    Deliberately conservative on the upside. A trial reaching "Completed" is NOT a win -- a trial
+    can complete and still miss its primary endpoint, and treating completion as good news is how
+    you end up bullish on a failure.
+    """
+    if field == "overall_status":
+        o, n = (old or "").upper(), (new or "").upper()
+        if n in STATUS_BAD:
+            sig = 95 if n == "TERMINATED" else 80
+            return ("setback", sig,
+                    "This trial was %s. For a company whose value rests on its pipeline, losing a "
+                    "trial can remove a large part of the story in a single day." % n.lower())
+        if o in STATUS_BAD and n in STATUS_GOOD:
+            return ("advance", 70, "A previously halted trial has restarted.")
+        if n == "COMPLETED":
+            return ("neutral", 40,
+                    "The trial finished. Completion is not the same as success -- a trial can "
+                    "complete and still miss its main endpoint. Watch for the results readout.")
+        if n in STATUS_GOOD and o not in STATUS_GOOD:
+            return ("advance", 55, "The trial has begun enrolling patients.")
+        return ("neutral", 20, "Trial status changed from %s to %s." % (old, new))
+
+    if field == "phase":
+        ro, rn = _PHASE_RANK.get((old or "NA").upper(), 0), _PHASE_RANK.get((new or "NA").upper(), 0)
+        if rn > ro and ro > 0:
+            return ("advance", 85,
+                    "The programme advanced from %s to %s. Each phase a drug survives sharply "
+                    "raises the odds it eventually reaches market." % (old, new))
+        if rn < ro and rn > 0:
+            return ("setback", 75, "The programme moved back from %s to %s." % (old, new))
+        return ("neutral", 25, "Phase designation changed from %s to %s." % (old, new))
+
+    if field == "enrollment_count":
+        try:
+            o, n = int(old or 0), int(new or 0)
+        except Exception:
+            return ("neutral", 10, "Enrollment target changed.")
+        if o and n:
+            pct = (n - o) / float(o) * 100.0
+            if pct <= -30:
+                return ("setback", 60,
+                        "The enrollment target was cut sharply, from %d to %d. Large cuts sometimes "
+                        "precede a trial being wound down." % (o, n))
+            if pct >= 30:
+                return ("advance", 45,
+                        "The enrollment target was raised from %d to %d, which usually means the "
+                        "sponsor is investing more in this programme." % (o, n))
+        return ("neutral", 12, "Enrollment target changed from %s to %s." % (old, new))
+
+    if field == "primary_outcome":
+        # Quietly changing what you're measuring, mid-trial, is a genuine red flag.
+        return ("setback", 65,
+                "The trial's primary endpoint -- the thing it is actually measuring -- was changed. "
+                "Endpoint changes mid-study sometimes indicate the original target was not going "
+                "to be met.")
+
+    if field == "completion_date":
+        return ("neutral", 30,
+                "The expected completion date moved from %s to %s. Delays push any revenue further "
+                "out; pull-ins bring it closer." % (old, new))
+
+    return ("neutral", 10, "%s changed." % field)
+
+
+def fetch_clinical_trial_changes(conn, resolve_ticker_fn=None, max_sponsors=60):
+    """Diff today's trial state against what we stored last time.
+
+    resolve_ticker_fn(name) -> {"ticker": ..., "needs_review": bool} -- pass in the DoD
+    entity resolver so the sponsor->ticker crosswalk is shared rather than rebuilt.
+    """
+    started = time.time()
+    summary = {"sponsors": 0, "trials": 0, "changes": 0, "new_trials": 0, "errors": 0}
+
+    cur = conn.cursor()
+    cur.execute(SCHEMA)
+    conn.commit()
+
+    # Sponsors worth polling: any public company already in the crosswalk that plausibly runs
+    # trials. We poll by NAME because that is what ClinicalTrials.gov indexes on.
+    cur.execute(
+        "SELECT DISTINCT legal_name, parent_ticker FROM organizations_mapping "
+        "WHERE parent_ticker IS NOT NULL AND verified = TRUE LIMIT %s", (max_sponsors,))
+    seeds = cur.fetchall() or []
+    cur.close()
+
+    # Plus the large-cap pharma/biotech universe, which is where the trial signal actually lives.
+    PHARMA = [
+        ("Eli Lilly", "LLY"), ("Pfizer", "PFE"), ("Merck", "MRK"), ("Bristol-Myers Squibb", "BMY"),
+        ("AbbVie", "ABBV"), ("Amgen", "AMGN"), ("Gilead Sciences", "GILD"), ("Moderna", "MRNA"),
+        ("Regeneron", "REGN"), ("Vertex Pharmaceuticals", "VRTX"), ("Biogen", "BIIB"),
+        ("Novavax", "NVAX"), ("BioNTech", "BNTX"), ("Alnylam", "ALNY"), ("Sarepta", "SRPT"),
+        ("Neurocrine", "NBIX"), ("Exelixis", "EXEL"), ("Incyte", "INCY"), ("BioMarin", "BMRN"),
+        ("Ionis Pharmaceuticals", "IONS"), ("Apellis", "APLS"), ("Madrigal", "MDGL"),
+        ("Axsome Therapeutics", "AXSM"), ("Karuna", "KRTX"), ("Insmed", "INSM"),
+        ("Johnson & Johnson", "JNJ"), ("Genentech", "RHHBY"), ("AstraZeneca", "AZN"),
+        ("Novartis", "NVS"), ("GSK", "GSK"), ("Sanofi", "SNY"), ("Bayer", "BAYRY"),
+    ]
+    sponsors = {name: tick for name, tick in seeds}
+    for name, tick in PHARMA:
+        sponsors.setdefault(name, tick)
+
+    today = date.today()
+
+    for sponsor, hint_ticker in list(sponsors.items())[:max_sponsors]:
+        summary["sponsors"] += 1
+        trials = _fetch_sponsor_trials(sponsor)
+        if not trials:
+            time.sleep(0.3)
+            continue
+
+        ticker = hint_ticker
+        if not ticker and resolve_ticker_fn:
+            try:
+                r = resolve_ticker_fn(sponsor)
+                if r and not r.get("needs_review"):
+                    ticker = r.get("ticker")
+            except Exception:
+                ticker = None
+
+        for t in trials:
+            if not t.get("nct_id"):
+                continue
+            summary["trials"] += 1
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT overall_status, phase, enrollment_count, primary_outcome, completion_date "
+                    "FROM clinical_trial_state WHERE nct_id=%s", (t["nct_id"],))
+                prev = cur.fetchone()
+
+                if prev:
+                    old = dict(zip(WATCHED_FIELDS, prev))
+                    for f in WATCHED_FIELDS:
+                        o, n = old.get(f), t.get(f)
+                        if o is None and n is None:
+                            continue
+                        if str(o or "") == str(n or ""):
+                            continue
+                        direction, sig, plain = classify_change(f, o, n, t.get("brief_title", ""))
+                        cur.execute(
+                            "INSERT INTO clinical_trial_changes "
+                            "(nct_id, ticker, sponsor, brief_title, field_changed, old_value,"
+                            " new_value, direction, significance, plain_english, change_date) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                            "ON CONFLICT (nct_id, field_changed, change_date) DO NOTHING",
+                            (t["nct_id"], ticker, t.get("sponsor"), t.get("brief_title"),
+                             f, _s(o), _s(n), direction, sig, plain, today))
+                        summary["changes"] += 1
+                else:
+                    summary["new_trials"] += 1
+
+                cur.execute(
+                    "INSERT INTO clinical_trial_state "
+                    "(nct_id, ticker, sponsor, brief_title, overall_status, phase, enrollment_count,"
+                    " primary_outcome, completion_date, conditions, last_seen, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()) "
+                    "ON CONFLICT (nct_id) DO UPDATE SET "
+                    "ticker=COALESCE(EXCLUDED.ticker, clinical_trial_state.ticker),"
+                    "overall_status=EXCLUDED.overall_status, phase=EXCLUDED.phase,"
+                    "enrollment_count=EXCLUDED.enrollment_count,"
+                    "primary_outcome=EXCLUDED.primary_outcome,"
+                    "completion_date=EXCLUDED.completion_date, last_seen=EXCLUDED.last_seen,"
+                    "updated_at=NOW()",
+                    (t["nct_id"], ticker, t.get("sponsor"), t.get("brief_title"),
+                     t.get("overall_status"), t.get("phase"), t.get("enrollment_count"),
+                     t.get("primary_outcome"), t.get("completion_date"), t.get("conditions"), today))
+                conn.commit()
+                cur.close()
+            except Exception as e:
+                summary["errors"] += 1
+                logger.warning("ctgov store %s: %s", t.get("nct_id"), e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        time.sleep(0.35)
+
+    summary["elapsed_sec"] = round(time.time() - started, 1)
+    logger.info("ctgov diff: %s", summary)
+    return summary
+
+
+def trial_changes_for(conn, ticker, days=90, limit=6):
+    """Recent, MEANINGFUL trial changes for a ticker. Low-significance noise is filtered out."""
+    if not ticker:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT nct_id, brief_title, field_changed, old_value, new_value, direction,"
+            " significance, plain_english, change_date "
+            "FROM clinical_trial_changes WHERE ticker=%s AND change_date >= CURRENT_DATE - %s "
+            "AND significance >= 40 ORDER BY significance DESC, change_date DESC LIMIT %s",
+            (ticker.upper(), days, limit))
+        out = []
+        for r in (cur.fetchall() or []):
+            out.append({
+                "nct_id": r[0], "title": r[1], "field": r[2], "old": r[3], "new": r[4],
+                "direction": r[5], "significance": r[6], "why": r[7], "date": str(r[8]),
+                "url": "https://clinicaltrials.gov/study/" + str(r[0]),
+            })
+        cur.close()
+        return out
+    except Exception as e:
+        logger.warning("trial_changes_for %s: %s", ticker, e)
+        return []
