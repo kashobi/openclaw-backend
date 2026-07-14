@@ -1509,6 +1509,62 @@ body{transition:background-color .3s ease,color .3s ease;}
 /* Macro warning inside "What Would Change This Call". */
 .cmMacro{margin-top:10px;padding:11px 13px;border-radius:10px;background:var(--ybg);
   border:1px solid var(--yellow);color:var(--text);font-size:13px;line-height:1.55;}
+
+/* Clickable calendar rows + related coverage links. */
+.ecoTbl tr.ecoClick{cursor:pointer;transition:background .15s ease;}
+.ecoTbl tr.ecoClick:hover{background:rgba(var(--accent-rgb),.05);}
+.ecoName .ecoExt{font-size:10px;color:var(--muted);margin-left:6px;font-weight:500;}
+.ecoNews{margin-top:8px;padding-top:7px;border-top:1px dashed var(--border);}
+.ecoNewsT{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  font-family:var(--font-mono);margin-bottom:5px;}
+.ecoNewsA{display:block;font-size:12.5px;color:var(--text);text-decoration:none;line-height:1.45;
+  padding:4px 0;border-bottom:1px solid transparent;}
+.ecoNewsA:hover{color:var(--accent);}
+.ecoNewsA .ecoNewsS{display:block;font-size:10px;color:var(--muted);margin-top:1px;}
+
+/* ---- Learn tab. Reuses .ic and .lens; only adds what those don't cover. ---- */
+.learnSec{display:none;}
+.learnSec.active{display:block;}
+.lnCard{margin-bottom:12px;}
+.lnLive{margin-top:10px;padding:10px 12px;border-radius:9px;background:rgba(var(--accent-rgb),.06);
+  border-left:3px solid var(--accent);font-size:13px;color:var(--text);line-height:1.55;}
+.lnLive b{color:var(--accent);}
+.lnNote{margin-top:10px;font-size:12.5px;color:var(--muted);line-height:1.55;font-style:italic;}
+.lnBtn{margin-top:12px;background:var(--surface);border:1px solid var(--border);border-radius:9px;
+  padding:9px 15px;font-size:12.5px;font-weight:700;color:var(--accent);cursor:pointer;
+  font-family:inherit;transition:all .15s;display:inline-block;margin-right:8px;}
+.lnBtn:hover{border-color:var(--accent);transform:translateY(-1px);}
+.lnFactor{margin-top:11px;padding-top:11px;border-top:1px solid var(--border);}
+.lnFactorH{font-family:var(--font-mono);font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:5px;}
+.lnFactorW{font-size:13px;color:var(--muted);line-height:1.6;}
+.glosSearch{width:100%;margin:10px 0 6px;padding:11px 14px;border-radius:10px;border:1px solid var(--border);
+  background:var(--bg);color:var(--text);font-family:inherit;font-size:14px;outline:none;}
+.glosSearch:focus{border-color:var(--accent);}
+.glosItem{padding:13px 0;border-bottom:1px solid var(--border);}
+.glosItem:last-child{border-bottom:none;}
+.glosT{font-size:14px;font-weight:800;color:var(--text);margin-bottom:4px;}
+.glosD{font-size:13px;color:var(--muted);line-height:1.6;}
+.glosEx{margin-top:8px;background:none;border:none;padding:0;font-family:inherit;font-size:12px;
+  font-weight:700;color:var(--accent);cursor:pointer;}
+.glosEx:hover{text-decoration:underline;}
+
+/* DoD contract card. The pure-play flag is the point of the whole feature: a $250M award
+   is noise to Lockheed and a re-rating for AeroVironment. The badge says which. */
+.dodItem{padding:13px 0;border-bottom:1px solid var(--border);}
+.dodItem:last-child{border-bottom:none;}
+.dodTop{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:5px;}
+.dodAmt{font-family:var(--font-mono);font-size:17px;font-weight:800;color:var(--text);letter-spacing:-.4px;}
+.dodDate{font-family:var(--font-mono);font-size:11px;color:var(--muted);}
+.dodTag{font-family:var(--font-mono);font-size:9.5px;font-weight:800;letter-spacing:.07em;
+  padding:3px 8px;border-radius:999px;white-space:nowrap;}
+.dodDef{background:var(--gbg);color:var(--green);border:1px solid var(--green);}
+.dodIdiq{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
+.dodSole{background:rgba(var(--accent-rgb),.1);color:var(--accent);border:1px solid var(--accent);}
+.dodPure{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.dodWhy{font-size:12.5px;color:var(--muted);line-height:1.55;margin-top:4px;}
+.dodRec{font-size:11.5px;color:var(--muted);opacity:.85;margin-top:3px;font-style:italic;}
+.dodLink{font-size:11px;color:var(--accent);text-decoration:none;font-weight:700;}
+.dodPct{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--red);}
 </style>
 </head>
 <body>
@@ -2247,6 +2303,30 @@ body{transition:background-color .3s ease,color .3s ease;}
 <button id="installBtn" class="installBtn">&#9889; Install Apex Q</button>
 <button id="readBtn" class="readBtn" aria-label="Read this page aloud" style="display:none">&#127908;</button>
 <div id="toast" class="toast"></div>
+<div class="view" id="view-learn">
+  <div class="vhead">Learn</div>
+  <div class="vhead-s">Not a course. The same stocks you're already looking at, explained.</div>
+
+  <div class="lensrow" id="learnChips">
+    <button class="lens active" data-learn="basics">Basics</button>
+    <button class="lens" data-learn="reports">Your Reports</button>
+    <button class="lens" data-learn="portfolio">Your Portfolio</button>
+    <button class="lens" data-learn="events">What's Happening</button>
+    <button class="lens" data-learn="glossary">Glossary</button>
+  </div>
+
+  <div class="learnSec active" id="learn-basics"></div>
+  <div class="learnSec" id="learn-reports"></div>
+  <div class="learnSec" id="learn-portfolio"></div>
+  <div class="learnSec" id="learn-events"></div>
+  <div class="learnSec" id="learn-glossary">
+    <div class="ic">
+      <div class="ih"><div class="it">Plain-English Glossary</div></div>
+      <input class="glosSearch" id="glosSearch" type="text" placeholder="Search a term..." autocomplete="off">
+      <div id="glosList"></div>
+    </div>
+  </div>
+</div>
 <nav class="tabbar" id="tabbar">
   <button class="tab active" data-view="home"><span class="tabi">&#128269;</span><span class="tabt">Home</span></button>
   <button class="tab" data-view="discover"><span class="tabi">&#129517;</span><span class="tabt">Discover</span></button>
@@ -2257,6 +2337,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   <button class="tab" data-view="backtest"><span class="tabi">&#128202;</span><span class="tabt">What If</span></button>
   <button class="tab" data-view="trade"><span class="tabi">&#128181;</span><span class="tabt">Practice</span></button>
   <button class="tab" data-view="ask"><span class="tabi">&#128172;</span><span class="tabt">Ask</span></button>
+  <button class="tab" data-view="learn"><span class="tabi">&#128218;</span><span class="tabt">Learn</span></button>
   <button class="tab tabMore" id="tabMore" type="button"><span class="tabi">&#8943;</span><span class="tabt">More</span></button>
 </nav>
 <div class="moreDrawer" id="moreDrawer">
@@ -2267,6 +2348,7 @@ body{transition:background-color .3s ease,color .3s ease;}
     <button class="moreItem" onclick="showView('discover');apexqCloseMore();"><span class="moreIco">&#129517;</span><span class="moreLbl"><b>Discover</b><small>Movers, sectors, and market lenses</small></span></button>
     <button class="moreItem" onclick="showView('insights');apexqCloseMore();"><span class="moreIco">&#127963;</span><span class="moreLbl"><b>Congress</b><small>Who in Congress is trading what</small></span></button>
     <button class="moreItem" onclick="showView('compare');apexqCloseMore();"><span class="moreIco">&#9878;&#65039;</span><span class="moreLbl"><b>Compare</b><small>Put two or three stocks side by side</small></span></button>
+    <button class="moreItem" onclick="showView('learn');apexqCloseMore();"><span class="moreIco">&#128218;</span><span class="moreLbl"><b>Learn</b><small>Your own stocks, explained in plain English</small></span></button>
     <button class="moreItem" onclick="showView('backtest');apexqCloseMore();"><span class="moreIco">&#128202;</span><span class="moreLbl"><b>What If</b><small>What if you copied a lawmaker</small></span></button>
   </div>
 </div>
@@ -3471,6 +3553,7 @@ function run(){
     }
     if(typeof injectChangeMind === "function"){ injectChangeMind(d); }
     if(typeof injectEconCalendar === "function"){ injectEconCalendar(d); }
+    if(typeof injectDoD === "function"){ injectDoD(d); }
 
     // CHUNK: Feature 2: price vs analyst target gauge
     var gauge = document.getElementById("mtGauge");
@@ -5641,6 +5724,7 @@ function showView(name){
   if(name === "home"){ loadHomeContext(); loadDashboard(); }
   if(name === "backtest"){ initBacktest(); }
   if(name === "trade"){ initTrade(); }
+  if(name === "learn"){ initLearn(); }
   if(name === "alerts" && typeof loadCustomAlerts === "function"){ loadCustomAlerts(); }
   window.scrollTo(0, 0);
 }
@@ -7677,11 +7761,15 @@ if(ib){
             var dt = new Date(e.date + "T12:00:00");
             var ds = dt.toLocaleDateString(undefined, {month: "short", day: "numeric"});
             var bdg = e.importance === "High" ? "ecoHigh" : "ecoMed";
-            return "<tr class=\"" + (hit ? "ecoHit" : "") + "\">" +
+            var safeUrl = (e.url && /^https?:\/\//i.test(e.url)) ? e.url : "";
+            var ext = safeUrl ? "<span class=\"ecoExt\">&#8599; " + esc(e.source_name || "Official release") + "</span>" : "";
+            return "<tr class=\"" + (hit ? "ecoHit " : "") + (safeUrl ? "ecoClick" : "") + "\"" +
+              (safeUrl ? " data-eurl=\"" + esc(safeUrl) + "\"" : "") + ">" +
               "<td class=\"ecoDate\">" + esc(ds) + "<span class=\"ecoDay\">" + esc(when) + "</span></td>" +
-              "<td><span class=\"ecoName\">" + esc(e.name) + "</span>" +
+              "<td><span class=\"ecoName\">" + esc(e.name) + ext + "</span>" +
                 "<span class=\"ecoWhy\">" + esc(e.why) + "</span>" +
                 (hit ? "<span class=\"ecoHitTag\">&#9888;&#65039; " + esc(mySector) + " is typically sensitive to this</span>" : "") +
+                "<div class=\"ecoNews\" data-ekey=\"" + esc(e.key) + "\"></div>" +
               "</td>" +
               "<td style=\"text-align:right\"><span class=\"ecoBdg " + bdg + "\">" + esc(e.importance) + "</span>" +
                 "<div class=\"ecoDay\">" + esc(e.time || "") + "</div></td></tr>";
@@ -7703,10 +7791,93 @@ if(ib){
 
         card.innerHTML = head + body + macro + est +
           "<div class=\"snFoot\">Dates from the FRED release calendar and the published FOMC schedule. Informational only.</div></div>";
+
+        // Row click opens the official release page (BLS, the Fed, BEA, Census, DOL). A click on a
+        // headline inside the row opens that article instead, so the two never fight.
+        var rows = card.querySelectorAll("tr.ecoClick");
+        for(var i = 0; i < rows.length; i++){
+          rows[i].addEventListener("click", function(evt){
+            if(evt.target.closest("a")){ return; }
+            var u = this.getAttribute("data-eurl");
+            if(u){ window.open(u, "_blank", "noopener"); }
+          });
+        }
+
+        // Related coverage, loaded per event and rendered as clickable headlines.
+        var slots = card.querySelectorAll(".ecoNews");
+        for(var k = 0; k < slots.length; k++){
+          (function(slot){
+            var key = slot.getAttribute("data-ekey");
+            if(!key){ return; }
+            fetch(API + "/api/macro-news?event=" + encodeURIComponent(key))
+              .then(function(r){ return r.json(); })
+              .then(function(m){
+                var arts = (m && m.articles) ? m.articles : [];
+                if(!arts.length){ return; }
+                slot.innerHTML = "<div class=\"ecoNewsT\">Related coverage</div>" +
+                  arts.slice(0, 3).map(function(a){
+                    var au = (a.url && /^https?:\/\//i.test(a.url)) ? a.url : "";
+                    if(!au){ return ""; }
+                    return "<a class=\"ecoNewsA\" href=\"" + esc(au) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" +
+                      esc(a.headline) + "<span class=\"ecoNewsS\">" + esc(a.source || "") + "</span></a>";
+                  }).join("");
+              })
+              .catch(function(){});
+          })(slots[k]);
+        }
       })
       .catch(function(){});
   }
   window.injectEconCalendar = injectEconCalendar;
+
+  // $100M+ DoD awards mapped to this ticker. Renders nothing at all when there are none --
+  // an empty card on most stocks would be noise, and most stocks never win a defense contract.
+  function injectDoD(d){
+    var host = document.getElementById("stockSections");
+    var old = document.getElementById("dodCard");
+    if(old){ old.remove(); }
+    var rows = (d && d.dod_contracts) ? d.dod_contracts : [];
+    if(!host || !rows.length){ return; }
+
+    var items = rows.map(function(c){
+      var amt = c.amount >= 1e9 ? ("$" + (c.amount / 1e9).toFixed(2) + "B")
+                                : ("$" + Math.round(c.amount / 1e6) + "M");
+      var tags = "";
+      tags += c.is_idiq
+        ? "<span class=\"dodTag dodIdiq\">IDIQ CEILING</span>"
+        : "<span class=\"dodTag dodDef\">FUNDED</span>";
+      if(c.is_sole_source){ tags += " <span class=\"dodTag dodSole\">SOLE SOURCE</span>"; }
+      if(c.is_pure_play){ tags += " <span class=\"dodTag dodPure\">PURE-PLAY CATALYST</span>"; }
+
+      var pct = (c.pct_of_market_cap !== null && c.pct_of_market_cap !== undefined)
+        ? ("<span class=\"dodPct\">" + esc(c.pct_of_market_cap) + "% of market cap</span> &middot; ") : "";
+
+      var dt = new Date(c.date + "T12:00:00");
+      var ds = dt.toLocaleDateString(undefined, {month: "short", day: "numeric", year: "numeric"});
+
+      return "<div class=\"dodItem\">" +
+        "<div class=\"dodTop\"><span class=\"dodAmt\">" + esc(amt) + "</span>" + tags +
+          "<span class=\"dodDate\">" + esc(ds) + "</span></div>" +
+        "<div class=\"dodWhy\">" + pct + esc(c.signal_note || "") + "</div>" +
+        "<div class=\"dodRec\">Awarded to " + esc(c.recipient) +
+          (c.branch ? (" &middot; " + esc(c.branch)) : "") + "</div>" +
+        (c.url ? "<a class=\"dodLink\" href=\"" + esc(c.url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">Source &#8599;</a>" : "") +
+        "</div>";
+    }).join("");
+
+    var card = document.createElement("div");
+    card.id = "dodCard";
+    card.className = "ic senateCardIc";
+    card.innerHTML = "<div class=\"snHead\"><div class=\"snHeadL\">" +
+      "<div class=\"snIcon\">&#127894;&#65039;</div><div>" +
+      "<div class=\"snTitle\">Defense Contracts</div>" +
+      "<div class=\"snSub\">Awards over $100 million</div></div></div></div>" +
+      items +
+      "<div class=\"snFoot\">From daily DoD announcements and USAspending. An IDIQ ceiling is a spending cap the government may never use, not cash in hand.</div>";
+    host.appendChild(card);
+  }
+  window.injectDoD = injectDoD;
+
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
   // focus is not in a field. Inside inputs, including the date fields, Backspace clears normally.
@@ -7728,6 +7899,364 @@ if(ib){
   ["ptSym","ptShares"].forEach(function(id){ _enter(id, function(){ if(typeof paperBuy === "function") paperBuy(); }); });
   ["authUser","authEmail"].forEach(function(id){ _enter(id, function(){ if(typeof submitAuth === "function") submitAuth(); }); });
 })();
+
+
+/* =======================================================================
+   LEARN TAB
+   Teaches through the user's own stocks. Every example is live data or a
+   real report; nothing here is a mock. Where we don't have the data, the
+   card says so rather than inventing an example.
+   ======================================================================= */
+var _learnLoaded = {};
+
+var GLOSSARY = [
+  ["PE ratio", "How much you pay for $1 of the company's annual earnings. A PE of 30 means $30 for every $1 earned. Lower can mean cheaper; higher usually means the market expects growth.", "AAPL"],
+  ["EPS", "Earnings per share. The company's profit divided by the number of shares. It's the '1 dollar of earnings' in the PE ratio.", "AAPL"],
+  ["Market cap", "The total value of every share added together. Price times shares outstanding. Large caps tend to move less violently than small ones.", "MSFT"],
+  ["Dividend yield", "The annual dividend as a percentage of the share price. A 3% yield pays you $3 a year for every $100 invested, on top of any price change.", "KO"],
+  ["Beta", "How much a stock moves relative to the market. Beta of 1 moves with the market. Above 1 is jumpier; below 1 is steadier.", "PG"],
+  ["Volume", "How many shares changed hands. Big price moves on low volume are less convincing than the same move on heavy volume.", "TSLA"],
+  ["52-week high / low", "The highest and lowest price over the past year. Where the stock sits inside that range tells you how the last twelve months went.", "NVDA"],
+  ["FCF yield", "Free cash flow as a percentage of market cap. Free cash flow is the money left after the company pays to keep the lights on and invest. Hard to fake.", "GOOGL"],
+  ["ROE", "Return on equity. How much profit the company generates from the money shareholders put in. Consistently high ROE is a sign of a good business.", "AAPL"],
+  ["Profit margin", "How much of each dollar of revenue becomes profit. A 25% margin means 25 cents of every dollar sold is kept.", "MSFT"],
+  ["Debt / equity", "How much the company has borrowed compared to what shareholders own. High debt magnifies both good years and bad ones.", "T"],
+  ["Moat", "A durable advantage that keeps competitors from stealing the business. Brand, network effects, switching costs, scale. Wide moat means hard to attack.", "AAPL"],
+  ["Insider trading", "Legal, disclosed buying and selling by a company's own executives and directors, filed with the SEC on Form 4. Different from the illegal kind, which is trading on secret information.", "NVDA"],
+  ["Congressional trade", "A stock trade by a member of Congress, disclosed under the STOCK Act. Disclosure can lag the actual trade by 30-45 days, so it's history, not a live signal.", "NVDA"],
+  ["FDA approval", "The FDA clearing a drug or device for sale. For a small biotech with one product, an approval or rejection can be most of the company's value.", "LLY"],
+  ["Lobbying disclosure", "Companies must report who they pay to influence legislation, and on which bills. A sudden spike often means the company sees a regulatory change coming before the market does.", "LMT"],
+  ["Alpha Score", "Apex Q's 0-100 summary of a stock across momentum, fundamentals, insider activity, congressional activity, sector, and news. It is one opinion, not a verdict from the market.", "AAPL"],
+  ["Conviction", "How strongly the signals agree with each other. Scattered signals mean low conviction even when the score is high.", "AAPL"],
+  ["Verdict", "The plain-English call: Approve, Watch, or Pass. It's the Alpha Score plus a risk overlay, not the score alone.", "MSFT"],
+  ["Risk overlay", "A check that can cap or downgrade a verdict regardless of how good the score looks. Good momentum should not be able to buy its way past a solvency problem.", "AAPL"],
+  ["Analyst target", "Where Wall Street analysts think the price is going. Worth watching for the direction it moves, not the number itself. Targets are famously optimistic.", "AAPL"],
+  ["Earnings surprise", "The gap between what the company reported and what analysts expected. The market usually reacts to the surprise, not the absolute number.", "AMZN"],
+  ["Confidence", "How much of the picture Apex Q actually has. Missing data, stale data, or a major macro event within 48 hours all lower it.", "AAPL"],
+  ["ETF", "A basket of many stocks trading under one ticker. Buying SPY means owning a slice of 500 companies at once.", "SPY"],
+  ["Diversification", "Not putting everything in one place. It doesn't raise your return; it reduces how much any single mistake can cost you.", "SPY"],
+  ["Relative strength", "Whether a stock is beating the market or just floating up with it. Rising with the tide is beta. Beating it is the part worth noticing.", "NVDA"],
+  ["Estimate revision", "When analysts raise or cut their forecasts. The direction of revisions has historically predicted returns better than the forecasts themselves.", "AAPL"],
+  ["Defense contract award", "A government contract awarded to a defense company. It is a real market signal, but Apex Q does not currently track contract awards as a data source.", ""],
+];
+
+function _learnBtn(sym, label){
+  if(!sym){ return ""; }
+  return "<button class=\"lnBtn\" onclick=\"go('" + esc(sym) + "');\">" + esc(label || ("See it in action: " + sym)) + "</button>";
+}
+
+/* --- 1. BASICS ------------------------------------------------------- */
+function learnBasics(){
+  var host = document.getElementById("learn-basics");
+  if(!host || _learnLoaded.basics){ return; }
+  _learnLoaded.basics = true;
+
+  var cards = [
+    {q: "What is a stock?", sym: "AAPL",
+     a: "A share of ownership in a company. Own one share of Apple and you own a (very small) slice of everything Apple makes and earns.",
+     live: function(d){ return "One share of AAPL costs " + _lnPx(d) + ". That buys you your slice."; }},
+    {q: "What is a PE ratio?", sym: "AAPL",
+     a: "How much you pay for $1 of the company's annual earnings. Lower can mean cheaper. Higher usually means the market expects growth to come.",
+     live: function(d){ return d.pe_ratio ? ("AAPL trades at a PE of " + esc(d.pe_ratio) + " — you're paying about $" + esc(d.pe_ratio) + " for each $1 Apple earns in a year.") : "PE data unavailable for AAPL right now."; }},
+    {q: "What is market cap?", sym: "MSFT",
+     a: "The total value of all shares added together. Bigger companies tend to move more slowly and survive bad years more easily.",
+     live: function(d){ return d.market_cap ? ("MSFT's market cap is " + esc(_lnCap(d.market_cap)) + ". That is what the market says the whole company is worth.") : "Market cap unavailable right now."; }},
+    {q: "What is a dividend?", sym: "KO",
+     a: "Cash the company pays out to shareholders, usually every quarter. You get paid for holding, whatever the price does.",
+     live: function(d){ return "Coca-Cola has paid a dividend for decades. Buy it at " + _lnPx(d) + " and the company sends you cash on a schedule, separate from any price move."; }},
+    {q: "What is an ETF?", sym: "SPY",
+     a: "A basket of many stocks in a single ticker. One purchase, hundreds of companies. It spreads out the risk of any one of them failing.",
+     live: function(d){ return "SPY holds the 500 largest US companies. At " + _lnPx(d) + " a share, you own a piece of all of them at once."; }}
+  ];
+
+  host.innerHTML = cards.map(function(c, i){
+    return "<div class=\"ic lnCard\" id=\"lnb" + i + "\">" +
+      "<div class=\"ih\"><div class=\"it\">" + esc(c.q) + "</div></div>" +
+      "<div class=\"itxt\">" + esc(c.a) + "</div>" +
+      "<div class=\"lnLive\" id=\"lnlive" + i + "\">Loading a live example…</div>" +
+      _learnBtn(c.sym, "See it in action: " + c.sym) + "</div>";
+  }).join("");
+
+  cards.forEach(function(c, i){
+    fetch(API + "/analyze?symbol=" + encodeURIComponent(c.sym))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var el = document.getElementById("lnlive" + i);
+        if(!el){ return; }
+        if(!d || d.error){ el.style.display = "none"; return; }
+        el.innerHTML = "<b>Live:</b> " + c.live(d);
+      })
+      .catch(function(){ var el = document.getElementById("lnlive" + i); if(el){ el.style.display = "none"; } });
+  });
+}
+function _lnPx(d){ return d && d.price ? ("$" + Number(d.price).toFixed(2)) : "its current price"; }
+function _lnCap(v){
+  var n = Number(v);
+  if(!n){ return "unavailable"; }
+  if(n >= 1e12){ return "$" + (n / 1e12).toFixed(2) + " trillion"; }
+  if(n >= 1e9){ return "$" + (n / 1e9).toFixed(1) + " billion"; }
+  return "$" + (n / 1e6).toFixed(0) + " million";
+}
+
+/* --- 2. LEARN FROM YOUR OWN REPORTS ---------------------------------- */
+// Reads the engine's ACTUAL breakdown out of the feature store, so the lesson is what the engine
+// really thought that day -- not a cleaned-up retelling.
+function learnReports(){
+  var host = document.getElementById("learn-reports");
+  if(!host || _learnLoaded.reports){ return; }
+  _learnLoaded.reports = true;
+  host.innerHTML = "<div class=\"ic\"><div class=\"itxt\">Loading your recent stocks…</div></div>";
+
+  fetch(API + "/api/recent-searches?limit=3")
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      var syms = (res && res.symbols) ? res.symbols : [];
+      if(!syms.length){ host.innerHTML = ""; return; }
+
+      var intro = res.is_sample
+        ? "<div class=\"ic\"><div class=\"itxt\">You haven't looked at a stock yet, so here's Apple as an example. Search any ticker and this section fills with your own.</div></div>"
+        : "";
+
+      host.innerHTML = intro + syms.map(function(s){
+        var head = res.is_sample
+          ? ("Here's what Apple's Alpha Score is actually saying.")
+          : ("You recently looked at " + esc(s.symbol) + ". Here's what the Alpha Score was really saying.");
+
+        if(s.alpha_score === null || s.alpha_score === undefined){
+          return "<div class=\"ic lnCard\"><div class=\"ih\"><div class=\"it\">" + esc(s.symbol) + "</div></div>" +
+            "<div class=\"itxt\">" + esc(head) + "</div>" +
+            "<div class=\"lnNote\">No stored breakdown for " + esc(s.symbol) + " yet. Pull the report and it'll appear here.</div>" +
+            _learnBtn(s.symbol, "Open the " + s.symbol + " report") + "</div>";
+        }
+
+        var rows = (s.breakdown || []).map(function(line){
+          var t = String(line);
+          var name = t.split(":")[0];
+          return "<div class=\"lnFactor\"><div class=\"lnFactorH\">" + esc(t) + "</div>" +
+            "<div class=\"lnFactorW\">" + esc(_lnExplain(name, t)) + "</div></div>";
+        }).join("");
+
+        return "<div class=\"ic lnCard\">" +
+          "<div class=\"ih\"><div class=\"it\">" + esc(s.symbol) + "</div>" +
+            "<div class=\"ibdg\">" + esc(s.alpha_score) + "/100</div></div>" +
+          "<div class=\"itxt\">" + esc(head) + "</div>" +
+          (rows || "<div class=\"lnNote\">No factor breakdown stored for this one.</div>") +
+          "<div class=\"lnNote\">A low score on one factor is information, not a verdict. Read what each line is actually claiming.</div>" +
+          _learnBtn(s.symbol, "Open the full " + s.symbol + " report") + "</div>";
+      }).join("");
+    })
+    .catch(function(){ host.innerHTML = ""; });
+}
+
+// Plain-English gloss for each factor line. The point is to defuse the reflex that a low number
+// means "bad stock" -- most of the time it means "this particular signal is quiet".
+function _lnExplain(name, full){
+  var n = String(name).toLowerCase();
+  var low = /\+0 pts|\+1 pts|\+2 pts|\+3 pts/.test(full);
+  if(n.indexOf("insider") >= 0){
+    return low
+      ? "The Insider score is low because no executives have bought shares recently. That doesn't mean the stock is bad — it means the people who run the company aren't putting their own money in right now."
+      : "Executives have been buying. They know the business better than anyone, and buying is the one insider move with a single obvious motive.";
+  }
+  if(n.indexOf("congress") >= 0){
+    return low
+      ? "Nobody in Congress has traded this recently. Congressional trades are disclosed 30-45 days late anyway, so their absence says very little."
+      : "Members of Congress have been trading this. Remember the disclosure lag: you're seeing something that already happened weeks ago.";
+  }
+  if(n.indexOf("technical") >= 0 || n.indexOf("momentum") >= 0){
+    return "This measures whether the stock is trending up over months and beating the market — not whether it happened to be green today.";
+  }
+  if(n.indexOf("fundamental") >= 0){
+    return "This looks at what you're paying versus what the company earns, and how much it has borrowed. Cheap and unlevered scores well.";
+  }
+  if(n.indexOf("news") >= 0){
+    return "Recent coverage, weighted by whether it's actually about this company. Quiet coverage is not the same as bad news.";
+  }
+  if(n.indexOf("sector") >= 0){
+    return "Whether the industry itself has a tailwind. A great company in a shrinking industry still fights uphill.";
+  }
+  return "One input among several. No single factor decides the call.";
+}
+
+/* --- 3. YOUR PORTFOLIO ----------------------------------------------- */
+function learnPortfolio(){
+  var host = document.getElementById("learn-portfolio");
+  if(!host || _learnLoaded.portfolio){ return; }
+  _learnLoaded.portfolio = true;
+
+  fetch(API + "/portfolio", {credentials: "include"})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var h = (d && d.holdings) ? d.holdings : [];
+      if(!h.length){
+        host.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Nothing here yet</div></div>" +
+          "<div class=\"itxt\">Add stocks to your portfolio or paper trade to unlock personalized lessons.</div>" +
+          "<button class=\"lnBtn\" onclick=\"showView('portfolio');\">Open portfolio</button></div>";
+        return;
+      }
+
+      // Concentration by sector, using whatever sector we have on each holding.
+      var bySec = {}, biggest = null, total = 0;
+      h.forEach(function(x){
+        var val = (Number(x.shares) || 0) * (Number(x.price || x.current_price || x.avg_cost) || 0);
+        total += val;
+        var sec = x.sector || "Unclassified";
+        bySec[sec] = (bySec[sec] || 0) + val;
+        if(!biggest || val > biggest.val){ biggest = {sym: x.symbol, val: val}; }
+      });
+      var top = Object.keys(bySec).sort(function(a, b){ return bySec[b] - bySec[a]; })[0];
+      var topPct = (total > 0 && top) ? Math.round(bySec[top] / total * 100) : 0;
+
+      var cards = [];
+
+      if(top && topPct >= 40){
+        cards.push("<div class=\"ic lnCard\"><div class=\"ih\"><div class=\"it\">You're concentrated in " + esc(top) + "</div>" +
+          "<div class=\"ibdg bp\">" + topPct + "%</div></div>" +
+          "<div class=\"itxt\">About " + topPct + "% of your portfolio sits in one sector. That's fine if it's deliberate. The risk is that sectors move together — when " + esc(top) + " has a bad quarter, most of your holdings have a bad quarter at the same time. Diversification doesn't raise your return; it limits how much any single mistake can cost you.</div></div>");
+      } else if(top){
+        cards.push("<div class=\"ic lnCard\"><div class=\"ih\"><div class=\"it\">Your sector mix</div></div>" +
+          "<div class=\"itxt\">Your largest sector is " + esc(top) + " at about " + topPct + "%. That's a reasonably spread position — no single industry can sink you on its own.</div></div>");
+      }
+
+      if(biggest && biggest.sym){
+        cards.push("<div class=\"ic lnCard\"><div class=\"ih\"><div class=\"it\">Your biggest holding is " + esc(biggest.sym) + "</div></div>" +
+          "<div class=\"itxt\">Start with what you're paying for what the company earns — the PE ratio — and how much it has borrowed. Then ask whether the business has a moat that keeps competitors out. Price alone tells you nothing; price relative to earnings tells you what you're being asked to believe.</div>" +
+          _learnBtn(biggest.sym, "Read the " + biggest.sym + " valuation"));
+      }
+
+      cards.push("<div class=\"ic lnCard\"><div class=\"ih\"><div class=\"it\">You hold " + h.length + " stock" + (h.length === 1 ? "" : "s") + "</div></div>" +
+        "<div class=\"itxt\">" + (h.length < 15
+          ? ("Most professionals hold 15 to 30 names. Below that, one bad outcome moves your whole portfolio. That isn't a rule you must follow — plenty of good investors concentrate deliberately — but concentration should be a choice, not an accident.")
+          : ("You're in the range most professionals use — 15 to 30 names. Past about 30, extra stocks stop reducing risk much and start making the portfolio hard to actually follow.")) + "</div></div>");
+
+      host.innerHTML = cards.join("");
+    })
+    .catch(function(){
+      host.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Nothing here yet</div></div>" +
+        "<div class=\"itxt\">Add stocks to your portfolio or paper trade to unlock personalized lessons.</div>" +
+        "<button class=\"lnBtn\" onclick=\"showView('portfolio');\">Open portfolio</button></div>";
+    });
+}
+
+/* --- 4. WHAT'S HAPPENING --------------------------------------------- */
+// Driven by the real economic calendar and the real congressional feed. When there's nothing
+// happening, it says so instead of inventing an event to teach against.
+function learnEvents(){
+  var host = document.getElementById("learn-events");
+  if(!host || _learnLoaded.events){ return; }
+  _learnLoaded.events = true;
+  host.innerHTML = "<div class=\"ic\"><div class=\"itxt\">Checking what's happening…</div></div>";
+  var cards = [];
+
+  var pEcon = fetch(API + "/api/economic-calendar?days_ahead=7&days_back=1")
+    .then(function(r){ return r.json(); })
+    .then(function(c){
+      var ev = (c && c.upcoming) ? c.upcoming.slice(0, 2) : [];
+      ev.forEach(function(e){
+        var when = e.days_out === 0 ? "today" : (e.days_out === 1 ? "tomorrow" : ("in " + e.days_out + " days"));
+        var lesson = "";
+        if(e.key === "FOMC"){
+          lesson = "Rate decisions reprice everything at once. When the Fed raises rates, safe government bonds start paying more — which makes risky stocks look relatively less attractive, and makes future profits worth less today. Companies that borrow heavily (real estate, utilities) feel it hardest. The press conference afterwards often moves markets more than the decision itself, because that's where the Fed hints at what comes next.";
+        } else if(e.key === "CPI"){
+          lesson = "Inflation is the rate your money loses purchasing power. It matters to your portfolio for one reason above all: it determines what the Fed does next. Hot inflation means rates stay high, which pressures stock prices. It also squeezes companies that can't pass higher costs to customers — watch margins, not just headlines.";
+        } else if(e.key === "NFP"){
+          lesson = "The jobs report is the cleanest monthly read on whether the economy is actually working. It cuts both ways: too weak and companies earn less; too strong and the Fed keeps rates high to cool things down. Markets don't want good news or bad news here — they want the number the Fed was expecting.";
+        } else if(e.key === "GDP"){
+          lesson = "GDP is the broadest measure of whether the economy grew or shrank. Cyclical businesses — industrials, materials, energy — live and die on it. Defensive businesses like utilities and staples barely notice.";
+        } else {
+          lesson = e.why || "";
+        }
+        cards.push("<div class=\"ic lnCard\"><div class=\"ih\"><div class=\"it\">" + esc(e.name) + " is " + esc(when) + "</div>" +
+          "<div class=\"ibdg " + (e.importance === "High" ? "br" : "by") + "\">" + esc(e.importance) + "</div></div>" +
+          "<div class=\"itxt\">" + esc(lesson) + "</div>" +
+          (e.url ? "<button class=\"lnBtn\" onclick=\"window.open('" + esc(e.url) + "','_blank','noopener');\">Read the official release</button>" : "") +
+          "</div>");
+      });
+    })
+    .catch(function(){});
+
+  var pCong = fetch(API + "/congress/insights")
+    .then(function(r){ return r.json(); })
+    .then(function(c){
+      var t = (c && (c.recent || c.trades || c.politicians)) || [];
+      if(!t.length){ return; }
+      var first = t[0] || {};
+      var sym = first.symbol || first.ticker || "";
+      cards.push("<div class=\"ic lnCard\"><div class=\"ih\"><div class=\"it\">How to read a congressional trade</div></div>" +
+        "<div class=\"itxt\">" + (sym ? ("A recent disclosure involves " + esc(sym) + ". ") : "") +
+        "Members of Congress must disclose trades under the STOCK Act — but they get 30 to 45 days to do it. So what you're reading is history, not a live tip. What it's genuinely useful for is pattern: a lawmaker who sits on the committee that regulates an industry, repeatedly buying inside that industry, is a signal worth noticing. A single trade rarely is.</div>" +
+        (sym ? _learnBtn(sym, "See " + sym) : "") +
+        "<button class=\"lnBtn\" onclick=\"showView('insights');\">Open the Congress feed</button></div>");
+    })
+    .catch(function(){});
+
+  Promise.all([pEcon, pCong]).then(function(){
+    if(!cards.length){
+      host.innerHTML = "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Quiet week</div></div>" +
+        "<div class=\"itxt\">No major macro events in the next seven days, and nothing notable in the government feeds. When something lands — a Fed meeting, an inflation print, a congressional disclosure — the lesson for it shows up here.</div></div>";
+      return;
+    }
+    host.innerHTML = cards.join("");
+  });
+}
+
+/* --- 5. GLOSSARY ------------------------------------------------------ */
+function learnGlossary(){
+  if(_learnLoaded.glossary){ return; }
+  _learnLoaded.glossary = true;
+  var box = document.getElementById("glosSearch");
+  function paint(q){
+    var list = document.getElementById("glosList");
+    if(!list){ return; }
+    var ql = (q || "").toLowerCase().trim();
+    var hits = GLOSSARY.filter(function(g){
+      return !ql || g[0].toLowerCase().indexOf(ql) >= 0 || g[1].toLowerCase().indexOf(ql) >= 0;
+    });
+    if(!hits.length){
+      list.innerHTML = "<div class=\"lnNote\">No term matches that. Try \"moat\", \"beta\", or \"insider\".</div>";
+      return;
+    }
+    list.innerHTML = hits.map(function(g){
+      return "<div class=\"glosItem\"><div class=\"glosT\">" + esc(g[0]) + "</div>" +
+        "<div class=\"glosD\">" + esc(g[1]) + "</div>" +
+        (g[2] ? "<button class=\"glosEx\" onclick=\"go('" + esc(g[2]) + "');\">See an example &rarr; " + esc(g[2]) + "</button>" : "") +
+        "</div>";
+    }).join("");
+  }
+  if(box){ box.addEventListener("input", function(){ paint(this.value); }); }
+  paint("");
+}
+
+/* --- chips + entry ---------------------------------------------------- */
+function learnShow(which){
+  var secs = document.querySelectorAll(".learnSec");
+  for(var i = 0; i < secs.length; i++){ secs[i].classList.remove("active"); }
+  var el = document.getElementById("learn-" + which);
+  if(el){ el.classList.add("active"); }
+  var chips = document.querySelectorAll("#learnChips .lens");
+  for(var j = 0; j < chips.length; j++){
+    chips[j].classList.toggle("active", chips[j].getAttribute("data-learn") === which);
+  }
+  if(which === "basics"){ learnBasics(); }
+  if(which === "reports"){ learnReports(); }
+  if(which === "portfolio"){ learnPortfolio(); }
+  if(which === "events"){ learnEvents(); }
+  if(which === "glossary"){ learnGlossary(); }
+}
+
+function initLearn(){
+  var chips = document.querySelectorAll("#learnChips .lens");
+  for(var i = 0; i < chips.length; i++){
+    if(chips[i]._wired){ continue; }
+    chips[i]._wired = true;
+    chips[i].addEventListener("click", function(){
+      learnShow(this.getAttribute("data-learn"));
+    });
+  }
+  learnShow("basics");
+}
+window.initLearn = initLearn;
+
 </script>
 </body>
 </html>
