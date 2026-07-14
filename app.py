@@ -9504,7 +9504,27 @@ def tts_route():
         # stable name first, then known preview names, keeps the neural voice working across those
         # changes. Voice is Achernar, a warmer female voice than the default.
         voice = os.environ.get("TTS_VOICE", "Achernar").strip() or "Achernar"
-        models = ["gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts", "gemini-2.0-flash-exp"]
+        # Model list, newest first. The 2.5 preview names this used to call have been RETIRED by
+        # Google -- which is precisely the failure the comment above predicted, and precisely why
+        # the site fell back to the device's robotic voice. gemini-2.0-flash-exp was never a TTS
+        # model at all and has been dropped from the chain.
+        # Override with TTS_MODEL in Railway when Google renames things again.
+        models = [m.strip() for m in os.environ.get(
+            "TTS_MODEL",
+            "gemini-3.1-flash-tts-preview,gemini-2.5-flash-preview-tts,gemini-2.5-pro-preview-tts"
+        ).split(",") if m.strip()]
+
+        # Gemini TTS is INSTRUCTION-DRIVEN: it is a language model that speaks, not a pipe that
+        # reads. Handed raw text with no directive it can return nothing at all. Telling it how to
+        # speak is also how we control the delivery -- this is what makes it not sound like a robot.
+        style = os.environ.get(
+            "TTS_STYLE",
+            "Read the following aloud in a warm, natural, conversational voice, at an unhurried pace, "
+            "like a knowledgeable friend explaining it across a table. Do not sound like a news anchor "
+            "or a robot. Do not add any words of your own.",
+        )
+        prompt = style + "\n\n" + text
+
         r = None
         used = None
         for m in models:
@@ -9512,7 +9532,7 @@ def tts_route():
                 r = requests.post(
                     "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent?key=" + key,
                     json={
-                        "contents": [{"parts": [{"text": text}]}],
+                        "contents": [{"parts": [{"text": prompt}]}],
                         "generationConfig": {
                             "responseModalities": ["AUDIO"],
                             "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
@@ -11733,6 +11753,45 @@ def api_recent_searches():
         conn.close()
 
     return jsonify({"symbols": out, "is_sample": fallback})
+
+
+@app.route("/api/tts-status")
+def api_tts_status():
+    """Is the neural voice actually working? Hit this instead of guessing from the sound.
+
+    Returns which model answered, or the exact error Google sent back. The whole reason the voice
+    regressed to a robot is that a model rename failed SILENTLY -- this makes that loud.
+    """
+    key = os.environ.get("GEMINI_KEY", "").strip()
+    if not key:
+        return jsonify({"ok": False, "reason": "GEMINI_KEY is not set in Railway"}), 200
+    voice = os.environ.get("TTS_VOICE", "Achernar").strip() or "Achernar"
+    models = [m.strip() for m in os.environ.get(
+        "TTS_MODEL",
+        "gemini-3.1-flash-tts-preview,gemini-2.5-flash-preview-tts,gemini-2.5-pro-preview-tts"
+    ).split(",") if m.strip()]
+    tried = []
+    for m in models:
+        try:
+            r = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent?key=" + key,
+                json={
+                    "contents": [{"parts": [{"text": "Say: Apex Q voice check."}]}],
+                    "generationConfig": {
+                        "responseModalities": ["AUDIO"],
+                        "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+                    },
+                },
+                timeout=30,
+            )
+            if r.status_code == 200:
+                return jsonify({"ok": True, "model": m, "voice": voice, "tried": tried})
+            tried.append({"model": m, "status": r.status_code, "error": r.text[:220]})
+        except Exception as e:
+            tried.append({"model": m, "error": str(e)[:220]})
+    return jsonify({"ok": False, "voice": voice, "tried": tried,
+                    "hint": "Every model failed. Set TTS_MODEL in Railway to a model name from "
+                            "ai.google.dev/gemini-api/docs/speech-generation"}), 200
 
 
 @app.route("/api/economic-calendar")
