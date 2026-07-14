@@ -364,6 +364,14 @@ def ensure_db():
             "UNIQUE (user_id, symbol))"
         )
         cur.execute(
+            "CREATE TABLE IF NOT EXISTS recent_searches ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "symbol TEXT NOT NULL,"
+            "viewed_at TIMESTAMP DEFAULT NOW(),"
+            "UNIQUE (user_id, symbol))"
+        )
+        cur.execute(
             "CREATE TABLE IF NOT EXISTS verdict_history ("
             "id SERIAL PRIMARY KEY,"
             "user_id INTEGER NOT NULL,"
@@ -4740,9 +4748,25 @@ def compute_full_report(symbol):
         # Macro overlay. A confirmed High-importance event inside 48 hours knocks confidence down one
         # level and raises a flag, because on those days the whole market can move regardless of what
         # this one stock's signals say. Estimated dates are excluded on purpose -- see econ module.
+        # $100M+ DoD awards mapped to this ticker. Never allowed to break a report.
+        _dod_awards = []
+        try:
+            _dod_awards = dod_contracts_for(symbol)
+        except Exception as _dae:
+            logger.warning("dod lookup skipped for %s: %s" % (symbol, _dae))
+
         _econ_event = None
         try:
             confidence, flags, _econ_event = apply_econ_overlay(confidence, flags, info.get("sector", ""))
+            # When a macro event is imminent, its coverage joins the news feed. These items carry the
+            # same shape as every other article, so the existing renderer and modal make them
+            # clickable with no frontend change -- the user can read WHY the market is on edge.
+            if _econ_event:
+                _mn = build_macro_news(_econ_event["key"])
+                if _mn:
+                    _econ_event = dict(_econ_event)
+                    _econ_event["articles"] = _mn
+                    news = _mn + [n for n in (news or []) if n.get("url") not in {a.get("url") for a in _mn}]
         except Exception as _ee:
             logger.warning("econ overlay skipped for %s: %s" % (symbol, _ee))
 
@@ -5075,6 +5099,7 @@ def compute_full_report(symbol):
             "confidence": confidence,
             "flags": flags,
             "economic_event": _econ_event,
+            "dod_contracts": _dod_awards,
             "fmp": fmp,
             "insider_sell_value": insider_sell_value,
             "holder_sell_value": holder_sell_value,
@@ -5109,6 +5134,7 @@ def compute_full_report(symbol):
         # cron. Wrapped tightly: a snapshot failure must never take down a report.
         try:
             snap_universe_add(symbol)
+            record_recent_search(symbol)
             record_analyst_snapshot(symbol, info)
             # Point-in-time feature store: record what the engine knew and decided TODAY, before the
             # outcome exists. Labels get attached later by /cron/label-outcomes. This is the row a
@@ -11211,6 +11237,9 @@ ECON_EVENT_SPECS = {
         "name": "FOMC Interest Rate Decision",
         "importance": "High",
         "time_et": "2:00 PM ET",
+        "url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "source_name": "Federal Reserve",
+        "keywords": ["fed", "fomc", "interest rate", "rate decision", "powell", "warsh", "federal reserve", "rate cut", "rate hike"],
         "why": "The Fed sets the price of money. A surprise on rates repositions every asset class at once, and the press conference half an hour later often moves markets more than the decision itself.",
         "sectors": ["Financial Services", "Financials", "Real Estate", "Utilities", "Technology"],
     },
@@ -11218,6 +11247,9 @@ ECON_EVENT_SPECS = {
         "name": "CPI Inflation Report",
         "importance": "High",
         "time_et": "8:30 AM ET",
+        "url": "https://www.bls.gov/cpi/",
+        "source_name": "Bureau of Labor Statistics",
+        "keywords": ["cpi", "inflation", "consumer price", "core inflation", "price index"],
         "why": "The most-watched inflation print. It lands an hour before the open, so the first repricing happens in thin premarket liquidity, and it drives what the market expects the Fed to do next.",
         "sectors": ["Consumer Cyclical", "Consumer Discretionary", "Consumer Defensive", "Consumer Staples", "Real Estate", "Utilities"],
     },
@@ -11225,6 +11257,9 @@ ECON_EVENT_SPECS = {
         "name": "Non-Farm Payrolls / Employment Situation",
         "importance": "High",
         "time_et": "8:30 AM ET",
+        "url": "https://www.bls.gov/news.release/empsit.toc.htm",
+        "source_name": "Bureau of Labor Statistics",
+        "keywords": ["payroll", "jobs report", "nonfarm", "non-farm", "unemployment", "employment", "labor market", "hiring"],
         "why": "The monthly jobs report. A hot number can push rate-cut expectations out; a cold one can pull them forward. It moves the whole market, not one sector.",
         "sectors": [],  # broad market
     },
@@ -11232,6 +11267,9 @@ ECON_EVENT_SPECS = {
         "name": "GDP Report",
         "importance": "High",
         "time_et": "8:30 AM ET",
+        "url": "https://www.bea.gov/data/gdp/gross-domestic-product",
+        "source_name": "Bureau of Economic Analysis",
+        "keywords": ["gdp", "gross domestic product", "economic growth", "recession", "economy grew", "economy shrank"],
         "why": "The broadest read on whether the economy is growing or contracting. Cyclical and industrial names carry the most sensitivity to it.",
         "sectors": ["Industrials", "Basic Materials", "Energy", "Consumer Cyclical"],
     },
@@ -11239,6 +11277,9 @@ ECON_EVENT_SPECS = {
         "name": "PPI Producer Prices",
         "importance": "Medium",
         "time_et": "8:30 AM ET",
+        "url": "https://www.bls.gov/ppi/",
+        "source_name": "Bureau of Labor Statistics",
+        "keywords": ["ppi", "producer price", "wholesale price", "input costs", "factory prices"],
         "why": "Input-cost inflation before it reaches the shelf. It often previews the direction of CPI and squeezes margins for companies that cannot pass costs on.",
         "sectors": ["Industrials", "Basic Materials", "Consumer Defensive", "Consumer Staples"],
     },
@@ -11246,6 +11287,9 @@ ECON_EVENT_SPECS = {
         "name": "Retail Sales",
         "importance": "Medium",
         "time_et": "8:30 AM ET",
+        "url": "https://www.census.gov/retail/index.html",
+        "source_name": "U.S. Census Bureau",
+        "keywords": ["retail sales", "consumer spending", "shoppers", "holiday spending"],
         "why": "Whether households are still spending. It is the cleanest monthly read on consumer strength.",
         "sectors": ["Consumer Cyclical", "Consumer Discretionary", "Consumer Defensive", "Consumer Staples"],
     },
@@ -11253,6 +11297,9 @@ ECON_EVENT_SPECS = {
         "name": "Initial Jobless Claims",
         "importance": "Medium",
         "time_et": "8:30 AM ET",
+        "url": "https://www.dol.gov/ui/data.pdf",
+        "source_name": "Department of Labor",
+        "keywords": ["jobless claims", "unemployment claims", "initial claims", "layoffs"],
         "why": "A weekly pulse on layoffs. One print rarely matters; a trend does, and it is the earliest signal the labour market is cracking.",
         "sectors": [],
     },
@@ -11444,6 +11491,8 @@ def build_economic_calendar(days_ahead=7, days_back=3):
             "estimated_date": bool(is_est),
             "previous": prev,
             "forecast": None,  # no free forecast source; left honest rather than invented
+            "url": spec.get("url"),
+            "source_name": spec.get("source_name"),
         })
 
     upcoming = [e for e in events if not e["is_past"]]
@@ -11519,6 +11568,173 @@ def apply_econ_overlay(confidence, flags, sector):
         return confidence, flags, None
 
 
+def build_macro_news(event_key, limit=4):
+    """Coverage of a macro event, reusing the Finnhub general-news feed we already pay for.
+
+    Filtered by the event's keywords so a CPI print surfaces inflation coverage, not whatever
+    happened to be on the wire. Returns the same item shape as build_news(), so these flow through
+    the existing news renderer and modal untouched -- they are clickable for free.
+    """
+    spec = ECON_EVENT_SPECS.get(event_key)
+    if not spec or not FINNHUB_KEY:
+        return []
+    ckey = "macronews_" + event_key
+    cached = CACHE.get(ckey)
+    if cached and (time.time() - cached[1]) < 1800:
+        return cached[0]
+
+    kws = [k.lower() for k in spec.get("keywords", [])]
+    out = []
+    try:
+        r = requests.get("https://finnhub.io/api/v1/news?category=general&token=%s" % FINNHUB_KEY, timeout=8)
+        if r.status_code == 200:
+            arts = [n for n in r.json() if n.get("headline")]
+            arts.sort(key=lambda a: a.get("datetime", 0), reverse=True)
+            for n in arts:
+                blob = (str(n.get("headline", "")) + " " + str(n.get("summary", ""))).lower()
+                if not any(k in blob for k in kws):
+                    continue
+                out.append({
+                    "headline": clean_text(n["headline"]),
+                    "source": clean_text(n.get("source", "Market News")) + " \u00b7 Macro",
+                    "summary": _clean_summary(n.get("summary", ""), n.get("url", "")),
+                    "summary_long": _full_summary(n.get("summary", ""), n.get("url", "")),
+                    "url": n.get("url", ""),
+                    "ts": _news_ts(n.get("datetime", 0)),
+                    "is_macro": True,
+                    "macro_event": spec["name"],
+                })
+                if len(out) >= limit:
+                    break
+    except Exception as e:
+        logger.warning("build_macro_news %s: %s" % (event_key, e))
+
+    CACHE[ckey] = (out, time.time())
+    return out
+
+
+@app.route("/api/macro-news")
+def api_macro_news():
+    key = (request.args.get("event") or "").upper()
+    if key not in ECON_EVENT_SPECS:
+        return jsonify({"error": "unknown event", "articles": []}), 400
+    return jsonify({
+        "event": ECON_EVENT_SPECS[key]["name"],
+        "official_url": ECON_EVENT_SPECS[key].get("url"),
+        "official_source": ECON_EVENT_SPECS[key].get("source_name"),
+        "articles": build_macro_news(key),
+    })
+
+
+# =========================================================================== #
+# LEARN LAYER
+#
+# The Learn tab teaches through the stocks a user is already looking at, so it
+# needs to know what those were. Logged-in users get a durable row per symbol;
+# logged-out users get the same thing in the signed session cookie, so the tab
+# works before anyone makes an account.
+#
+# The breakdown shown in Learn is not recomputed -- it is read back out of the
+# feature store, which means the lesson a user reads is literally the engine's
+# own reasoning from the day they looked. If the score was wrong, the lesson
+# says what the engine actually thought, not a tidied-up version.
+# =========================================================================== #
+
+def record_recent_search(symbol):
+    """Remember that this user just looked at this symbol. Never raises."""
+    if not symbol:
+        return
+    sym = symbol.upper()
+    try:
+        recent = [x for x in (session.get("recent_searches") or []) if x != sym]
+        recent.insert(0, sym)
+        session["recent_searches"] = recent[:10]
+    except Exception:
+        pass
+
+    u = current_user()
+    if not u:
+        return
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO recent_searches (user_id, symbol, viewed_at) VALUES (%s, %s, NOW()) "
+            "ON CONFLICT (user_id, symbol) DO UPDATE SET viewed_at = NOW()",
+            (u["id"], sym),
+        )
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.warning("record_recent_search %s: %s" % (sym, e))
+    finally:
+        conn.close()
+
+
+@app.route("/api/recent-searches")
+def api_recent_searches():
+    """Last few symbols this user looked at, each with the engine's own reasoning from that day.
+
+    Falls back to AAPL so the Learn tab always has something real to teach with.
+    """
+    try:
+        limit = max(1, min(int(request.args.get("limit", 3)), 10))
+    except Exception:
+        limit = 3
+
+    symbols = []
+    u = current_user()
+    if u:
+        conn = get_db()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT symbol FROM recent_searches WHERE user_id=%s "
+                    "ORDER BY viewed_at DESC LIMIT %s", (u["id"], limit))
+                symbols = [r[0] for r in (cur.fetchall() or [])]
+                cur.close()
+            except Exception as e:
+                logger.warning("api_recent_searches: %s" % e)
+            finally:
+                conn.close()
+    if not symbols:
+        symbols = (session.get("recent_searches") or [])[:limit]
+
+    fallback = not symbols
+    if fallback:
+        symbols = ["AAPL"]
+
+    out = []
+    conn = get_db()
+    for sym in symbols:
+        row = {"symbol": sym, "alpha_score": None, "verdict": None, "breakdown": [], "as_of": None}
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT alpha_score, verdict, features, snap_date FROM feature_snapshots "
+                    "WHERE symbol=%s ORDER BY snap_date DESC LIMIT 1", (sym,))
+                r = cur.fetchone()
+                cur.close()
+                if r:
+                    row["alpha_score"] = r[0]
+                    row["verdict"] = r[1]
+                    feats = r[2] or {}
+                    if isinstance(feats, dict):
+                        row["breakdown"] = feats.get("alpha_breakdown") or []
+                    row["as_of"] = str(r[3]) if r[3] else None
+            except Exception as e:
+                logger.warning("recent-searches lookup %s: %s" % (sym, e))
+        out.append(row)
+    if conn:
+        conn.close()
+
+    return jsonify({"symbols": out, "is_sample": fallback})
+
+
 @app.route("/api/economic-calendar")
 def api_economic_calendar():
     try:
@@ -11534,6 +11750,308 @@ def api_economic_calendar():
     except Exception as e:
         logger.error("api_economic_calendar: %s" % e)
         return jsonify({"error": str(e), "events": [], "upcoming": []}), 500
+
+
+# =========================================================================== #
+# DoD CONTRACT TRACKER — app integration
+#
+# The engine lives in dod_contracts.py (a separate file in the repo, same
+# pattern as sec_edgar_pipeline). Imported lazily and defensively: if that file
+# is missing, these routes return 503 and NOTHING ELSE IN THE APP BREAKS.
+# =========================================================================== #
+
+_DOD = None
+_DOD_IMPORT_ERROR = None
+try:
+    import dod_contracts as _DOD
+except Exception as _de:
+    _DOD_IMPORT_ERROR = str(_de)
+    logger.warning("dod_contracts module not available: %s" % _de)
+
+
+def _dod_ready():
+    return _DOD is not None
+
+
+def _dod_market_cap(ticker):
+    """Market cap for the pure-play ratio. Cached 6h -- a contract's signal doesn't
+    hinge on intraday cap moves, and this runs across hundreds of rows."""
+    ckey = "dodcap_" + str(ticker)
+    c = CACHE.get(ckey)
+    if c and (time.time() - c[1]) < 21600:
+        return c[0]
+    mc = None
+    try:
+        mc = (yf.Ticker(ticker).info or {}).get("marketCap")
+    except Exception:
+        mc = None
+    CACHE[ckey] = (mc, time.time())
+    return mc
+
+
+def dod_label_impact(max_rows=200):
+    """Attach realized outcomes to contract announcements.
+
+    Same point-in-time rule as the feature store: every price used is strictly AFTER
+    announced_date. That is what will let you say "sole-source awards to sub-$10B caps
+    returned X% excess over five days" and have it be TRUE rather than hindsight.
+    """
+    if not _dod_ready():
+        return {"error": "dod module unavailable"}
+    started = time.time()
+    out = {"labeled": 0, "symbols": 0, "errors": 0}
+    conn = get_db()
+    if not conn:
+        return {"error": "no database"}
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT ticker FROM historical_stock_impact "
+            "WHERE labeled_at IS NULL AND announced_date <= CURRENT_DATE - 8 LIMIT %s",
+            (max(1, max_rows // 5),))
+        tickers = [r[0] for r in (cur.fetchall() or [])]
+        cur.close()
+    except Exception as e:
+        conn.close()
+        return {"error": str(e)}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    if not tickers:
+        return out
+
+    bench = _fs_closes(_FS_BENCH)
+    bmap, bdates = dict(bench), [d for d, _ in bench]
+
+    def fwd(cmap, cdates, start, n):
+        fut = [i for i, d in enumerate(cdates) if d > start]
+        if len(fut) < n:
+            return None
+        return cmap[cdates[fut[n - 1]]]
+
+    for t in tickers:
+        out["symbols"] += 1
+        closes = _fs_closes(t)
+        if len(closes) < 10:
+            out["errors"] += 1
+            continue
+        cmap, cdates = dict(closes), [d for d, _ in closes]
+
+        conn = get_db()
+        if not conn:
+            break
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, announced_date FROM historical_stock_impact "
+                "WHERE ticker=%s AND labeled_at IS NULL AND announced_date <= CURRENT_DATE - 8",
+                (t,))
+            for rid, adate in (cur.fetchall() or []):
+                prior = [d for d in cdates if d <= adate]
+                if not prior:
+                    continue
+                base = cmap[prior[-1]]
+                if not base:
+                    continue
+
+                r1 = fwd(cmap, cdates, adate, 1)
+                r5 = fwd(cmap, cdates, adate, 5)
+                r20 = fwd(cmap, cdates, adate, 20)
+                pct = lambda p: ((p - base) / base * 100.0) if p else None
+
+                nxt = [i for i, d in enumerate(cdates) if d > adate][:5]
+                hi = max((cmap[cdates[i]] for i in nxt), default=None)
+                mx = ((hi - base) / base * 100.0) if hi else None
+
+                bret = None
+                if bdates:
+                    bp = [d for d in bdates if d <= adate]
+                    bf = fwd(bmap, bdates, adate, 5)
+                    if bp and bf and bmap[bp[-1]]:
+                        bret = (bf - bmap[bp[-1]]) / bmap[bp[-1]] * 100.0
+
+                exc = (pct(r5) - bret) if (pct(r5) is not None and bret is not None) else None
+
+                cur.execute(
+                    "UPDATE historical_stock_impact SET price_at_announce=%s, ret_1d=%s, ret_5d=%s,"
+                    " ret_20d=%s, max_move_5d=%s, bench_ret_5d=%s, excess_ret_5d=%s,"
+                    " labeled_at=CASE WHEN %s THEN NOW() ELSE NULL END WHERE id=%s",
+                    (base, pct(r1), pct(r5), pct(r20), mx, bret, exc,
+                     pct(r20) is not None, rid))
+                out["labeled"] += 1
+            conn.commit()
+            cur.close()
+        except Exception as e:
+            out["errors"] += 1
+            logger.warning("dod_label_impact %s: %s" % (t, e))
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            conn.close()
+        time.sleep(0.2)
+
+    out["elapsed_sec"] = round(time.time() - started, 1)
+    return out
+
+
+def dod_contracts_for(symbol, limit=5):
+    """Recent $100M+ awards mapped to this ticker. [] when there are none."""
+    if not _dod_ready() or not symbol:
+        return []
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT announced_date, recipient_name, headline_amount, award_type, is_idiq,"
+            " is_sole_source, is_pure_play, pure_play_ratio, signal_score, signal_note,"
+            " branch, source_url, description "
+            "FROM dod_contracts WHERE ticker=%s AND needs_review=FALSE "
+            "ORDER BY announced_date DESC, headline_amount DESC LIMIT %s",
+            (symbol.upper(), limit))
+        rows = []
+        for r in (cur.fetchall() or []):
+            rows.append({
+                "date": str(r[0]), "recipient": r[1], "amount": float(r[2] or 0),
+                "award_type": r[3], "is_idiq": bool(r[4]), "is_sole_source": bool(r[5]),
+                "is_pure_play": bool(r[6]),
+                "pct_of_market_cap": round(float(r[7]) * 100, 1) if r[7] else None,
+                "signal_score": r[8], "signal_note": r[9], "branch": r[10],
+                "url": r[11], "description": (r[12] or "")[:300],
+            })
+        cur.close()
+        return rows
+    except Exception as e:
+        logger.warning("dod_contracts_for %s: %s" % (symbol, e))
+        return []
+    finally:
+        conn.close()
+
+
+@app.route("/cron/dod-contracts")
+def cron_dod_contracts():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    if not _dod_ready():
+        return jsonify({"error": "dod_contracts.py not deployed", "detail": _DOD_IMPORT_ERROR}), 503
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        return jsonify(_DOD.run_dod_pipeline(conn, market_cap_lookup=_dod_market_cap))
+    except Exception as e:
+        logger.error("cron_dod_contracts: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/cron/dod-exhibit21")
+def cron_dod_exhibit21():
+    """Harvest Exhibit 21 subsidiary lists, then re-resolve anything still unmapped.
+
+    Run WEEKLY, not hourly -- 10-Ks are annual, and the SEC will block an IP that hammers them.
+    """
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    if not _dod_ready():
+        return jsonify({"error": "dod_contracts.py not deployed"}), 503
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        harvest = _DOD.harvest_exhibit21(conn, limit=int(request.args.get("limit", 40)))
+        backfill = _DOD.backfill_unresolved(conn)
+        return jsonify({"harvest": harvest, "backfill": backfill})
+    except Exception as e:
+        logger.error("cron_dod_exhibit21: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/cron/dod-label-impact")
+def cron_dod_label_impact():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    return jsonify(dod_label_impact())
+
+
+@app.route("/api/dod-contracts")
+def api_dod_contracts():
+    """The feed. Defaults to the highest-signal recent awards, not merely the biggest."""
+    if not _dod_ready():
+        return jsonify({"error": "dod_contracts.py not deployed", "contracts": []}), 503
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database", "contracts": []}), 503
+    try:
+        days = max(1, min(int(request.args.get("days", 30)), 365))
+        pure_only = request.args.get("pure_play") == "1"
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT announced_date, ticker, parent_name, recipient_name, headline_amount,"
+            " award_type, is_idiq, is_sole_source, is_pure_play, pure_play_ratio,"
+            " signal_score, signal_note, branch, source_url "
+            "FROM dod_contracts "
+            "WHERE announced_date >= CURRENT_DATE - %s AND needs_review = FALSE "
+            + ("AND is_pure_play = TRUE " if pure_only else "") +
+            "ORDER BY signal_score DESC, headline_amount DESC LIMIT 50",
+            (days,))
+        out = []
+        for r in (cur.fetchall() or []):
+            out.append({
+                "date": str(r[0]), "ticker": r[1], "company": r[2], "recipient": r[3],
+                "amount": float(r[4] or 0), "award_type": r[5], "is_idiq": bool(r[6]),
+                "is_sole_source": bool(r[7]), "is_pure_play": bool(r[8]),
+                "pct_of_market_cap": round(float(r[9]) * 100, 1) if r[9] else None,
+                "signal_score": r[10], "signal_note": r[11], "branch": r[12], "url": r[13],
+            })
+        cur.execute("SELECT COUNT(*) FROM dod_contracts WHERE needs_review")
+        review = (cur.fetchone() or [0])[0]
+        cur.close()
+        return jsonify({"contracts": out, "value_floor": 100000000,
+                        "unresolved_awaiting_review": review})
+    except Exception as e:
+        return jsonify({"error": str(e), "contracts": []}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/dod-contracts/<symbol>")
+def api_dod_contracts_symbol(symbol):
+    return jsonify({"symbol": symbol.upper(), "contracts": dod_contracts_for(symbol)})
+
+
+@app.route("/api/dod-review-queue")
+def api_dod_review_queue():
+    """Contracts we could not confidently map to a ticker. This is an OPERATIONAL SURFACE,
+    not a nice-to-have: entity resolution cannot be fully automated, and a wrong ticker on a
+    $100M headline is the one error that would genuinely damage the product."""
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, announced_date, recipient_name, headline_amount, resolution_conf "
+            "FROM dod_contracts WHERE needs_review ORDER BY headline_amount DESC LIMIT 100")
+        rows = [{"id": r[0], "date": str(r[1]), "recipient": r[2],
+                 "amount": float(r[3] or 0), "confidence": r[4]} for r in (cur.fetchall() or [])]
+        cur.close()
+        return jsonify({"queue": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
