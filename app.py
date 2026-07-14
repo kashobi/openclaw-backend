@@ -4758,6 +4758,13 @@ def compute_full_report(symbol):
         except Exception as _dae:
             logger.warning("dod lookup skipped for %s: %s" % (symbol, _dae))
 
+        # Earnings block. Never allowed to break a report.
+        _earnings_block = None
+        try:
+            _earnings_block = earnings_for_report(symbol)
+        except Exception as _eae:
+            logger.warning("earnings lookup skipped for %s: %s" % (symbol, _eae))
+
         # New signal layers: 13D activists, SEC comment letters, LD-1 lobbying, clinical trials.
         # Each is independently guarded -- one bad table must never take down a report.
         _activist, _letters, _ld1, _trials = [], [], [], []
@@ -5170,6 +5177,7 @@ def compute_full_report(symbol):
             "flags": flags,
             "economic_event": _econ_event,
             "dod_contracts": _dod_awards,
+            "earnings": _earnings_block,
             "activist": _activist,
             "comment_letters": _letters,
             "lobbying_registrations": _ld1,
@@ -13374,6 +13382,255 @@ def api_convergence():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+# =========================================================================== #
+# EARNINGS INTELLIGENCE — app integration
+#
+# The engine lives in earnings_pipeline.py. Imported defensively: if that file
+# is missing, the earnings routes return 503 and nothing else in the app breaks.
+#
+# ARCHITECTURE NOTE THAT MATTERS FOR COST:
+#
+#   The RELEASE is ingested from the SEC 8-K (Item 2.02, press release attached
+#   as EX-99.1). That lands on EDGAR within MINUTES of the release crossing --
+#   often before the wires carry it. It is free, authoritative, public domain.
+#
+#   The TRANSCRIPT is enrichment, not the foundation. Real-time streaming
+#   transcript feeds cost thousands a month. This module is fully functional
+#   with zero paid data; a transcript deepens the analysis when one exists and
+#   its absence never blocks anything.
+#
+#   Set LIVE_TRANSCRIPT_PROVIDER later, if and when the budget justifies it.
+# =========================================================================== #
+
+_EARN = None
+_EARN_READY = False
+try:
+    import earnings_pipeline as _EARN
+    _EARN_READY = True
+except Exception as _ee2:
+    logger.warning("earnings_pipeline not available: %s" % _ee2)
+
+
+def _earn_llm(prompt):
+    """LLM hook for tone/theme analysis. Uses whichever model is already configured."""
+    try:
+        key = os.environ.get("GEMINI_KEY", "").strip()
+        if not key:
+            return None
+        r = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + key,
+            json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=45)
+        if r.status_code != 200:
+            return None
+        return (((r.json().get("candidates") or [{}])[0].get("content") or {})
+                .get("parts") or [{}])[0].get("text")
+    except Exception as e:
+        logger.warning("_earn_llm: %s" % e)
+        return None
+
+
+def _earn_cik(symbol):
+    if not _dod_ready():
+        return None
+    try:
+        return (_DOD.sec_ticker_to_cik() or {}).get(str(symbol).upper())
+    except Exception:
+        return None
+
+
+def run_earnings_cycle(conn, symbols=None, max_symbols=60):
+    """Advance every tracked event through the state machine.
+
+    Each transition is guarded by can_transition(), and each stage writes ONE immutable feature
+    row. A stage is never rewritten -- which is what makes a later backtest honest rather than
+    merely well-intentioned.
+    """
+    started = time.time()
+    out = {"scheduled": 0, "briefed": 0, "released": 0, "analyzed": 0, "errors": 0}
+    if not _EARN_READY:
+        return {"error": "earnings_pipeline not deployed"}
+
+    _EARN.earnings_create_tables(conn) if hasattr(_EARN, "earnings_create_tables") else None
+
+    if not symbols:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol FROM snapshot_universe WHERE active "
+                    "ORDER BY hits DESC LIMIT %s", (max_symbols,))
+        symbols = [r[0] for r in (cur.fetchall() or [])]
+        cur.close()
+
+    fmp = os.environ.get("FMP_KEY", "").strip()
+
+    for sym in symbols:
+        try:
+            # 1. CALENDAR -> SCHEDULED
+            cal = _EARN.fetch_earnings_calendar(sym, fmp_key=fmp)
+            if cal:
+                out["scheduled"] += 1
+
+            # 2. PRE_BRIEF at T-5d. Frozen the moment it is written.
+            #    Everything after this is forbidden from touching it.
+            hist = _EARN.past_quarters(conn, sym, n=8)
+            ev = _EARN.earnings_for(conn, sym)
+            if ev and ev.get("state") == "SCHEDULED":
+                # BUGFIX: this read ev["days_until"] and ev["id"], neither of which
+                # earnings_for() returns -- it returns countdown_seconds and event_id. The result
+                # was that `days` was always None, the branch never fired, and the pre-earnings
+                # brief was NEVER BUILT for any stock. Silent: no error, no log, just nothing.
+                secs = ev.get("countdown_seconds")
+                days = (secs / 86400.0) if secs is not None else None
+                if days is not None and 0 <= days <= 5 and ev.get("event_id"):
+                    brief = _EARN.build_pre_brief(ev, hist)
+                    _EARN.log_features(conn, ev["event_id"], sym, "PRE", brief)
+                    out["briefed"] += 1
+
+            # 3. RELEASE. The 8-K is the real-time source, and it is free.
+            if ev and ev.get("state") in ("PRE_BRIEF", "AWAITING_RELEASE"):
+                cik = _earn_cik(sym)
+                if cik and _dod_ready():
+                    rel = _EARN.fetch_8k_release(sym, cik, _DOD._sec_get)
+                    if rel:
+                        _EARN.log_features(conn, ev["id"], sym, "RELEASE", rel)
+                        out["released"] += 1
+
+            # 4. TRANSCRIPT + ANALYSIS. Optional. Missing transcript is a normal state.
+            ev = _EARN.earnings_for(conn, sym)
+            if ev and ev.get("state") == "RELEASE_PARSED":
+                try:
+                    prov = _EARN.get_transcript_provider()
+                    txt = prov.fetch(sym) if prov else None
+                    if txt:
+                        nlp = _EARN.analyze_transcript(txt, _earn_llm)
+                        _EARN.log_features(conn, ev["id"], sym, "CALL", nlp or {})
+                except Exception as te:
+                    logger.info("no transcript for %s: %s" % (sym, te))
+
+                sc = _EARN.score_event(ev)
+                _EARN.log_features(conn, ev["id"], sym, "POST", sc)
+                out["analyzed"] += 1
+
+            time.sleep(0.25)
+        except Exception as e:
+            out["errors"] += 1
+            logger.warning("earnings cycle %s: %s" % (sym, e))
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    out["elapsed_sec"] = round(time.time() - started, 1)
+    logger.info("earnings cycle: %s" % out)
+    return out
+
+
+@app.route("/cron/earnings")
+def cron_earnings():
+    """Advance the state machine. Run HOURLY during earnings season, and at :05 past the hour --
+    8-Ks cluster right after the close and right before the open."""
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    if not _EARN_READY:
+        return jsonify({"error": "earnings_pipeline.py not deployed"}), 503
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        return jsonify(run_earnings_cycle(conn))
+    except Exception as e:
+        logger.error("cron_earnings: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/cron/earnings-label")
+def cron_earnings_label():
+    """Measure the stock reaction. T+2. Reads ONLY prices dated after the release."""
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    if not _EARN_READY:
+        return jsonify({"error": "earnings_pipeline.py not deployed"}), 503
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        return jsonify(_EARN.label_earnings_reactions(
+            conn,
+            closes_fn=lambda s: _fs_closes(s),
+            bench_fn=lambda: _fs_closes(_FS_BENCH),
+        ))
+    except Exception as e:
+        logger.error("cron_earnings_label: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/earnings/<symbol>")
+def api_earnings(symbol):
+    """Everything the stock page needs: countdown, brief, release, analysis, reaction."""
+    if not _EARN_READY:
+        return jsonify({"error": "earnings_pipeline.py not deployed"}), 503
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        ev = _EARN.earnings_for(conn, symbol)
+
+        # The pre-earnings brief is READ BACK from the feature store, never recomputed. It was
+        # written before the release and must show what was believed THEN -- if we rebuilt it now,
+        # with the result already known, the "bull case" would be contaminated by hindsight and the
+        # whole point of writing it early would be lost.
+        brief = None
+        if ev and ev.get("event_id"):
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT features, as_of FROM earnings_features "
+                    "WHERE event_id=%s AND stage='PRE' ORDER BY as_of ASC LIMIT 1",
+                    (ev["event_id"],))
+                r = cur.fetchone()
+                cur.close()
+                if r:
+                    brief = r[0] if isinstance(r[0], dict) else json.loads(r[0] or "{}")
+                    if isinstance(brief, dict):
+                        brief["as_of"] = str(r[1])
+            except Exception as be:
+                logger.warning("pre-brief read %s: %s" % (symbol, be))
+
+        return jsonify({
+            "symbol": symbol.upper(),
+            "event": ev,
+            "pre_brief": brief,
+            "history": _EARN.past_quarters(conn, symbol, n=8),
+            "transcript_available": bool(os.environ.get("FMP_KEY")),
+            # Honest about the limit: FMP transcripts land AFTER the call, not during it. A true
+            # live feed is a paid enterprise product Apex Q does not have.
+            "live_transcript": bool(os.environ.get("LIVE_TRANSCRIPT_PROVIDER")),
+        })
+    except Exception as e:
+        logger.error("api_earnings %s: %s" % (symbol, e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+def earnings_for_report(symbol):
+    """Compact earnings block for the main report payload. None when there's nothing to show."""
+    if not _EARN_READY or not symbol:
+        return None
+    conn = get_db()
+    if not conn:
+        return None
+    try:
+        return _EARN.earnings_for(conn, symbol)
+    except Exception as e:
+        logger.warning("earnings_for_report %s: %s" % (symbol, e))
+        return None
     finally:
         conn.close()
 
