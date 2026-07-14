@@ -6514,7 +6514,11 @@ if(ib){
     for(var db = 0; db < deadBanners.length; db++){ deadBanners[db].style.display = "none"; }
     window.triggerPageReadAloud = function(){};
   }
-  if(readBtn && "speechSynthesis" in window){
+  // ONE-LINE KILL SWITCH: set VOICE_ENABLED to false and the read-aloud button disappears
+  // everywhere. Nothing else needs touching.
+  var VOICE_ENABLED = true;
+  if(readBtn && !VOICE_ENABLED){ readBtn.style.display = "none"; }
+  if(readBtn && VOICE_ENABLED && "speechSynthesis" in window){
     readBtn.style.display = "";
     var _voices = [];
     function loadVoices(){ _voices = window.speechSynthesis.getVoices() || []; }
@@ -6522,11 +6526,31 @@ if(ib){
     if(typeof window.speechSynthesis.onvoiceschanged !== "undefined"){
       window.speechSynthesis.onvoiceschanged = loadVoices;
     }
+    // The old version returned en[0] -- the FIRST English voice in the list. On most Android and
+    // Windows devices that is the oldest, most robotic engine on the box, while a good neural voice
+    // sits further down. That single line is why the site sounded like a robot. We now RANK.
+    var GOOD_VOICE = /natural|neural|premium|enhanced|siri|samantha|ava|allison|serena|zoe|google (uk|us)|aria|jenny|michelle|libby|sonia|emma/i;
+    var BAD_VOICE  = /espeak|compact|pico|android speech|default|robot|microsoft (david|mark|zira)\b/i;
+
+    function scoreVoice(v){
+      var n = (v.name || "");
+      var s = 0;
+      if(GOOD_VOICE.test(n)) { s += 60; }
+      if(BAD_VOICE.test(n))  { s -= 80; }
+      // Non-local voices are served from the cloud and are almost always the neural ones.
+      if(v.localService === false){ s += 25; }
+      if(/en[-_]us/i.test(v.lang || "")){ s += 10; }
+      if(/female|samantha|aria|jenny|victoria|karen|moira|tessa|allison|ava|joanna|salli/i.test(n)){ s += 8; }
+      return s;
+    }
     function pickVoice(){
       var en = _voices.filter(function(v){ return (v.lang || "").toLowerCase().indexOf("en") === 0; });
-      var femaleHints = /female|samantha|zira|aria|jenny|victoria|karen|moira|tessa|susan|allison|ava|joanna|salli|kendra|kimberly/i;
-      for(var i = 0; i < en.length; i++){ if(femaleHints.test(en[i].name)){ return en[i]; } }
-      return en[0] || _voices[0] || null;
+      if(!en.length){ return null; }
+      var ranked = en.slice().sort(function(a, b){ return scoreVoice(b) - scoreVoice(a); });
+      var best = ranked[0];
+      // If the best voice on this device is still a bad one, we would rather say nothing than
+      // read a stock report in a robot voice. Silence beats sounding broken.
+      return scoreVoice(best) > 0 ? best : null;
     }
     function gatherText(){
       var parts = [];
@@ -6590,10 +6614,21 @@ if(ib){
       resetReadBtn();
     }
     function speakFallback(text){
-      var u = new SpeechSynthesisUtterance(text);
       var v = pickVoice();
-      if(v){ u.voice = v; }
-      u.rate = 1;
+      if(!v){
+        // No acceptable voice on this device and the neural voice is down. Do NOT fall back to the
+        // robot -- a robotic voice reading a financial report makes the whole product feel cheap.
+        // Tell the user plainly and stop.
+        resetReadBtn();
+        if(typeof toast === "function"){
+          toast("Voice isn't available on this device right now.");
+        }
+        return;
+      }
+      var u = new SpeechSynthesisUtterance(text);
+      u.voice = v;
+      u.rate = 0.97;   // a hair under 1 reads noticeably more naturally
+      u.pitch = 1.0;
       u.onend = resetReadBtn;
       u.onerror = resetReadBtn;
       window.speechSynthesis.speak(u);
