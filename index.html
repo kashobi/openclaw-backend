@@ -1615,6 +1615,54 @@ body{transition:background-color .3s ease,color .3s ease;}
 .cvHyp{margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--ybg);
   border:1px solid var(--yellow);font-size:12.5px;line-height:1.6;color:var(--text);}
 .cvHyp b{display:block;margin-bottom:4px;}
+
+/* ---- Earnings section. Four states: before / during / after / history. ---- */
+.erCount{display:flex;gap:8px;justify-content:center;margin:14px 0 6px;}
+.erUnit{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px;min-width:58px;text-align:center;}
+.erNum{font-family:var(--font-mono);font-size:20px;font-weight:800;color:var(--text);line-height:1;letter-spacing:-.5px;}
+.erLbl{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-top:4px;font-family:var(--font-mono);}
+.erWhen{text-align:center;font-size:12.5px;color:var(--muted);margin-bottom:14px;}
+.erLive{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;font-weight:800;
+  letter-spacing:.1em;color:var(--red);background:var(--rbg);border:1px solid var(--red);padding:4px 10px;border-radius:999px;}
+.erLive::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--red);animation:erPulse 1.4s infinite;}
+@keyframes erPulse{0%,100%{opacity:1}50%{opacity:.3}}
+.erNums{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;}
+.erBox{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;}
+.erBoxL{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-family:var(--font-mono);margin-bottom:5px;}
+.erBoxV{font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--text);}
+.erBeat{color:var(--green);} .erMiss{color:var(--red);}
+.erWhy{font-size:14px;color:var(--text);line-height:1.6;padding:13px 15px;border-radius:10px;
+  background:rgba(var(--accent-rgb),.06);border-left:3px solid var(--accent);margin:12px 0;}
+.erDiv{font-size:13px;color:var(--text);line-height:1.55;padding:11px 13px;border-radius:9px;
+  background:var(--ybg);border:1px solid var(--yellow);margin:10px 0;}
+.erDiv b{display:block;margin-bottom:3px;}
+.erMeters{display:flex;gap:10px;margin:12px 0;flex-wrap:wrap;}
+.erMeter{flex:1;min-width:120px;}
+.erMeterL{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-family:var(--font-mono);margin-bottom:5px;}
+.erBar{height:6px;background:var(--border);border-radius:99px;overflow:hidden;}
+.erFill{height:100%;border-radius:99px;transition:width .5s ease;}
+.erMeterV{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:4px;}
+.erTag{display:inline-block;font-family:var(--font-mono);font-size:9.5px;font-weight:800;letter-spacing:.08em;
+  padding:3px 9px;border-radius:999px;margin:0 5px 5px 0;}
+.erUp{background:var(--gbg);color:var(--green);border:1px solid var(--green);}
+.erDown{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.erFlat{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
+.erList{list-style:none;margin:8px 0 0;padding:0;}
+.erList li{font-size:13px;color:var(--muted);line-height:1.55;padding-left:15px;position:relative;margin-bottom:6px;}
+.erList li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;border-radius:50%;background:var(--accent);}
+.erCase{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
+.erCaseBox{border-radius:10px;padding:12px;font-size:12.5px;line-height:1.55;}
+.erBull{background:var(--gbg);border:1px solid var(--green);color:var(--text);}
+.erBear{background:var(--rbg);border:1px solid var(--red);color:var(--text);}
+.erCaseT{font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:5px;font-weight:800;}
+.erHist{width:100%;border-collapse:collapse;margin-top:8px;}
+.erHist th{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);font-weight:600;}
+.erHist td{padding:8px;font-size:12.5px;border-bottom:1px solid var(--border);color:var(--text);}
+.erHist tr:last-child td{border-bottom:none;}
+.erHist .m{font-family:var(--font-mono);}
+.erNote{font-size:11.5px;color:var(--muted);font-style:italic;line-height:1.5;margin-top:10px;}
+@media(max-width:520px){.erCase,.erNums{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -3605,6 +3653,7 @@ function run(){
     if(typeof injectChangeMind === "function"){ injectChangeMind(d); }
     if(typeof injectEconCalendar === "function"){ injectEconCalendar(d); }
     if(typeof injectDoD === "function"){ injectDoD(d); }
+    if(typeof injectEarnings === "function"){ injectEarnings(d); }
     if(typeof injectConvergence === "function"){ injectConvergence(d); }
     if(typeof injectActivist === "function"){ injectActivist(d); }
     if(typeof injectTrials === "function"){ injectTrials(d); }
@@ -7969,6 +8018,184 @@ if(ib){
     host.appendChild(card);
   }
   window.injectDoD = injectDoD;
+
+  // ---- EARNINGS SECTION -------------------------------------------------
+  // Four states, driven by the backend state machine:
+  //   SCHEDULED / PRE_BRIEF -> countdown + expectations + bull/bear
+  //   LIVE                  -> live badge + rolling tone/guidance
+  //   POST_ANALYZED         -> verdict, key numbers, WHY the stock moved
+  //   plus 8 quarters of history in every state.
+  // Renders nothing when there is no earnings event -- an empty card on every stock is noise.
+  var _erTimer = null;
+
+  function _erPct(v, invert){
+    if(v === null || v === undefined){ return "<span class=\"erBoxV\">--</span>"; }
+    var cls = v > 0 ? "erBeat" : (v < 0 ? "erMiss" : "");
+    if(invert){ cls = v > 0 ? "erMiss" : (v < 0 ? "erBeat" : ""); }
+    return "<span class=\"erBoxV " + cls + "\">" + (v > 0 ? "+" : "") + Number(v).toFixed(1) + "%</span>";
+  }
+  function _erMeter(label, val, lo, hi){
+    if(val === null || val === undefined){ return ""; }
+    var pct = Math.round(((val - lo) / (hi - lo)) * 100);
+    pct = Math.max(0, Math.min(100, pct));
+    var col = pct >= 66 ? "var(--green)" : (pct <= 33 ? "var(--red)" : "var(--yellow)");
+    return "<div class=\"erMeter\"><div class=\"erMeterL\">" + esc(label) + "</div>" +
+      "<div class=\"erBar\"><div class=\"erFill\" style=\"width:" + pct + "%;background:" + col + "\"></div></div>" +
+      "<div class=\"erMeterV\">" + Number(val).toFixed(2) + "</div></div>";
+  }
+  function _erGuide(dir){
+    if(!dir || dir === "none"){ return ""; }
+    var c = dir === "raised" ? "erUp" : (dir === "lowered" ? "erDown" : "erFlat");
+    return "<span class=\"erTag " + c + "\">GUIDANCE " + esc(String(dir).toUpperCase()) + "</span>";
+  }
+
+  function injectEarnings(d){
+    var host = document.getElementById("stockSections");
+    var old = document.getElementById("earnCard");
+    if(old){ old.remove(); }
+    if(_erTimer){ clearInterval(_erTimer); _erTimer = null; }
+    var sym = d && d.symbol ? String(d.symbol).toUpperCase() : "";
+    if(!host || !sym){ return; }
+
+    fetch(API + "/api/earnings/" + encodeURIComponent(sym))
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if(!res || res.error){ return; }
+        var e = res.event, hist = res.history || [], brief = res.pre_brief;
+        if(!e && !hist.length){ return; }
+
+        var body = "";
+        var state = e ? e.state : null;
+
+        // ---- BEFORE ----
+        if(e && (state === "SCHEDULED" || state === "PRE_BRIEF")){
+          body += "<div id=\"erCd\"></div>";
+          if(brief){
+            body += "<div class=\"erNums\">" +
+              "<div class=\"erBox\"><div class=\"erBoxL\">EPS expected</div><div class=\"erBoxV\">" +
+                (brief.eps_estimate !== null && brief.eps_estimate !== undefined ? "$" + Number(brief.eps_estimate).toFixed(2) : "--") + "</div></div>" +
+              "<div class=\"erBox\"><div class=\"erBoxL\">Beats last 8Q</div><div class=\"erBoxV\">" +
+                (brief.beat_rate_pct !== null && brief.beat_rate_pct !== undefined ? esc(brief.beat_rate_pct) + "%" : "--") + "</div></div>" +
+              "</div>";
+            if(brief.expected_move_note){ body += "<div class=\"erNote\">" + esc(brief.expected_move_note) + "</div>"; }
+            if(brief.what_matters && brief.what_matters.length){
+              body += "<div class=\"erBoxL\" style=\"margin-top:14px\">What matters this quarter</div><ul class=\"erList\">" +
+                brief.what_matters.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>";
+            }
+            body += "<div class=\"erCase\">" +
+              "<div class=\"erCaseBox erBull\"><div class=\"erCaseT\">Bull case</div>" + esc(brief.bull_case || "") + "</div>" +
+              "<div class=\"erCaseBox erBear\"><div class=\"erCaseT\">Bear case</div>" + esc(brief.bear_case || "") + "</div>" +
+              "</div>";
+            body += "<div class=\"erNote\">This brief was written on " + esc(brief.as_of || "an earlier date") +
+              ", before the results were known. It is not updated afterwards \u2014 that is deliberate, so you can see what was actually expected.</div>";
+          } else {
+            body += "<div class=\"erNote\">The pre-earnings brief is generated within 5 days of the report.</div>";
+          }
+        }
+
+        // ---- DURING ----
+        else if(e && state === "LIVE"){
+          body += "<div style=\"text-align:center;margin-bottom:12px\"><span class=\"erLive\">CALL IN PROGRESS</span></div>";
+          if(e.has_transcript){
+            body += "<div class=\"erMeters\">" +
+              _erMeter("Management tone", e.mgmt_tone, -1, 1) +
+              _erMeter("Analyst pressure", e.qa_pressure, 0, 1) +
+              "</div>";
+            body += _erGuide(e.guidance_direction);
+            if(e.themes && e.themes.length){
+              body += "<div class=\"erBoxL\" style=\"margin-top:12px\">What they keep repeating</div><ul class=\"erList\">" +
+                e.themes.slice(0,5).map(function(t){ return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>";
+            }
+          } else {
+            body += "<div class=\"erNote\">The call is underway. Apex Q reads the transcript once it is published \u2014 usually shortly after the call ends, not during it. Live streaming transcripts are a paid enterprise feed Apex Q does not carry, and we would rather say so than pretend.</div>";
+          }
+        }
+
+        // ---- AFTER ----
+        else if(e && state === "POST_ANALYZED"){
+          var badge = e.event_score >= 65 ? "erUp" : (e.event_score <= 35 ? "erDown" : "erFlat");
+          var word = e.event_score >= 65 ? "STRONG" : (e.event_score <= 35 ? "WEAK" : "MIXED");
+          body += "<div><span class=\"erTag " + badge + "\">" + word + " QUARTER \u00b7 " + esc(e.event_score) + "/100</span>" +
+                  _erGuide(e.guidance_direction) + "</div>";
+          body += "<div class=\"erNums\">" +
+            "<div class=\"erBox\"><div class=\"erBoxL\">EPS surprise</div>" + _erPct(e.eps_surprise_pct) + "</div>" +
+            "<div class=\"erBox\"><div class=\"erBoxL\">Revenue surprise</div>" + _erPct(e.rev_surprise_pct) + "</div>" +
+            "</div>";
+          if(e.explanation){ body += "<div class=\"erWhy\">" + esc(e.explanation) + "</div>"; }
+          if(e.divergence_type && e.divergence_type !== "none"){
+            body += "<div class=\"erDiv\"><b>Why the numbers and the stock disagree</b>" +
+              esc(e.event_note || "The market traded the outlook, not the quarter.") + "</div>";
+          }
+          if(e.has_transcript){
+            body += "<div class=\"erMeters\">" +
+              _erMeter("Management tone", e.mgmt_tone, -1, 1) +
+              _erMeter("Analyst pressure", e.qa_pressure, 0, 1) + "</div>";
+          }
+          if(e.themes && e.themes.length){
+            body += "<div class=\"erBoxL\" style=\"margin-top:12px\">What management kept coming back to</div><ul class=\"erList\">" +
+              e.themes.slice(0,5).map(function(t){ return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>";
+          }
+          if(e.release_url){
+            body += "<a class=\"dodLink\" href=\"" + esc(e.release_url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">Read the 8-K release &#8599;</a>";
+          }
+        }
+
+        // ---- HISTORY ----
+        if(hist.length){
+          body += "<div class=\"erBoxL\" style=\"margin-top:16px\">Last " + hist.length + " quarters</div>" +
+            "<table class=\"erHist\"><tr><th>Quarter</th><th>EPS</th><th>Rev</th><th>Guidance</th><th>Tone</th></tr>" +
+            hist.map(function(h){
+              function pc(v){
+                if(v === null || v === undefined){ return "<span class=\"m\">--</span>"; }
+                var c = v > 0 ? "erBeat" : (v < 0 ? "erMiss" : "");
+                return "<span class=\"m " + c + "\">" + (v > 0 ? "+" : "") + Number(v).toFixed(1) + "%</span>";
+              }
+              var tone = (h.tone === null || h.tone === undefined) ? "--"
+                : (h.tone > 0.25 ? "Confident" : (h.tone < -0.25 ? "Defensive" : "Neutral"));
+              return "<tr><td>" + esc(h.period || h.date || "") + "</td><td>" + pc(h.eps_surprise_pct) +
+                "</td><td>" + pc(h.rev_surprise_pct) + "</td><td>" + esc(h.guidance || "--") +
+                "</td><td>" + esc(tone) + "</td></tr>";
+            }).join("") + "</table>";
+        }
+
+        if(!body){ return; }
+
+        var card = document.createElement("div");
+        card.id = "earnCard";
+        card.className = "ic senateCardIc";
+        card.innerHTML = "<div class=\"snHead\"><div class=\"snHeadL\">" +
+          "<div class=\"snIcon\">&#128202;</div><div><div class=\"snTitle\">Earnings</div>" +
+          "<div class=\"snSub\">" + esc(sym) + (e && e.period ? (" \u00b7 " + esc(e.period)) : "") + "</div></div></div></div>" +
+          body +
+          "<div class=\"snFoot\">Estimates and results from the company's own 8-K filing. Educational only, not advice.</div>";
+        host.appendChild(card);
+
+        // Live countdown, ticking.
+        if(e && e.countdown_seconds !== null && e.countdown_seconds !== undefined && e.countdown_seconds > 0){
+          var left = e.countdown_seconds;
+          var slot = document.getElementById("erCd");
+          function tick(){
+            if(!slot || !document.getElementById("erCd")){ clearInterval(_erTimer); return; }
+            if(left <= 0){ slot.innerHTML = "<div class=\"erWhen\">Reporting now.</div>"; clearInterval(_erTimer); return; }
+            var dd = Math.floor(left / 86400), hh = Math.floor((left % 86400) / 3600),
+                mm = Math.floor((left % 3600) / 60), ss = Math.floor(left % 60);
+            slot.innerHTML = "<div class=\"erCount\">" +
+              [[dd,"Days"],[hh,"Hours"],[mm,"Min"],[ss,"Sec"]].map(function(u){
+                return "<div class=\"erUnit\"><div class=\"erNum\">" + String(u[0]).padStart(2,"0") +
+                  "</div><div class=\"erLbl\">" + u[1] + "</div></div>";
+              }).join("") + "</div>" +
+              "<div class=\"erWhen\">" + esc(e.session === "bmo" ? "Before the open" :
+                (e.session === "amc" ? "After the close" : "Time not confirmed")) + "</div>";
+            left--;
+          }
+          tick();
+          _erTimer = setInterval(tick, 1000);
+        }
+      })
+      .catch(function(){});
+  }
+  window.injectEarnings = injectEarnings;
+
 
   // ---- New signal cards ---------------------------------------------------
   function _sgCard(id, icon, title, sub, body, foot, cls){
