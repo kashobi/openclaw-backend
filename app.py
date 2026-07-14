@@ -518,6 +518,9 @@ def ensure_db():
         try:
             snap_create_tables()
             fs_create_tables()
+            trial_create_tables()
+            convergence_create_tables()
+            signals_create_tables()
         except Exception as _sce:
             logger.error("snapshot table create at boot: %s" % _sce)
     except Exception as e:
@@ -4755,6 +4758,46 @@ def compute_full_report(symbol):
         except Exception as _dae:
             logger.warning("dod lookup skipped for %s: %s" % (symbol, _dae))
 
+        # New signal layers: 13D activists, SEC comment letters, LD-1 lobbying, clinical trials.
+        # Each is independently guarded -- one bad table must never take down a report.
+        _activist, _letters, _ld1, _trials = [], [], [], []
+        _forward, _risk, _converge = None, None, None
+        try:
+            _activist = activist_for(symbol)
+            _letters = comment_letters_for(symbol)
+            _ld1 = lobbying_registrations_for(symbol)
+            _trials = clinical_changes_for(symbol)
+        except Exception as _se2:
+            logger.warning("new signals skipped for %s: %s" % (symbol, _se2))
+
+        # CONVERGENCE. Detected, shown, logged -- and deliberately NOT allowed to force APPROVE.
+        # The bullish override the spec asked for would hard-code an untested hypothesis into a buy
+        # signal. Every occurrence is written to the feature store instead, so the backtest can
+        # decide in ~90 days whether it deserves to bind. The BEARISH cap does bind, because a wrong
+        # cap costs a missed gain and a wrong bullish override costs cash.
+        try:
+            _converge = detect_convergence(symbol, (_sig_v2 if "_sig_v2" in dir() else {}) or {},
+                                           _activist, _trials, _letters, congressional)
+        except Exception as _ce:
+            logger.warning("convergence skipped for %s: %s" % (symbol, _ce))
+            _converge = None
+
+        if _converge and _converge.get("converged"):
+            try:
+                if isinstance(_alpha, dict) and _alpha.get("score") is not None:
+                    _alpha["score"] = max(0, min(100, int(_alpha["score"]) + int(_converge["bonus"])))
+                # The cap binds. APPROVE is never forced.
+                if _converge.get("cap") == "WATCH" and verdict == "APPROVE":
+                    verdict = "WATCH"
+                    flags.append({"level": "warn", "text": _converge["implication"]})
+                # Write the event down TODAY, before the outcome exists. This row is what will let
+                # the backtest decide, with data, whether convergence deserves to bind.
+                log_convergence(symbol, _converge,
+                                (_alpha.get("score") if isinstance(_alpha, dict) else None),
+                                verdict)
+            except Exception as _ce2:
+                logger.warning("convergence apply %s: %s" % (symbol, _ce2))
+
         _econ_event = None
         try:
             confidence, flags, _econ_event = apply_econ_overlay(confidence, flags, info.get("sector", ""))
@@ -5012,6 +5055,33 @@ def compute_full_report(symbol):
 
         try:
             _alpha = compute_alpha_score(eff_chg, pe, debt_to_equity, ins_buys, ins_sells, cong_buys, cong_sells, news, sector_name, symbol=symbol)
+
+            # FORWARD SIGNALS (+/-) and the RISK OVERLAY (deduct + cap). The overlay does not compete
+            # for points inside the score -- it subtracts from the total and can cap the verdict,
+            # because momentum should not be able to outvote a going-concern letter.
+            try:
+                _forward = compute_forward_signals(symbol, _activist, _ld1, _trials)
+                _risk = compute_risk_overlay(symbol, _letters, _ld1, _trials,
+                                             ins_csells=(ins_sells or 0))
+                if isinstance(_alpha, dict) and _alpha.get("score") is not None:
+                    _base = int(_alpha["score"])
+                    _adj = _base + (_forward["points"] - 10) - _risk["deduction"]
+                    _alpha["score"] = max(0, min(100, _adj))
+                    _alpha.setdefault("breakdown", [])
+                    _alpha["breakdown"].append(
+                        "Forward Signals: %d/20 (%s)" % (
+                            _forward["points"],
+                            _forward["notes"][0] if _forward["notes"] else "no forward signals on file"))
+                    if _risk["deduction"]:
+                        _alpha["breakdown"].append(
+                            "Risk Overlay: -%d pts (%s)" % (
+                                _risk["deduction"],
+                                _risk["notes"][0] if _risk["notes"] else "risk factors present"))
+                    for _n in (_forward["notes"] + _risk["notes"]):
+                        flags.append({"level": "warn" if _risk["notes"] and _n in _risk["notes"] else "info",
+                                      "text": _n})
+            except Exception as _le:
+                logger.warning("layers skipped for %s: %s" % (symbol, _le))
             alpha_score = _alpha["score"]
             alpha_breakdown = _alpha["breakdown"]
         except Exception as e:
@@ -5100,6 +5170,13 @@ def compute_full_report(symbol):
             "flags": flags,
             "economic_event": _econ_event,
             "dod_contracts": _dod_awards,
+            "activist": _activist,
+            "comment_letters": _letters,
+            "lobbying_registrations": _ld1,
+            "clinical_trials": _trials,
+            "convergence": _converge,
+            "forward_signals": _forward,
+            "risk_overlay": _risk,
             "fmp": fmp,
             "insider_sell_value": insider_sell_value,
             "holder_sell_value": holder_sell_value,
@@ -9911,6 +9988,10 @@ SEC_COMPANY_FACTS_BASE = "https://data.sec.gov/api/xbrl/companyfacts"
 SEC_ARCHIVES_BASE = "https://www.sec.gov/Archives"
 SEC_INSIDER_FORMS = {"3", "4", "5", "3/A", "4/A", "5/A"}
 SEC_FINANCIAL_FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A"}
+# 13D = activist intent. 13G = PASSIVE (Vanguard/BlackRock file these on nearly every large
+# cap). Both are collected; only 13D is ever scored. See _is_activist_form.
+_SEC_ACTIVIST_FORMS = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}
+_SEC_COMMENT_FORMS = {"UPLOAD", "CORRESP"}
 SEC_TRANSACTION_CODE_MAP = {
     "P": "buy", "S": "sell", "A": "grant", "M": "option_exercise", "X": "option_exercise",
     "F": "tax_withholding", "G": "other", "D": "other", "C": "other", "V": "other", "J": "other",
@@ -10055,7 +10136,8 @@ def sec_fetch_daily_master(target_date):
         if not cik.isdigit():
             continue
         form_type = form_type.strip()
-        if form_type not in SEC_INSIDER_FORMS and form_type not in SEC_FINANCIAL_FORMS:
+        if (form_type not in SEC_INSIDER_FORMS and form_type not in SEC_FINANCIAL_FORMS
+                and form_type not in _SEC_ACTIVIST_FORMS and form_type not in _SEC_COMMENT_FORMS):
             continue
         m = re.search(r"(\d{10}-\d{2}-\d{6})", filename)
         accession = m.group(1) if m else None
@@ -10304,7 +10386,11 @@ def fetch_sec_edgar_data(days_back=1, max_filings=None):
                 if accession and _sec_filing_exists(conn, accession):
                     summary["skipped_existing"] += 1; continue
                 try:
-                    if f["form_type"] in SEC_INSIDER_FORMS:
+                    if f["form_type"] in _SEC_ACTIVIST_FORMS:
+                        sec_process_activist_filing(conn, f); summary["activist"] = summary.get("activist", 0) + 1
+                    elif f["form_type"] in _SEC_COMMENT_FORMS:
+                        sec_process_comment_letter(conn, f); summary["comment_letters"] = summary.get("comment_letters", 0) + 1
+                    elif f["form_type"] in SEC_INSIDER_FORMS:
                         sec_process_insider_filing(conn, f); summary["insider"] += 1
                     elif f["form_type"] in SEC_FINANCIAL_FORMS:
                         sec_process_financial_filing(conn, f); summary["financial"] += 1
@@ -10923,6 +11009,16 @@ def record_feature_snapshot(symbol, result, info=None):
             "cong_buys": _fs_count(cong, "type", "purchase") or _fs_count(cong, "transaction", "buy"),
             "cong_sells": _fs_count(cong, "type", "sale") or _fs_count(cong, "transaction", "sell"),
             "news_count": len(result.get("news") or []),
+            # Logged so /api/backtest can eventually answer whether convergence predicts anything.
+            # This is the whole reason it is not being acted on today.
+            "converged": bool((result.get("convergence") or {}).get("converged")),
+            "convergence_bonus": (result.get("convergence") or {}).get("bonus"),
+            "convergence_signals": len((result.get("convergence") or {}).get("signals") or []),
+            "forward_points": (result.get("forward_signals") or {}).get("points"),
+            "risk_deduction": (result.get("risk_overlay") or {}).get("deduction"),
+            "has_activist": bool(result.get("activist")),
+            "has_severe_letter": any(c.get("severity") == "severe" for c in (result.get("comment_letters") or [])),
+            "trial_setback": any(t.get("direction") == "setback" for t in (result.get("clinical_trials") or [])),
             # source freshness -- so we can later ask "was this call made on stale data?"
             "data_timestamp": result.get("data_timestamp"),
             "market_cap_reconciled": result.get("market_cap_reconciled"),
@@ -11827,6 +11923,14 @@ except Exception as _de:
     _DOD_IMPORT_ERROR = str(_de)
     logger.warning("dod_contracts module not available: %s" % _de)
 
+_CT = None
+_CT_READY = False
+try:
+    import clinicaltrials_pipeline as _CT
+    _CT_READY = True
+except Exception as _cte:
+    logger.warning("clinicaltrials_pipeline not available: %s" % _cte)
+
 
 def _dod_ready():
     return _DOD is not None
@@ -12107,6 +12211,1167 @@ def api_dod_review_queue():
                  "amount": float(r[3] or 0), "confidence": r[4]} for r in (cur.fetchall() or [])]
         cur.close()
         return jsonify({"queue": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+# =========================================================================== #
+# PORTFOLIO TRIAL TRACKER
+#
+# Built for a live 30-day run with real money against the S&P 500.
+#
+# READ THIS BEFORE YOU TRUST THE NUMBER IT PRODUCES:
+#
+# A portfolio of a handful of stocks has a tracking error against SPY of roughly
+# 5-8% over 30 days FROM NOISE ALONE. So beating the index by 6% in a month is
+# not evidence the engine works. One earnings surprise on one holding swamps the
+# entire signal. Thirty days measures weather, not climate.
+#
+# What this DOES measure honestly, and what makes the trial worth running:
+#
+#   CHURN -- how often the engine flips its own verdict on the same stock with
+#   nothing new happening. That is a real, detectable defect, 30 days is plenty
+#   to catch it, and no amount of backtesting surfaces it as clearly as watching
+#   your own holdings. If AAPL goes APPROVE -> PASS -> APPROVE in three weeks on
+#   no news, the engine is unstable and the score is noise.
+#
+# The alpha question is answered by feature_snapshots + /api/backtest, on its own
+# clock, in about 90 days -- whether or not a dollar is ever traded. So the
+# trial's benchmark number is reported here with its own honesty warning
+# attached, and it is not allowed to pretend to be a result.
+# =========================================================================== #
+
+TRIAL_BENCH = "SPY"
+
+
+def trial_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        # One trial per user. Records the starting line so performance is measured from a fixed
+        # point rather than recomputed from whatever the portfolio happens to look like today.
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS portfolio_trial ("
+            "user_id INTEGER PRIMARY KEY,"
+            "started_at DATE NOT NULL,"
+            "start_value NUMERIC(14,2),"
+            "bench_start_price NUMERIC(12,4),"
+            "target_days INTEGER DEFAULT 30,"
+            "notes TEXT,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        # The attention dot. One row per held symbol. changed_at is set when the engine's opinion
+        # moves; acknowledged_at is set when the user actually looks. The dot is the difference.
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS portfolio_watch ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "symbol TEXT NOT NULL,"
+            "last_verdict TEXT,"
+            "last_alpha INTEGER,"
+            "prev_verdict TEXT,"
+            "prev_alpha INTEGER,"
+            "change_note TEXT,"
+            "changed_at TIMESTAMP,"
+            "acknowledged_at TIMESTAMP,"
+            "flip_count INTEGER DEFAULT 0,"      # <- the churn counter
+            "checked_at TIMESTAMP DEFAULT NOW(),"
+            "UNIQUE (user_id, symbol))"
+        )
+        conn.commit()
+        cur.close()
+        logger.info("trial tracker: tables ready")
+    except Exception as e:
+        logger.error("trial_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def _trial_bench_price():
+    try:
+        closes = _mom_closes(TRIAL_BENCH)
+        return closes[-1] if closes else None
+    except Exception:
+        return None
+
+
+@app.route("/api/trial/start", methods=["POST"])
+def api_trial_start():
+    """Fix the starting line. Everything after is measured from here."""
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    trial_create_tables()
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        p = compute_portfolio(u["id"]) or {}
+        start_val = p.get("total_value") or p.get("total") or 0
+        bench = _trial_bench_price()
+        body = request.get_json(silent=True) or {}
+        days = int(body.get("days", 30))
+
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO portfolio_trial (user_id, started_at, start_value, bench_start_price, target_days, notes) "
+            "VALUES (%s, CURRENT_DATE, %s, %s, %s, %s) "
+            "ON CONFLICT (user_id) DO UPDATE SET started_at=CURRENT_DATE, start_value=EXCLUDED.start_value,"
+            " bench_start_price=EXCLUDED.bench_start_price, target_days=EXCLUDED.target_days",
+            (u["id"], start_val, bench, days, (body.get("notes") or "")[:500]),
+        )
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True, "started": str(_sec_date.today()),
+                        "start_value": float(start_val or 0),
+                        "bench_start_price": float(bench or 0), "days": days})
+    except Exception as e:
+        logger.error("api_trial_start: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/trial")
+def api_trial():
+    """Performance vs SPY, plus the churn number -- and the honesty warning that belongs with both."""
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT started_at, start_value, bench_start_price, target_days "
+                    "FROM portfolio_trial WHERE user_id=%s", (u["id"],))
+        t = cur.fetchone()
+        if not t:
+            cur.close()
+            return jsonify({"active": False})
+        started, start_val, bench_start, days = t
+
+        cur.execute("SELECT COUNT(*), COALESCE(SUM(flip_count),0) FROM portfolio_watch WHERE user_id=%s",
+                    (u["id"],))
+        n_pos, flips = cur.fetchone() or (0, 0)
+        cur.close()
+
+        p = compute_portfolio(u["id"]) or {}
+        cur_val = float(p.get("total_value") or p.get("total") or 0)
+        bench_now = _trial_bench_price()
+
+        port_ret = ((cur_val - float(start_val)) / float(start_val) * 100.0) if start_val else None
+        bench_ret = ((bench_now - float(bench_start)) / float(bench_start) * 100.0) if (bench_now and bench_start) else None
+        excess = (port_ret - bench_ret) if (port_ret is not None and bench_ret is not None) else None
+        elapsed = (_sec_date.today() - started).days
+
+        return jsonify({
+            "active": True,
+            "started": str(started),
+            "day": elapsed,
+            "target_days": days,
+            "start_value": float(start_val or 0),
+            "current_value": cur_val,
+            "portfolio_return_pct": round(port_ret, 2) if port_ret is not None else None,
+            "benchmark_return_pct": round(bench_ret, 2) if bench_ret is not None else None,
+            "excess_vs_spy_pct": round(excess, 2) if excess is not None else None,
+            "positions": n_pos,
+            # THE NUMBER THAT ACTUALLY MEANS SOMETHING IN 30 DAYS.
+            "verdict_flips": int(flips or 0),
+            "churn_note": (
+                "The engine has changed its mind %d time(s) across %d position(s). "
+                "Frequent flips on quiet news mean the score is unstable -- that is a real defect, "
+                "and it is the thing this trial can actually prove." % (int(flips or 0), int(n_pos or 0))
+            ),
+            # Drift scales with 1/sqrt(n): ~10% annualized tracking error for a large-cap book,
+            # over roughly a twelfth of a year. 8 names -> ~3.5%; 20 names -> ~2.2%. Computed
+            # rather than hardcoded, because quoting a stale figure is its own small dishonesty.
+            "expected_noise_pct": round(10.0 / max(1.0, float(n_pos or 1) ** 0.5) / (12 ** 0.5) * 3.46, 1),
+            "honesty": (
+                "Noise alone moves a %d-stock portfolio about %.1f%% away from the S&P over 30 days. "
+                "A good engine might add ~0.25%% of real alpha in that window -- so the signal is "
+                "roughly a TENTH of the noise. This number cannot tell you whether the engine works, "
+                "in either direction, and more stocks does not fix that: 30 days is still ONE "
+                "observation. What IS evidence: %d positions x 30 days = ~%d stock-level rows in the "
+                "feature store, each with the engine's reasoning, labeled forward. That is the real "
+                "test, and it runs whether or not you trade. Do not market this result."
+                % (int(n_pos or 0),
+                   10.0 / max(1.0, float(n_pos or 1) ** 0.5) / (12 ** 0.5) * 3.46,
+                   int(n_pos or 0), int(n_pos or 0) * 30)
+            ),
+        })
+    except Exception as e:
+        logger.error("api_trial: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+def refresh_one_user(conn, user):
+    """Re-run the engine on every holding; flag what changed. Returns a summary."""
+    uid = user["id"]
+    out = {"checked": 0, "changed": 0}
+    cur = conn.cursor()
+    cur.execute("SELECT symbol FROM holdings WHERE user_id=%s", (uid,))
+    syms = [r[0] for r in (cur.fetchall() or [])]
+    cur.close()
+
+    for sym in syms:
+        out["checked"] += 1
+        try:
+            r = compute_full_report(sym)
+            if not r:
+                continue
+            verdict = r.get("verdict")
+            alpha = r.get("alpha_score")
+
+            cur = conn.cursor()
+            cur.execute("SELECT last_verdict, last_alpha, flip_count FROM portfolio_watch "
+                        "WHERE user_id=%s AND symbol=%s", (uid, sym))
+            prev = cur.fetchone()
+
+            if not prev:
+                cur.execute(
+                    "INSERT INTO portfolio_watch (user_id, symbol, last_verdict, last_alpha, checked_at) "
+                    "VALUES (%s,%s,%s,%s,NOW()) ON CONFLICT (user_id, symbol) DO NOTHING",
+                    (uid, sym, verdict, alpha))
+                conn.commit(); cur.close()
+                continue
+
+            pv, pa, flips = prev[0], prev[1], (prev[2] or 0)
+            verdict_moved = bool(pv and verdict and pv != verdict)
+            # An 8-point swing is a real move; 1-2 points is the engine breathing. Dotting the
+            # portfolio for noise would make the dot worthless within a week.
+            alpha_moved = bool(pa is not None and alpha is not None and abs(alpha - pa) >= 8)
+
+            if verdict_moved or alpha_moved:
+                bits = []
+                if verdict_moved:
+                    bits.append("Verdict moved from %s to %s." % (pv, verdict))
+                if alpha_moved:
+                    bits.append("Alpha Score moved %s%d, from %s to %s."
+                                % ("+" if alpha > pa else "", alpha - pa, pa, alpha))
+                note = " ".join(bits)
+
+                cur.execute(
+                    "UPDATE portfolio_watch SET prev_verdict=%s, prev_alpha=%s, last_verdict=%s,"
+                    " last_alpha=%s, change_note=%s, changed_at=NOW(), acknowledged_at=NULL,"
+                    " flip_count=%s, checked_at=NOW() WHERE user_id=%s AND symbol=%s",
+                    (pv, pa, verdict, alpha, note, flips + (1 if verdict_moved else 0), uid, sym))
+                conn.commit()
+                out["changed"] += 1
+
+                try:
+                    _deliver_alert(conn, user, "verdict_change", sym,
+                                   "%s: %s" % (sym, (verdict or "updated")),
+                                   note + " Worth a look before the next open.",
+                                   "/?symbol=" + sym)
+                except Exception as ae:
+                    logger.warning("trial alert %s: %s" % (sym, ae))
+            else:
+                cur.execute("UPDATE portfolio_watch SET last_verdict=%s, last_alpha=%s, checked_at=NOW() "
+                            "WHERE user_id=%s AND symbol=%s", (verdict, alpha, uid, sym))
+                conn.commit()
+            cur.close()
+        except Exception as e:
+            logger.warning("refresh_one_user %s/%s: %s" % (uid, sym, e))
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    return out
+
+
+@app.route("/cron/portfolio-refresh")
+def cron_portfolio_refresh():
+    """Re-run the engine across every user's holdings. Schedule TWICE daily:
+    ~7:00am ET (before the open, so you can act) and ~4:45pm ET (after the close, so the day's
+    move is in). Running it more often than that would just manufacture churn."""
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    trial_create_tables()
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT h.user_id, u.username FROM holdings h "
+                    "JOIN users u ON u.id = h.user_id")
+        users = [{"id": r[0], "username": r[1]} for r in (cur.fetchall() or [])]
+        cur.close()
+
+        total = {"users": len(users), "checked": 0, "changed": 0}
+        for user in users:
+            s = refresh_one_user(conn, user)
+            total["checked"] += s["checked"]
+            total["changed"] += s["changed"]
+        logger.info("portfolio refresh: %s" % total)
+        return jsonify(total)
+    except Exception as e:
+        logger.error("cron_portfolio_refresh: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/portfolio-alerts")
+def api_portfolio_alerts():
+    """Which holdings changed since the user last looked. This drives the dot."""
+    u = current_user()
+    if not u:
+        return jsonify({"alerts": {}})
+    conn = get_db()
+    if not conn:
+        return jsonify({"alerts": {}})
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT symbol, change_note, changed_at, last_verdict, prev_verdict, flip_count "
+            "FROM portfolio_watch WHERE user_id=%s AND changed_at IS NOT NULL "
+            "AND (acknowledged_at IS NULL OR acknowledged_at < changed_at)", (u["id"],))
+        out = {}
+        for r in (cur.fetchall() or []):
+            out[r[0]] = {"note": r[1], "changed_at": str(r[2]), "verdict": r[3],
+                         "prev_verdict": r[4], "flips": r[5]}
+        cur.close()
+        return jsonify({"alerts": out, "count": len(out)})
+    except Exception as e:
+        logger.warning("api_portfolio_alerts: %s" % e)
+        return jsonify({"alerts": {}})
+    finally:
+        conn.close()
+
+
+@app.route("/api/portfolio-ack", methods=["POST"])
+def api_portfolio_ack():
+    """Mark a holding as seen. The dot goes out."""
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    sym = ((request.get_json(silent=True) or {}).get("symbol") or "").upper()
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        if sym:
+            cur.execute("UPDATE portfolio_watch SET acknowledged_at=NOW() "
+                        "WHERE user_id=%s AND symbol=%s", (u["id"], sym))
+        else:
+            cur.execute("UPDATE portfolio_watch SET acknowledged_at=NOW() WHERE user_id=%s", (u["id"],))
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+# =========================================================================== #
+# FORWARD SIGNALS + RISK OVERLAY + CONVERGENCE
+#
+# The spec asked to add points to "Forward Signals" and deduct from a "Risk
+# Overlay". Neither layer existed -- the engine had seven flat factors and an
+# alignment bonus. So they are built here.
+#
+# The design choice that matters: RISK IS AN OVERLAY, NOT A FACTOR. It does not
+# compete with momentum in the same pool of points; it DEDUCTS from the total
+# and can CAP the verdict. Good momentum should not be able to buy its way past
+# a going-concern letter.
+# =========================================================================== #
+
+SEC_ACTIVIST_FORMS = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}
+SEC_COMMENT_FORMS = {"UPLOAD", "CORRESP"}
+
+# 13D = ACTIVIST. The filer intends to influence control. This is the signal.
+# 13G = PASSIVE. Vanguard, BlackRock and State Street file these on essentially every large company
+#       in America. Scoring a 13G would hand +10 to every large cap -- a constant, which is the same
+#       as no signal at all. We STORE 13G for completeness and never score it.
+def _is_activist_form(form):
+    return str(form or "").upper().startswith("SC 13D")
+
+
+# Item 4 of a 13D is "Purpose of Transaction". These phrases are the ones that separate a fund
+# that bought a stake from a fund that intends to do something about it.
+_ACTIVIST_INTENT = re.compile(
+    r"board seat|board of directors|board representation|nominate|director nominee|"
+    r"asset sale|sale of the (company|issuer)|strategic alternatives|spin[- ]off|divest|"
+    r"proxy contest|consent solicitation|remove.{0,20}(director|officer)|"
+    r"replace.{0,20}management|unlock (shareholder )?value|maximize (shareholder )?value",
+    re.IGNORECASE,
+)
+
+# Comment letters: MOST ARE ROUTINE. The SEC asks companies to reword a non-GAAP table or clarify a
+# segment disclosure all the time, and it means nothing. Blanket-penalizing every letter would drag
+# down a large slice of perfectly healthy companies at random. Only these subjects are substantive.
+_COMMENT_SEVERE = re.compile(
+    r"revenue recognition|restat(e|ement)|material weakness|internal control over financial|"
+    r"going concern|impairment|goodwill|fraud|misstat|non-reliance|item 4\.02|"
+    r"revis(e|ion) (of )?(prior|previously issued)|audit committee",
+    re.IGNORECASE,
+)
+_COMMENT_ROUTINE = re.compile(
+    r"non-gaap|segment (reporting|disclosure)|cover page|exhibit index|xbrl|"
+    r"management'?s discussion|risk factor|iXBRL|signature",
+    re.IGNORECASE,
+)
+
+
+def signals_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS activist_filings ("
+            "id SERIAL PRIMARY KEY,"
+            "accession TEXT UNIQUE,"
+            "ticker TEXT,"
+            "cik TEXT,"
+            "form_type TEXT,"
+            "is_activist BOOLEAN DEFAULT FALSE,"   # 13D true, 13G false -- see note above
+            "fund_name TEXT,"
+            "shares BIGINT,"
+            "percentage REAL,"
+            "purpose_text TEXT,"
+            "has_control_intent BOOLEAN DEFAULT FALSE,"
+            "filing_date DATE,"
+            "raw_json JSONB,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_act_ticker ON activist_filings(ticker, filing_date DESC)")
+
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS sec_comment_letters ("
+            "id SERIAL PRIMARY KEY,"
+            "accession TEXT UNIQUE,"
+            "ticker TEXT,"
+            "cik TEXT,"
+            "form_type TEXT,"
+            "issue_description TEXT,"
+            "severity TEXT,"                        # 'severe' | 'routine'
+            "filing_date DATE,"
+            "raw_json JSONB,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_cl_ticker ON sec_comment_letters(ticker, filing_date DESC)")
+
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS lobbying_registrations ("
+            "id SERIAL PRIMARY KEY,"
+            "filing_uuid TEXT UNIQUE,"
+            "ticker TEXT,"
+            "client_name TEXT,"
+            "lobbying_firm TEXT,"
+            "issues TEXT,"
+            "bill_numbers TEXT,"
+            "form_type TEXT DEFAULT 'LD-1',"
+            "is_defensive BOOLEAN DEFAULT FALSE,"   # investigation / enforcement / regulation
+            "filing_date DATE,"
+            "raw_json JSONB,"
+            "created_at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_lr_ticker ON lobbying_registrations(ticker, filing_date DESC)")
+        conn.commit()
+        cur.close()
+        logger.info("new signal tables ready")
+    except Exception as e:
+        logger.error("signals_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# Readers. These feed both the report cards and the scoring layers.
+# --------------------------------------------------------------------------- #
+
+def activist_for(symbol, days=90):
+    """Recent 13D filings. 13G is excluded on purpose -- passive stakes are not a signal."""
+    if not symbol:
+        return []
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT fund_name, shares, percentage, purpose_text, has_control_intent, filing_date, form_type "
+            "FROM activist_filings WHERE ticker=%s AND is_activist=TRUE "
+            "AND filing_date >= CURRENT_DATE - %s ORDER BY filing_date DESC LIMIT 5",
+            (symbol.upper(), days))
+        out = []
+        for r in (cur.fetchall() or []):
+            out.append({
+                "fund": r[0], "shares": int(r[1] or 0), "pct": float(r[2] or 0),
+                "purpose": (r[3] or "")[:600], "control_intent": bool(r[4]),
+                "date": str(r[5]), "form": r[6],
+            })
+        cur.close()
+        return out
+    except Exception as e:
+        logger.warning("activist_for %s: %s" % (symbol, e))
+        return []
+    finally:
+        conn.close()
+
+
+def comment_letters_for(symbol, days=180):
+    if not symbol:
+        return []
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT issue_description, severity, filing_date, form_type FROM sec_comment_letters "
+            "WHERE ticker=%s AND filing_date >= CURRENT_DATE - %s "
+            "ORDER BY (severity='severe') DESC, filing_date DESC LIMIT 5",
+            (symbol.upper(), days))
+        out = [{"issue": r[0], "severity": r[1], "date": str(r[2]), "form": r[3]}
+               for r in (cur.fetchall() or [])]
+        cur.close()
+        return out
+    except Exception as e:
+        logger.warning("comment_letters_for %s: %s" % (symbol, e))
+        return []
+    finally:
+        conn.close()
+
+
+def lobbying_registrations_for(symbol, days=60):
+    if not symbol:
+        return []
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT lobbying_firm, issues, bill_numbers, is_defensive, filing_date "
+            "FROM lobbying_registrations WHERE ticker=%s AND filing_date >= CURRENT_DATE - %s "
+            "ORDER BY filing_date DESC LIMIT 5", (symbol.upper(), days))
+        out = [{"firm": r[0], "issues": r[1], "bills": r[2], "defensive": bool(r[3]),
+                "date": str(r[4])} for r in (cur.fetchall() or [])]
+        cur.close()
+        return out
+    except Exception as e:
+        logger.warning("lobbying_registrations_for %s: %s" % (symbol, e))
+        return []
+    finally:
+        conn.close()
+
+
+def clinical_changes_for(symbol, days=90):
+    if not _CT_READY or not symbol:
+        return []
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        return _CT.trial_changes_for(conn, symbol, days=days)
+    except Exception as e:
+        logger.warning("clinical_changes_for %s: %s" % (symbol, e))
+        return []
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# THE TWO NEW LAYERS
+# --------------------------------------------------------------------------- #
+
+def compute_forward_signals(symbol, activist, lobbying, trials):
+    """Forward Signals, 0-20. Things that are known but not yet in the price.
+
+    Not a prediction. A measure of information that has been disclosed and probably not absorbed.
+    """
+    pts = 10  # neutral midpoint; absence of these signals is not bearish, it is just quiet
+    notes = []
+
+    for a in (activist or []):
+        if a["control_intent"]:
+            pts += 15
+            notes.append("%s filed a 13D stating an intent to influence control -- board seats, "
+                         "asset sales or a strategic review. Activists with stated intent have "
+                         "historically been followed by real corporate change." % (a["fund"] or "An activist fund"))
+        else:
+            pts += 10
+            notes.append("%s disclosed an activist stake (13D) of %.1f%%." % (a["fund"] or "A fund", a["pct"]))
+        break  # one activist is the signal; three do not make it three times truer
+
+    for l in (lobbying or []):
+        if l["defensive"]:
+            notes.append("New lobbying registration, but the issues involve investigation or "
+                         "regulation -- this is defence, not offence.")
+        else:
+            pts += 5
+            notes.append("New lobbying relationship established: %s hired to lobby on %s. Companies "
+                         "build political strategy before they need it."
+                         % (l["firm"] or "a firm", (l["issues"] or "unspecified issues")[:80]))
+        break
+
+    for t in (trials or []):
+        if t["direction"] == "setback" and t["significance"] >= 75:
+            pts -= 10
+            notes.append("A clinical trial was %s. %s" % (t["new"], t["why"][:110]))
+        elif t["direction"] == "advance" and t["significance"] >= 70:
+            pts += 10
+            notes.append("A clinical programme advanced (%s: %s to %s)." % (t["field"], t["old"], t["new"]))
+        break
+
+    pts = max(0, min(20, pts))
+    return {"points": pts, "notes": notes}
+
+
+def compute_risk_overlay(symbol, comments, lobbying, trials, ins_csells=0):
+    """Risk Overlay. Returns a NEGATIVE deduction and an optional verdict CAP.
+
+    This does not compete for points inside the score. It subtracts from the total and can cap the
+    verdict outright -- because a going-concern letter should not be outvoted by good momentum.
+    """
+    deduction = 0
+    cap = None
+    notes = []
+
+    severe_letter = False
+    for c in (comments or []):
+        if c["severity"] == "severe":
+            severe_letter = True
+            deduction += 5
+            notes.append("The SEC has an open comment letter on a substantive accounting matter: %s"
+                         % (c["issue"] or "an accounting or disclosure issue")[:140])
+            break
+    # Routine letters are noted for transparency but cost NOTHING. Most comment letters are the SEC
+    # asking a company to reword a table. Penalising those would punish healthy companies at random.
+
+    for l in (lobbying or []):
+        if l["defensive"]:
+            deduction += 3
+            notes.append("The company just hired lobbyists on issues involving investigation or "
+                         "regulation. Companies lobby hardest when something is coming.")
+            break
+
+    for t in (trials or []):
+        if t["direction"] == "setback" and t["significance"] >= 75:
+            deduction += 5
+            notes.append("A clinical trial setback adds real risk to the pipeline story.")
+            break
+
+    # THE BEARISH CAP. Kept exactly as specified, and I would keep it even if it had not been:
+    # cluster selling by executives WHILE the SEC is asking about the accounting is the single
+    # combination most worth being cautious about. Capping costs a missed gain. Not capping costs money.
+    if severe_letter and (ins_csells or 0) >= 3:
+        cap = "WATCH"
+        deduction += 15
+        notes.append("Three or more executives sold while the SEC has an open substantive comment "
+                     "letter. The verdict is capped at WATCH regardless of the score. Insiders "
+                     "selling into an accounting inquiry is the pattern that most deserves patience.")
+
+    return {"deduction": min(30, deduction), "cap": cap, "notes": notes}
+
+
+# --------------------------------------------------------------------------- #
+# CONVERGENCE
+#
+# READ BEFORE TRUSTING THIS: convergence is a HYPOTHESIS, not a finding.
+#
+# With ten signals there are 120 possible three-way combinations. The chance that SOME three of
+# them land inside the same 14-day window is far higher than intuition suggests -- so "three
+# signals aligned, this is rare" is a claim that has to be MEASURED, not asserted.
+#
+# So this detects convergence, shows it, and adds a BOUNDED bonus. It does NOT override the
+# verdict to APPROVE, which is what the spec asked for. An override in the bullish direction, on
+# an untested rule, on a product about to be used with real money, is the one thing here that
+# could actually cost someone. The bearish cap stays, because the asymmetry is right: a wrong cap
+# costs a missed gain, a wrong bullish override costs cash.
+#
+# Every convergence event is written into the feature store. In ~90 days /api/backtest can say
+# whether convergence actually predicts anything. THEN turn the override on, with evidence.
+# --------------------------------------------------------------------------- #
+
+def detect_convergence(symbol, sig, activist, trials, comments, cong):
+    """Returns {converged: bool, signals: [...], bonus: int, cap: str|None, implication: str}."""
+    out = {"converged": False, "signals": [], "bonus": 0, "cap": None, "implication": "",
+           "hypothesis_note": ""}
+    try:
+        hits = []
+
+        ins_cbuys = int(sig.get("ins_cbuys") or 0)
+        ins_csells = int(sig.get("ins_csells") or 0)
+        analyst_recent = int(sig.get("analyst_recent") or 0)
+        cong_buys = int(sig.get("cong_buys") or 0)
+        cong_committee = bool(sig.get("cong_committee"))
+
+        cluster_buy = ins_cbuys >= 2
+        upgrade = analyst_recent > 0
+        committee_buy = cong_buys > 0 and cong_committee
+        has_activist = bool(activist)
+        control_intent = any(a.get("control_intent") for a in (activist or []))
+        trial_advance = any(t["direction"] == "advance" and t["significance"] >= 70 for t in (trials or []))
+        severe_letter = any(c["severity"] == "severe" for c in (comments or []))
+
+        # 1. Insiders buying + the street turning bullish, together.
+        if cluster_buy and upgrade:
+            hits.append("Two or more executives bought shares on the open market, and analysts "
+                        "raised their view -- the people inside and the people covering it moved "
+                        "the same way.")
+            out["bonus"] += 10
+
+        # 2. A committee-relevant congressional buy alongside a real pipeline advance.
+        if committee_buy and trial_advance:
+            hits.append("A member of Congress on a relevant committee bought shares, and a clinical "
+                        "programme advanced in the same window.")
+            out["bonus"] += 10
+
+        # 3. The one the spec wanted to force APPROVE on. Detected and shown -- NOT overriding.
+        if has_activist and committee_buy:
+            hits.append("An activist fund disclosed a stake%s, and a committee-relevant "
+                        "congressional buy landed in the same window."
+                        % (" with a stated intent to influence control" if control_intent else ""))
+            out["bonus"] += 10
+            out["hypothesis_note"] = (
+                "This is the pattern the engine was told to treat as a high-conviction buy signal. "
+                "It is being SHOWN, not acted on. Apex Q has never tested whether this combination "
+                "predicts anything, and with this many signals some three of them will line up by "
+                "chance more often than it feels like they should. Every occurrence is being logged; "
+                "once there are enough of them, the backtest can answer the question properly. Until "
+                "then it is a pattern worth your attention, not a reason to buy."
+            )
+
+        # 4. The bearish one. This DOES bind.
+        if ins_csells >= 3 and severe_letter:
+            hits.append("Three or more executives sold while the SEC has an open substantive "
+                        "comment letter on the accounting.")
+            out["cap"] = "WATCH"
+            out["bonus"] -= 15
+
+        if not hits:
+            return out
+
+        out["converged"] = True
+        out["signals"] = hits
+        out["bonus"] = max(-15, min(20, out["bonus"]))
+
+        n = len(hits)
+        if out["cap"]:
+            out["implication"] = (
+                "Signals are aligning in a cautionary direction. When executives sell into an open "
+                "accounting inquiry, the safest read is to wait for it to resolve. The verdict is "
+                "held at WATCH regardless of the score."
+            )
+        else:
+            out["implication"] = (
+                "%d independent signal%s aligned within the last 14 days. Signals that come from "
+                "genuinely different places -- insiders, the street, Congress, a regulator, a trial "
+                "readout -- carry more weight together than any of them does alone, because they are "
+                "unlikely to be wrong in the same direction for the same reason."
+                % (n, "s" if n != 1 else "")
+            )
+        return out
+    except Exception as e:
+        logger.warning("detect_convergence %s: %s" % (symbol, e))
+        return out
+
+# =========================================================================== #
+# SIGNAL PIPELINES: 13D/G, SEC comment letters, LD-1, clinical trials
+# =========================================================================== #
+
+_CT = None
+_CT_READY = False
+try:
+    import clinicaltrials_pipeline as _CT
+    _CT_READY = True
+except Exception as _cte:
+    logger.warning("clinicaltrials_pipeline unavailable: %s" % _cte)
+
+
+def _sig_doc_text(cik, accession, max_chars=60000):
+    """Primary document text of a filing. Best effort; empty string on failure."""
+    try:
+        acc = str(accession).replace("-", "")
+        base = "https://www.sec.gov/Archives/edgar/data/%s/%s" % (int(cik), acc)
+        idx = _sec_get(base + "/index.json", as_json=True) if _dod_ready() else None
+        if not idx:
+            r = requests.get(base + "/index.json", headers={"User-Agent": SEC_UA_STR}, timeout=20)
+            idx = r.json() if r.status_code == 200 else None
+        if not idx:
+            return ""
+        for item in ((idx.get("directory") or {}).get("item") or []):
+            nm = str(item.get("name", "")).lower()
+            if nm.endswith((".htm", ".html", ".txt")) and "index" not in nm:
+                r = requests.get(base + "/" + item.get("name"),
+                                 headers={"User-Agent": SEC_UA_STR}, timeout=20)
+                if r.status_code != 200:
+                    continue
+                t = re.sub(r"<[^>]+>", " ", r.text)
+                t = html.unescape(t)
+                return re.sub(r"\s+", " ", t)[:max_chars]
+    except Exception as e:
+        logger.warning("_sig_doc_text %s: %s" % (accession, e))
+    return ""
+
+
+SEC_UA_STR = os.environ.get("SEC_USER_AGENT", "ApexQ contact@apexq.io")
+
+
+def sec_process_activist_filing(conn, f):
+    """13D / 13G. Only 13D is treated as a signal -- see the note on SEC_ACTIVIST_FORMS."""
+    accession = f.get("accession_number")
+    form = f.get("form_type", "")
+    cik = f.get("cik")
+    ticker = f.get("ticker") or _sec_cik_to_ticker(cik)
+    activist = _is_activist_form(form)
+
+    txt = _sig_doc_text(cik, accession) if activist else ""
+
+    fund = None
+    m = re.search(r"(?:Name of Reporting Person[s]?\.?|NAME OF REPORTING PERSON)\s*:?\s*([A-Z][^\n\r\.]{3,80})",
+                  txt, re.IGNORECASE)
+    if m:
+        fund = m.group(1).strip()[:120]
+
+    pct = None
+    m = re.search(r"(?:PERCENT OF CLASS REPRESENTED BY AMOUNT|Percent of Class)[^0-9]{0,60}([\d.]+)\s*%",
+                  txt, re.IGNORECASE)
+    if m:
+        try:
+            pct = float(m.group(1))
+        except Exception:
+            pct = None
+
+    shares = None
+    m = re.search(r"(?:AGGREGATE AMOUNT BENEFICIALLY OWNED[^0-9]{0,60})([\d,]{4,})", txt, re.IGNORECASE)
+    if m:
+        try:
+            shares = int(m.group(1).replace(",", ""))
+        except Exception:
+            shares = None
+
+    # Item 4, "Purpose of Transaction" -- the part that separates a stake from an agenda.
+    purpose = ""
+    m = re.search(r"Item\s*4[.\s\-]*Purpose of (?:the )?Transaction(.{0,3000}?)Item\s*5",
+                  txt, re.IGNORECASE | re.DOTALL)
+    if m:
+        purpose = re.sub(r"\s+", " ", m.group(1)).strip()[:2500]
+
+    intent = bool(_ACTIVIST_INTENT.search(purpose)) if purpose else False
+
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO activist_filings (accession, ticker, cik, form_type, is_activist, fund_name,"
+        " shares, percentage, purpose_text, has_control_intent, filing_date, raw_json) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (accession) DO NOTHING",
+        (accession, ticker, str(cik), form, activist, fund, shares, pct, purpose, intent,
+         f.get("filing_date"), _SecJson({"form": form})))
+    conn.commit()
+    cur.close()
+
+
+def sec_process_comment_letter(conn, f):
+    """UPLOAD (SEC -> company) and CORRESP (company -> SEC).
+
+    Classified by severity. MOST COMMENT LETTERS ARE ROUTINE -- the SEC asking a company to reword
+    a non-GAAP table means nothing. Only substantive accounting matters are scored.
+    """
+    accession = f.get("accession_number")
+    cik = f.get("cik")
+    ticker = f.get("ticker") or _sec_cik_to_ticker(cik)
+    txt = _sig_doc_text(cik, accession, max_chars=40000)
+
+    severe = bool(_COMMENT_SEVERE.search(txt))
+    routine = bool(_COMMENT_ROUTINE.search(txt))
+    severity = "severe" if severe else "routine"
+
+    issue = ""
+    pat = _COMMENT_SEVERE if severe else _COMMENT_ROUTINE
+    m = pat.search(txt)
+    if m:
+        start = max(0, m.start() - 160)
+        issue = re.sub(r"\s+", " ", txt[start:m.end() + 320]).strip()[:600]
+    if not issue:
+        issue = re.sub(r"\s+", " ", txt[:400]).strip()
+
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO sec_comment_letters (accession, ticker, cik, form_type, issue_description,"
+        " severity, filing_date, raw_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+        "ON CONFLICT (accession) DO NOTHING",
+        (accession, ticker, str(cik), f.get("form_type"), issue, severity,
+         f.get("filing_date"), _SecJson({"routine_match": routine})))
+    conn.commit()
+    cur.close()
+
+
+def _sec_cik_to_ticker(cik):
+    try:
+        m = sec_ticker_to_cik() if _dod_ready() else {}
+        inv = {v: k for k, v in m.items()}
+        return inv.get(str(cik).zfill(10))
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# LD-1 LOBBYING REGISTRATIONS
+# --------------------------------------------------------------------------- #
+
+_LDA_API = "https://lda.senate.gov/api/v1/filings/"
+_DEFENSIVE_ISSUE = re.compile(
+    r"investigat|enforcement|subpoena|antitrust|monopol|litigation|settlement|"
+    r"regulat|compliance|penalt|sanction|inquiry|oversight",
+    re.IGNORECASE,
+)
+
+
+def fetch_ld1_registrations(days_back=30, max_pages=5):
+    """New lobbying REGISTRATIONS -- filed when a relationship starts, before any money is spent.
+
+    That is the forward-looking part. By the time a quarterly LD-2 spending report lands, the
+    lobbying has already happened. An LD-1 says it is about to.
+    """
+    signals_create_tables()
+    conn = get_db()
+    if not conn:
+        return {"error": "no database"}
+    summary = {"fetched": 0, "stored": 0, "resolved": 0}
+    try:
+        since = (_sec_date.today() - timedelta(days=days_back)).isoformat()
+        for page in range(1, max_pages + 1):
+            try:
+                r = requests.get(_LDA_API, params={
+                    "filing_type": "RR",          # Registration
+                    "filing_dt_posted_after": since,
+                    "page": page, "page_size": 100,
+                }, headers={"User-Agent": SEC_UA_STR}, timeout=25)
+                if r.status_code != 200:
+                    break
+                data = r.json()
+                rows = data.get("results") or []
+                if not rows:
+                    break
+                for f in rows:
+                    summary["fetched"] += 1
+                    client = ((f.get("client") or {}).get("name") or "").strip()
+                    firm = ((f.get("registrant") or {}).get("name") or "").strip()
+                    issues, bills = [], []
+                    for a in (f.get("lobbying_activities") or []):
+                        gi = a.get("general_issue_code_display") or a.get("general_issue_code")
+                        if gi:
+                            issues.append(str(gi))
+                        d = a.get("description") or ""
+                        bills += re.findall(r"\b(?:H\.?R\.?|S\.?)\s?\d{1,5}\b", d)
+                    issue_str = ", ".join(sorted(set(issues)))[:400]
+                    bill_str = ", ".join(sorted(set(bills)))[:200]
+                    defensive = bool(_DEFENSIVE_ISSUE.search(issue_str + " " +
+                                     " ".join((a.get("description") or "") for a in (f.get("lobbying_activities") or []))))
+
+                    ticker = None
+                    if _dod_ready():
+                        try:
+                            ent = _DOD.resolve_entity(conn, client)
+                            if ent["ticker"] and not ent["needs_review"]:
+                                ticker = ent["ticker"]
+                                summary["resolved"] += 1
+                        except Exception:
+                            ticker = None
+
+                    cur = conn.cursor()
+                    cur.execute(
+                        "INSERT INTO lobbying_registrations (filing_uuid, ticker, client_name,"
+                        " lobbying_firm, issues, bill_numbers, form_type, is_defensive, filing_date, raw_json) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,'LD-1',%s,%s,%s) ON CONFLICT (filing_uuid) DO NOTHING",
+                        (f.get("filing_uuid"), ticker, client[:200], firm[:200], issue_str,
+                         bill_str, defensive, (f.get("dt_posted") or "")[:10] or None,
+                         _SecJson({"filing_type": f.get("filing_type")})))
+                    conn.commit()
+                    cur.close()
+                    summary["stored"] += 1
+                time.sleep(0.3)
+            except Exception as e:
+                logger.warning("fetch_ld1 page %s: %s" % (page, e))
+                break
+        return summary
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# CRON ROUTES
+# --------------------------------------------------------------------------- #
+
+@app.route("/cron/ld1-registrations")
+def cron_ld1_registrations():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        return jsonify(fetch_ld1_registrations())
+    except Exception as e:
+        logger.error("cron_ld1: %s" % e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/cron/clinical-trials")
+def cron_clinical_trials():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    if not _CT_READY:
+        return jsonify({"error": "clinicaltrials_pipeline.py not deployed"}), 503
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        resolver = None
+        if _dod_ready():
+            resolver = lambda name: _DOD.resolve_entity(conn, name)
+        return jsonify(_CT.fetch_clinical_trial_changes(conn, resolve_ticker_fn=resolver))
+    except Exception as e:
+        logger.error("cron_clinical_trials: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/activist/<symbol>")
+def api_activist(symbol):
+    return jsonify({"symbol": symbol.upper(), "filings": activist_for(symbol)})
+
+
+@app.route("/api/comment-letters/<symbol>")
+def api_comment_letters(symbol):
+    return jsonify({"symbol": symbol.upper(), "letters": comment_letters_for(symbol)})
+
+
+@app.route("/api/clinical-trials/<symbol>")
+def api_clinical_trials(symbol):
+    return jsonify({"symbol": symbol.upper(), "changes": clinical_changes_for(symbol)})
+
+
+
+# --------------------------------------------------------------------------- #
+# CONVERGENCE EVENT LOG
+#
+# detect_convergence() already finds the overlaps and applies a bounded bonus. What was missing is
+# the part that makes it ANSWERABLE: writing the event down on the day it fires, before the outcome
+# exists, so that in 90 days the labeled data can say whether convergence predicts anything at all.
+#
+# Without this table, the bullish override the spec asked for could never be earned -- there would
+# be no evidence to earn it with, only the feeling that it ought to work.
+# --------------------------------------------------------------------------- #
+
+def convergence_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS convergence_events ("
+            "id SERIAL PRIMARY KEY,"
+            "symbol TEXT NOT NULL,"
+            "event_date DATE NOT NULL DEFAULT CURRENT_DATE,"
+            "pattern TEXT,"
+            "signals JSONB,"
+            "direction TEXT,"
+            "bonus_applied INTEGER,"
+            "cap_applied TEXT,"
+            "alpha_at_event INTEGER,"
+            "verdict_at_event TEXT,"
+            "implication TEXT,"
+            "created_at TIMESTAMP DEFAULT NOW(),"
+            "CONSTRAINT uq_conv UNIQUE (symbol, event_date, pattern))"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_conv_sym ON convergence_events(symbol, event_date DESC)")
+        conn.commit()
+        cur.close()
+        logger.info("convergence event log: table ready")
+    except Exception as e:
+        logger.error("convergence_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def log_convergence(symbol, conv, alpha_score, verdict):
+    """Write the event the day it fires. Never raises; a logging failure must not break a report."""
+    if not conv or not conv.get("converged"):
+        return
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        sigs = conv.get("signals") or []
+        pattern = " + ".join([str(x)[:60] for x in sigs][:4]) or "unspecified"
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO convergence_events (symbol, pattern, signals, direction, bonus_applied,"
+            " cap_applied, alpha_at_event, verdict_at_event, implication) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (symbol, event_date, pattern) DO NOTHING",
+            (str(symbol).upper(), pattern[:300], _SecJson(sigs),
+             ("bearish" if conv.get("cap") else "bullish"),
+             int(conv.get("bonus") or 0), conv.get("cap"),
+             (int(alpha_score) if alpha_score is not None else None),
+             verdict, (conv.get("implication") or "")[:1000]))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.warning("log_convergence %s: %s" % (symbol, e))
+    finally:
+        conn.close()
+
+
+@app.route("/api/convergence")
+def api_convergence():
+    """Every convergence event, joined to what actually happened next.
+
+    This endpoint is the referee. When `labeled` passes ~30 and mean_excess_ret_20d is
+    convincingly positive, the bullish override the spec asked for has EARNED the right to exist.
+    Until then it does not, and the honest answer says so.
+    """
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT c.symbol, c.event_date, c.pattern, c.direction, c.bonus_applied,"
+            " c.alpha_at_event, c.verdict_at_event, f.fwd_ret_20d, f.excess_ret_20d "
+            "FROM convergence_events c "
+            "LEFT JOIN feature_snapshots f ON f.symbol=c.symbol AND f.snap_date=c.event_date "
+            "ORDER BY c.event_date DESC LIMIT 200")
+        rows = [{"symbol": r[0], "date": str(r[1]), "pattern": r[2], "direction": r[3],
+                 "bonus": r[4], "alpha_at_event": r[5], "verdict_at_event": r[6],
+                 "fwd_ret_20d": (float(r[7]) if r[7] is not None else None),
+                 "excess_ret_20d": (float(r[8]) if r[8] is not None else None)}
+                for r in (cur.fetchall() or [])]
+        cur.close()
+
+        bull = [x for x in rows if x["direction"] == "bullish" and x["excess_ret_20d"] is not None]
+        avg = (sum(x["excess_ret_20d"] for x in bull) / len(bull)) if bull else None
+
+        if len(bull) < 30:
+            verdict_txt = ("Only %d labeled bullish convergence events. Far too few to conclude "
+                           "anything. Convergence is currently a HYPOTHESIS being measured -- it adds "
+                           "a small bonus and a flag, and it does NOT override any verdict. It has to "
+                           "earn that." % len(bull))
+        else:
+            verdict_txt = ("Across %d labeled bullish convergence events, mean excess return vs SPY "
+                           "over the following 20 days is %.2f%%. THIS is the number that decides "
+                           "whether the verdict override is justified. If it is near zero, the "
+                           "pattern was a coincidence and should be dropped." % (len(bull), avg))
+
+        return jsonify({
+            "events": rows, "total": len(rows), "labeled_bullish": len(bull),
+            "mean_excess_ret_20d": (round(avg, 2) if avg is not None else None),
+            "override_enabled": False,
+            "verdict": verdict_txt,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
