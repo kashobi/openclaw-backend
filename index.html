@@ -1565,6 +1565,56 @@ body{transition:background-color .3s ease,color .3s ease;}
 .dodRec{font-size:11.5px;color:var(--muted);opacity:.85;margin-top:3px;font-style:italic;}
 .dodLink{font-size:11px;color:var(--accent);text-decoration:none;font-weight:700;}
 .dodPct{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--red);}
+
+/* Portfolio attention dot + 30-day trial card. */
+.pwDot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);
+  margin-left:7px;vertical-align:middle;box-shadow:0 0 0 3px rgba(var(--accent-rgb),.10);
+  animation:pwPulse 2.2s ease-in-out infinite;}
+@keyframes pwPulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+.pwRow{background:rgba(var(--accent-rgb),.045);}
+.pwNote{font-size:12px;color:var(--muted);line-height:1.5;padding:8px 10px;margin-top:6px;
+  border-left:3px solid var(--red);background:var(--rbg);border-radius:0 8px 8px 0;}
+.pwNote b{color:var(--text);}
+.trCard{margin-bottom:14px;}
+.trGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0;}
+.trBox{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center;}
+.trV{font-family:var(--font-mono);font-size:19px;font-weight:800;letter-spacing:-.5px;}
+.trL{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-top:4px;font-family:var(--font-mono);}
+.trUp{color:var(--green);} .trDn{color:var(--red);} .trNu{color:var(--text);}
+.trChurn{font-size:12.5px;color:var(--text);line-height:1.55;padding:11px 13px;border-radius:9px;
+  background:rgba(var(--accent-rgb),.06);border-left:3px solid var(--accent);margin-top:4px;}
+.trWarn{font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px;padding:11px 13px;
+  border-radius:9px;background:var(--ybg);border:1px solid var(--yellow);}
+.trWarn b{color:var(--text);}
+
+/* New signal cards: activist, SEC correspondence, lobbying, clinical trials, convergence. */
+.sgItem{padding:12px 0;border-bottom:1px solid var(--border);}
+.sgItem:last-child{border-bottom:none;}
+.sgTop{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:5px;}
+.sgName{font-weight:800;color:var(--text);font-size:14px;}
+.sgDate{font-family:var(--font-mono);font-size:11px;color:var(--muted);}
+.sgTag{font-family:var(--font-mono);font-size:9.5px;font-weight:800;letter-spacing:.07em;
+  padding:3px 8px;border-radius:999px;white-space:nowrap;}
+.sgIntent{background:var(--gbg);color:var(--green);border:1px solid var(--green);}
+.sgSevere{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.sgRoutine{background:var(--ybg);color:var(--yellow);border:1px solid var(--yellow);}
+.sgAdv{background:var(--gbg);color:var(--green);border:1px solid var(--green);}
+.sgSet{background:var(--rbg);color:var(--red);border:1px solid var(--red);}
+.sgWhy{font-size:12.5px;color:var(--muted);line-height:1.55;}
+.sgLink{font-size:11px;color:var(--accent);text-decoration:none;font-weight:700;margin-top:4px;display:inline-block;}
+/* Convergence card — visually loud, because it is the rarest thing on the page. */
+.cvCard{border:1px solid var(--accent)!important;box-shadow:0 0 28px rgba(var(--accent-rgb),.14);}
+.cvCap{border-color:var(--red)!important;box-shadow:0 0 28px rgba(255,80,80,.14);}
+.cvList{list-style:none;margin:10px 0 0;padding:0;}
+.cvList li{font-size:13.5px;color:var(--text);line-height:1.6;padding:9px 0 9px 24px;position:relative;
+  border-top:1px solid var(--border);}
+.cvList li:first-child{border-top:none;}
+.cvList li::before{content:"\25C6";position:absolute;left:2px;top:9px;color:var(--accent);font-size:11px;}
+.cvImp{margin-top:13px;padding:12px 14px;border-radius:10px;background:rgba(var(--accent-rgb),.07);
+  font-size:13.5px;line-height:1.6;color:var(--text);}
+.cvHyp{margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--ybg);
+  border:1px solid var(--yellow);font-size:12.5px;line-height:1.6;color:var(--text);}
+.cvHyp b{display:block;margin-bottom:4px;}
 </style>
 </head>
 <body>
@@ -2087,6 +2137,7 @@ body{transition:background-color .3s ease,color .3s ease;}
   </div>
 </div>
 <div class="view" id="view-portfolio">
+  <div id="trialCard"></div>
   <div class="vhead">
     <div class="vhead-t">Portfolio</div>
     <div class="vhead-s">Track your holdings. Enter shares and what you paid. Apex Q does the math.</div>
@@ -3554,6 +3605,12 @@ function run(){
     if(typeof injectChangeMind === "function"){ injectChangeMind(d); }
     if(typeof injectEconCalendar === "function"){ injectEconCalendar(d); }
     if(typeof injectDoD === "function"){ injectDoD(d); }
+    if(typeof injectConvergence === "function"){ injectConvergence(d); }
+    if(typeof injectActivist === "function"){ injectActivist(d); }
+    if(typeof injectTrials === "function"){ injectTrials(d); }
+    if(typeof injectLobbyReg === "function"){ injectLobbyReg(d); }
+    if(typeof injectComments === "function"){ injectComments(d); }
+    if(typeof ackPortfolioSymbol === "function" && d && d.symbol){ ackPortfolioSymbol(String(d.symbol).toUpperCase()); }
 
     // CHUNK: Feature 2: price vs analyst target gauge
     var gauge = document.getElementById("mtGauge");
@@ -5715,7 +5772,7 @@ function showView(name){
   }
   if(name === "discover" && !_moversLoaded){ _moversLoaded = true; loadMovers(); }
   if(name === "watch"){ loadAlerts(); loadSubscription(); var _ds = document.getElementById("dataSec"); if(_ds) _ds.style.display = currentUser ? "" : "none"; }
-  if(name === "portfolio"){ loadPortfolio(); _portTimer = setInterval(loadPortfolio, 60000); }
+  if(name === "portfolio"){ loadPortfolio(); loadTrial(); loadPortfolioAlerts(); _portTimer = setInterval(function(){ loadPortfolio(); setTimeout(paintPortfolioDots, 600); }, 60000); }
   if(name === "ask"){
     refreshUsage();
     var asb = document.getElementById("askSym");
@@ -7912,6 +7969,216 @@ if(ib){
     host.appendChild(card);
   }
   window.injectDoD = injectDoD;
+
+  // ---- New signal cards ---------------------------------------------------
+  function _sgCard(id, icon, title, sub, body, foot, cls){
+    var host = document.getElementById("stockSections");
+    var old = document.getElementById(id);
+    if(old){ old.remove(); }
+    if(!host || !body){ return; }
+    var c = document.createElement("div");
+    c.id = id;
+    c.className = "ic senateCardIc " + (cls || "");
+    c.innerHTML = "<div class=\"snHead\"><div class=\"snHeadL\"><div class=\"snIcon\">" + icon +
+      "</div><div><div class=\"snTitle\">" + esc(title) + "</div><div class=\"snSub\">" + esc(sub) +
+      "</div></div></div></div>" + body +
+      (foot ? ("<div class=\"snFoot\">" + esc(foot) + "</div>") : "");
+    host.appendChild(c);
+  }
+
+  // 1. Activist. 13D only — a 13G is a passive index fund and means nothing.
+  function injectActivist(d){
+    var rows = (d && d.activist) ? d.activist : [];
+    if(!rows.length){ _sgCard("actCard","","","","",""); return; }
+    var body = rows.map(function(a){
+      return "<div class=\"sgItem\"><div class=\"sgTop\">" +
+        "<span class=\"sgName\">" + esc(a.fund || "An activist fund") + "</span>" +
+        (a.pct ? "<span class=\"sgTag sgIntent\">" + esc(a.pct.toFixed(1)) + "% STAKE</span>" : "") +
+        (a.control_intent ? "<span class=\"sgTag sgIntent\">CONTROL INTENT</span>" : "") +
+        "<span class=\"sgDate\">" + esc(a.date) + "</span></div>" +
+        "<div class=\"sgWhy\">" + esc(a.control_intent
+          ? "The filing states an intent to influence control \u2014 board seats, asset sales, or a strategic review. An activist who says so in writing usually means it."
+          : "A 13D discloses an activist stake. The fund is required to say what it intends to do.") +
+        "</div></div>";
+    }).join("");
+    _sgCard("actCard","\u26A1","Activist Activity","A fund disclosed a 13D stake",body,
+      "Form 13D is filed by investors who intend to influence the company. Passive 13G stakes are excluded \u2014 index funds file those on almost everything.");
+  }
+
+  // 2. SEC correspondence.
+  function injectComments(d){
+    var rows = (d && d.comment_letters) ? d.comment_letters : [];
+    if(!rows.length){ _sgCard("clCard","","","","",""); return; }
+    var body = rows.map(function(c){
+      var sev = c.severity === "severe";
+      return "<div class=\"sgItem\"><div class=\"sgTop\">" +
+        "<span class=\"sgName\">" + esc(c.form === "UPLOAD" ? "SEC letter to the company" : "Company reply to the SEC") + "</span>" +
+        "<span class=\"sgTag " + (sev ? "sgSevere" : "sgRoutine") + "\">" + (sev ? "SUBSTANTIVE" : "ROUTINE") + "</span>" +
+        "<span class=\"sgDate\">" + esc(c.date) + "</span></div>" +
+        "<div class=\"sgWhy\">" + esc((c.issue || "").slice(0, 320)) + "</div></div>";
+    }).join("");
+    _sgCard("clCard","\uD83D\uDCEC","SEC Correspondence","Comment letters in the last 180 days",body,
+      "Most comment letters are routine \u2014 the SEC asking a company to reword a table. Only substantive accounting matters affect the score.");
+  }
+
+  // 3. LD-1 lobbying registration.
+  function injectLobbyReg(d){
+    var rows = (d && d.lobbying_registrations) ? d.lobbying_registrations : [];
+    if(!rows.length){ _sgCard("lrCard","","","","",""); return; }
+    var body = rows.map(function(l){
+      return "<div class=\"sgItem\"><div class=\"sgTop\">" +
+        "<span class=\"sgName\">" + esc(l.firm || "A lobbying firm") + "</span>" +
+        (l.defensive ? "<span class=\"sgTag sgSevere\">DEFENSIVE</span>" : "<span class=\"sgTag sgIntent\">NEW RELATIONSHIP</span>") +
+        "<span class=\"sgDate\">" + esc(l.date) + "</span></div>" +
+        "<div class=\"sgWhy\">New lobbying relationship established: " + esc(l.firm || "a firm") +
+        " hired to lobby on " + esc(l.issues || "unspecified issues") +
+        (l.bills ? (" (" + esc(l.bills) + ")") : "") + ". " +
+        esc(l.defensive
+          ? "The issues involve investigation or regulation \u2014 this looks like defence, not offence."
+          : "Companies build political strategy before they need it. An LD-1 is filed when the relationship starts, before any money is spent.") +
+        "</div></div>";
+    }).join("");
+    _sgCard("lrCard","\uD83C\uDFDB\uFE0F","New Lobbying Registration","LD-1 filings in the last 60 days",body,
+      "From the Senate LDA database. An LD-1 registers a new lobbying relationship \u2014 it is filed before the spending starts.");
+  }
+
+  // 4. Clinical trials.
+  function injectTrials(d){
+    var rows = (d && d.clinical_trials) ? d.clinical_trials : [];
+    if(!rows.length){ _sgCard("ctCard","","","","",""); return; }
+    var body = rows.map(function(t){
+      var adv = t.direction === "advance";
+      var set = t.direction === "setback";
+      return "<div class=\"sgItem\"><div class=\"sgTop\">" +
+        "<span class=\"sgName\">" + esc((t.title || t.nct_id || "").slice(0, 60)) + "</span>" +
+        (adv ? "<span class=\"sgTag sgAdv\">ADVANCE</span>" : (set ? "<span class=\"sgTag sgSet\">SETBACK</span>" : "")) +
+        "<span class=\"sgDate\">" + esc(t.date) + "</span></div>" +
+        "<div class=\"sgWhy\"><b>" + esc(t.field) + ":</b> " + esc(t.old || "\u2014") + " \u2192 " + esc(t.new || "\u2014") +
+        "<br>" + esc(t.why) + "</div>" +
+        (t.url ? "<a class=\"sgLink\" href=\"" + esc(t.url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">ClinicalTrials.gov \u2197</a>" : "") +
+        "</div>";
+    }).join("");
+    _sgCard("ctCard","\uD83E\uDDEA","Clinical Trial Updates","What changed since yesterday",body,
+      "Diffed daily against ClinicalTrials.gov. A completed trial is not the same as a successful one.");
+  }
+
+  // 5. Convergence.
+  function injectConvergence(d){
+    var c = (d && d.convergence) ? d.convergence : null;
+    if(!c || !c.converged){ _sgCard("cvCard","","","","",""); return; }
+    var capped = !!c.cap;
+    var body = "<ul class=\"cvList\">" + (c.signals || []).map(function(x){
+      return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>" +
+      "<div class=\"cvImp\">" + esc(c.implication) + "</div>" +
+      (c.hypothesis_note ? "<div class=\"cvHyp\"><b>Read this before acting on it.</b>" + esc(c.hypothesis_note) + "</div>" : "");
+    _sgCard("cvCard", capped ? "\u26A0\uFE0F" : "\u25C6",
+      capped ? "Convergence Alert \u2014 Caution" : "Convergence Alert",
+      "Independent signals aligned within 14 days", body,
+      "Convergence is shown, never used to force a Buy. Every occurrence is logged so it can be tested against real outcomes.",
+      capped ? "cvCap" : "cvCard");
+  }
+
+  window.injectActivist = injectActivist;
+  window.injectComments = injectComments;
+  window.injectLobbyReg = injectLobbyReg;
+  window.injectTrials = injectTrials;
+  window.injectConvergence = injectConvergence;
+
+
+  // ---- 30-DAY TRIAL: attention dots + benchmark card ----------------------
+  // The dot means "the engine changed its mind about this since you last looked". It clears when
+  // you open the report. It is deliberately NOT lit by a 1-2 point Alpha wobble -- a dot that is
+  // on every morning is a dot nobody reads.
+  var _pwAlerts = {};
+
+  function loadPortfolioAlerts(){
+    fetch(API + "/api/portfolio-alerts", {credentials: "same-origin"})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        _pwAlerts = (d && d.alerts) ? d.alerts : {};
+        paintPortfolioDots();
+      })
+      .catch(function(){});
+  }
+
+  function paintPortfolioDots(){
+    // Rows render as <span class="psym" data-sym="AAPL"> inside a <tr>. Attach to that span and
+    // tint the parent row -- no change needed to the existing portfolio template.
+    var cells = document.querySelectorAll(".psym[data-sym]");
+    for(var i = 0; i < cells.length; i++){
+      var sym = (cells[i].getAttribute("data-sym") || "").toUpperCase();
+      var a = _pwAlerts[sym];
+      var stale = cells[i].querySelector(".pwDot");
+      if(stale){ stale.remove(); }
+      var tr = cells[i].closest("tr");
+      if(tr){ tr.classList.toggle("pwRow", !!a); }
+      if(a){
+        var dot = document.createElement("span");
+        dot.className = "pwDot";
+        dot.title = a.note || "The engine changed its mind since you last looked";
+        cells[i].appendChild(dot);
+      }
+    }
+  }
+  window.loadPortfolioAlerts = loadPortfolioAlerts;
+
+  // Opening a report clears that symbol's dot.
+  function ackPortfolioSymbol(sym){
+    if(!sym || !_pwAlerts[sym]){ return; }
+    delete _pwAlerts[sym];
+    fetch(API + "/api/portfolio-ack", {
+      method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({symbol: sym})
+    }).catch(function(){});
+    paintPortfolioDots();
+  }
+  window.ackPortfolioSymbol = ackPortfolioSymbol;
+
+  function loadTrial(){
+    var host = document.getElementById("trialCard");
+    if(!host){ return; }
+    fetch(API + "/api/trial", {credentials: "same-origin"})
+      .then(function(r){ return r.json(); })
+      .then(function(t){
+        if(!t || !t.active){
+          host.innerHTML = "<div class=\"ic trCard\"><div class=\"ih\"><div class=\"it\">30-Day Trial</div></div>" +
+            "<div class=\"itxt\">Track this portfolio against the S&amp;P 500 from a fixed starting line, and count how often the engine changes its own mind.</div>" +
+            "<button class=\"lnBtn\" onclick=\"startTrial();\">Start the 30-day trial</button></div>";
+          return;
+        }
+        function cell(v, label){
+          var cls = v === null || v === undefined ? "trNu" : (v > 0 ? "trUp" : (v < 0 ? "trDn" : "trNu"));
+          var txt = (v === null || v === undefined) ? "--" : ((v > 0 ? "+" : "") + v.toFixed(2) + "%");
+          return "<div class=\"trBox\"><div class=\"trV " + cls + "\">" + txt + "</div><div class=\"trL\">" + label + "</div></div>";
+        }
+        host.innerHTML = "<div class=\"ic trCard\">" +
+          "<div class=\"ih\"><div class=\"it\">30-Day Trial</div>" +
+            "<div class=\"ibdg\">Day " + esc(t.day) + " / " + esc(t.target_days) + "</div></div>" +
+          "<div class=\"trGrid\">" +
+            cell(t.portfolio_return_pct, "Portfolio") +
+            cell(t.benchmark_return_pct, "S&amp;P 500") +
+            cell(t.excess_vs_spy_pct, "Excess") +
+          "</div>" +
+          "<div class=\"trChurn\"><b>Verdict flips: " + esc(t.verdict_flips) + "</b><br>" + esc(t.churn_note) + "</div>" +
+          "<div class=\"trWarn\"><b>Read this before you believe the excess number.</b><br>" + esc(t.honesty) + "</div>" +
+          "</div>";
+      })
+      .catch(function(){});
+  }
+  window.loadTrial = loadTrial;
+
+  function startTrial(){
+    fetch(API + "/api/trial/start", {
+      method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({days: 30})
+    }).then(function(r){ return r.json(); })
+      .then(function(){ loadTrial(); })
+      .catch(function(){});
+  }
+  window.startTrial = startTrial;
+
 
 
   // Backspace should edit text, never send the browser back a page. It is blocked only when the
