@@ -1663,6 +1663,35 @@ body{transition:background-color .3s ease,color .3s ease;}
 .erHist .m{font-family:var(--font-mono);}
 .erNote{font-size:11.5px;color:var(--muted);font-style:italic;line-height:1.5;margin-top:10px;}
 @media(max-width:520px){.erCase,.erNums{grid-template-columns:1fr;}}
+
+/* ---- Data maturity badge. Only on the Alpha Score card, only during an earnings window. ---- */
+.dmBadge{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:9.5px;
+  font-weight:800;letter-spacing:.09em;padding:4px 10px;border-radius:999px;cursor:pointer;
+  border:1px solid;white-space:nowrap;transition:transform .12s;}
+.dmBadge:hover{transform:translateY(-1px);}
+.dmPre{background:var(--ybg);color:var(--yellow);border-color:var(--yellow);}
+.dmUpd{background:rgba(80,140,255,.10);color:#6ba4ff;border-color:#6ba4ff;}
+.dmFin{background:var(--gbg);color:var(--green);border-color:var(--green);}
+.dmBadge::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;}
+.dmPre::before{animation:dmPulse 1.8s ease-in-out infinite;}
+@keyframes dmPulse{0%,100%{opacity:1}50%{opacity:.25}}
+.dmPop{display:none;margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--bg);
+  border:1px solid var(--border);font-size:12.5px;color:var(--muted);line-height:1.6;}
+.dmPop.on{display:block;}
+.dmPop b{color:var(--text);}
+.dmRow{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--border);}
+.dmRow:last-child{border-bottom:none;}
+.dmRow span:first-child{color:var(--muted);}
+.dmRow span:last-child{font-family:var(--font-mono);color:var(--text);}
+.dmDrift{margin-top:9px;padding-top:9px;border-top:1px solid var(--border);font-size:12px;}
+.dmWarn{margin-top:9px;padding:9px 11px;border-radius:8px;background:var(--rbg);
+  border:1px solid var(--red);color:var(--text);font-size:12px;line-height:1.5;}
+/* The badge MUST survive the PDF export -- a printed score with no maturity label is the exact
+   thing this feature exists to prevent. */
+@media print{
+  .dmBadge{border:1px solid #999 !important;color:#000 !important;background:#fff !important;}
+  .dmPop{display:block !important;border:1px solid #ccc !important;}
+}
 </style>
 </head>
 <body>
@@ -3654,6 +3683,7 @@ function run(){
     if(typeof injectEconCalendar === "function"){ injectEconCalendar(d); }
     if(typeof injectDoD === "function"){ injectDoD(d); }
     if(typeof injectEarnings === "function"){ injectEarnings(d); }
+    if(typeof injectMaturity === "function"){ injectMaturity(d); }
     if(typeof injectConvergence === "function"){ injectConvergence(d); }
     if(typeof injectActivist === "function"){ injectActivist(d); }
     if(typeof injectTrials === "function"){ injectTrials(d); }
@@ -8195,6 +8225,66 @@ if(ib){
       .catch(function(){});
   }
   window.injectEarnings = injectEarnings;
+
+  // ---- DATA MATURITY BADGE ----------------------------------------------
+  // Appears ONLY when the stock is inside an earnings window. A 13D doesn't mature; a
+  // congressional trade doesn't mature. Badging every card turns badges into wallpaper.
+  function injectMaturity(d){
+    var host = document.querySelector("#alphaCard .ih");
+    var old = document.getElementById("dmWrap");
+    if(old){ old.remove(); }
+    var m = d && d.data_maturity;
+    if(!host || !m){ return; }
+
+    var cls = m.state === "PRELIMINARY" ? "dmPre" : (m.state === "UPDATED" ? "dmUpd" : "dmFin");
+    var wrap = document.createElement("div");
+    wrap.id = "dmWrap";
+    wrap.style.marginLeft = "auto";
+    wrap.innerHTML = "<span class=\"dmBadge " + cls + "\" id=\"dmBadge\">" + esc(m.state) + "</span>";
+    host.appendChild(wrap);
+
+    var pop = document.createElement("div");
+    pop.className = "dmPop";
+    pop.id = "dmPop";
+    var rows = "<div class=\"dmRow\"><span>Last updated</span><span>" +
+                 esc(m.since ? String(m.since).slice(0,16).replace("T"," ") : "unknown") + "</span></div>";
+    if(m.hours_since_release !== null && m.hours_since_release !== undefined){
+      rows += "<div class=\"dmRow\"><span>Hours since release</span><span>" + esc(m.hours_since_release) + "h</span></div>";
+    }
+    rows += "<div class=\"dmRow\"><span>Next expected update</span><span>" +
+              esc(m.next_expected ? "see below" : "none \u2014 final") + "</span></div>";
+
+    pop.innerHTML = "<b>" + esc(m.label) + "</b>" + rows +
+      (m.next_expected ? "<div class=\"dmDrift\">" + esc(m.next_expected) + "</div>" : "") +
+      (m.contradiction ? "<div class=\"dmWarn\">" + esc(m.contradiction) + "</div>" : "") +
+      "<div class=\"dmDrift\" id=\"dmDrift\">Loading how this score has moved as the data matured\u2026</div>";
+    var card = document.getElementById("alphaCard");
+    if(card){ card.appendChild(pop); }
+
+    document.getElementById("dmBadge").addEventListener("click", function(){
+      pop.classList.toggle("on");
+    });
+
+    // How far the score drifted from PRELIMINARY to FINAL. Big drift = the engine draws strong
+    // conclusions from thin data. That is a defect, and this is where it becomes visible.
+    fetch(API + "/api/maturity/" + encodeURIComponent(String(d.symbol).toUpperCase()))
+      .then(function(r){ return r.json(); })
+      .then(function(h){
+        var el = document.getElementById("dmDrift");
+        if(!el || !h || h.error){ return; }
+        var txt = esc(h.note || "");
+        if(h.drift && h.drift.length){
+          var last = h.drift[0];
+          txt = "Last quarter this score read <b>" + esc(last.preliminary) + "</b> on the 8-K and " +
+                "<b>" + esc(last.final) + "</b> once the transcript landed \u2014 a move of " +
+                esc((last.drift > 0 ? "+" : "") + last.drift) + " points. " + txt;
+        }
+        el.innerHTML = txt;
+      })
+      .catch(function(){});
+  }
+  window.injectMaturity = injectMaturity;
+
 
 
   // ---- New signal cards ---------------------------------------------------
