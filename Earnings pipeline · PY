@@ -1,0 +1,973 @@
+"""
+=============================================================================
+APEX Q — EARNINGS INTELLIGENCE MODULE
+=============================================================================
+
+ARCHITECTURE, AND THE ONE DECISION THAT SHAPES ALL OF IT:
+
+  The RELEASE is free and fast. The LIVE TRANSCRIPT is neither.
+
+  At 4:05pm a company files an 8-K, Item 2.02 ("Results of Operations and
+  Financial Condition"), with Exhibit 99.1 -- the earnings press release. EPS,
+  revenue, guidance, management's prepared quote. It hits EDGAR within minutes
+  of the wire. It is public domain and it costs nothing.
+
+  That is also the document that moves the stock. The gap happens at 4:05pm,
+  before the call has even started. The call, an hour later, refines the story;
+  the release IS the story.
+
+  Real-time streaming transcript feeds (Benzinga, AlphaSense, Quartr, FactSet)
+  cost $1,000-10,000/month. They are not wired here because they are not
+  affordable here. TranscriptProvider is a pluggable interface: FMP's post-call
+  transcript is wired today, and a live provider drops in the day it is paid
+  for. There is no fake "LIVE" state. If we do not have the call, the UI says
+  we do not have the call.
+
+EVENT STATE MACHINE:
+
+  SCHEDULED -> PRE_BRIEF -> AWAITING_RELEASE -> RELEASE_PARSED
+            -> CALL_IN_PROGRESS (only if a live provider exists)
+            -> TRANSCRIPT_AVAILABLE -> POST_ANALYZED -> REACTION_LABELED
+
+  Each transition writes a row to earnings_features with the timestamp AT WHICH
+  IT WAS KNOWN. Nothing is ever backfilled into an earlier row.
+
+NO FUTURE LEAKAGE -- the rule the whole feature store rests on:
+
+  The pre-earnings brief is written BEFORE the release and never rewritten
+  afterwards. The reaction is labeled ONLY from prices dated after the release
+  timestamp. A row's `as_of` is the moment the information existed. If you find
+  yourself wanting to update a pre-event row with post-event knowledge, you have
+  just invented a backtest that will look brilliant and lose money.
+
+CAUSATION, HONESTLY:
+
+  You cannot know WHY a stock moved. You can enumerate the plausible reasons and
+  rank them by evidence. Every explanation this module emits is phrased as the
+  most likely reading given what is observable -- never as established cause.
+=============================================================================
+"""
+
+import os
+import re
+import json
+import time
+import logging
+from datetime import date, datetime, timedelta, timezone
+
+import requests
+
+logger = logging.getLogger("earnings")
+
+FMP_BASE = "https://financialmodelingprep.com"
+SEC_UA = {"User-Agent": os.environ.get("SEC_USER_AGENT", "ApexQ contact@apexq.io")}
+
+# 8-K Item 2.02 is the earnings release. Exhibit 99.1 is almost always the press release itself.
+EARNINGS_8K_ITEM = "2.02"
+
+
+# =========================================================================== #
+# DATABASE SCHEMA
+# =========================================================================== #
+
+EARNINGS_SCHEMA = """
+-- One row per company per quarter. The spine of the whole module.
+CREATE TABLE IF NOT EXISTS earnings_events (
+    id                  SERIAL PRIMARY KEY,
+    symbol              TEXT NOT NULL,
+    fiscal_period       TEXT,                 -- 'Q3 2026'
+    scheduled_at        TIMESTAMPTZ,          -- when the company says it will report
+    session             TEXT,                 -- 'bmo' | 'amc' | 'unknown'
+    state               TEXT NOT NULL DEFAULT 'SCHEDULED',
+
+    -- Expectations, captured BEFORE the print. Never rewritten after.
+    eps_estimate        NUMERIC(12,4),
+    rev_estimate        NUMERIC(20,2),
+    estimates_as_of     TIMESTAMPTZ,
+
+    -- Actuals, captured from the release.
+    eps_actual          NUMERIC(12,4),
+    rev_actual          NUMERIC(20,2),
+    eps_surprise_pct    REAL,
+    rev_surprise_pct    REAL,
+    release_at          TIMESTAMPTZ,          -- when the release became public
+    release_url         TEXT,
+    release_text        TEXT,
+
+    -- Guidance and tone, from the release and (when we have it) the call.
+    guidance_direction  TEXT,                 -- 'raised' | 'lowered' | 'reaffirmed' | 'none'
+    guidance_text       TEXT,
+    margin_direction    TEXT,                 -- 'expanding' | 'compressing' | 'stable' | NULL
+    mgmt_tone           REAL,                 -- -1..+1
+    qa_pressure         REAL,                 -- 0..1, how hard analysts pushed
+    themes              JSONB,
+
+    transcript_at       TIMESTAMPTZ,
+    transcript_source   TEXT,                 -- 'fmp' | 'live:<provider>' | NULL
+    transcript_text     TEXT,
+
+    -- The event score. Bounded, and deliberately NOT allowed to override the engine.
+    event_score         INTEGER,              -- 0-100
+    event_note          TEXT,
+
+    -- The reaction. Labeled ONLY from prices after release_at.
+    price_before        NUMERIC(12,4),
+    price_after_1d      NUMERIC(12,4),
+    reaction_1d_pct     REAL,
+    reaction_5d_pct     REAL,
+    bench_1d_pct        REAL,
+    excess_1d_pct       REAL,
+    reaction_labeled_at TIMESTAMPTZ,
+
+    -- The plain-English output.
+    divergence_type     TEXT,                 -- 'beat_down' | 'miss_up' | 'good_qtr_weak_guide' | ...
+    explanation         JSONB,
+
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_earn UNIQUE (symbol, fiscal_period)
+);
+CREATE INDEX IF NOT EXISTS ix_earn_sym ON earnings_events(symbol, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS ix_earn_upcoming ON earnings_events(scheduled_at)
+    WHERE state IN ('SCHEDULED','PRE_BRIEF','AWAITING_RELEASE');
+CREATE INDEX IF NOT EXISTS ix_earn_unlabeled ON earnings_events(release_at)
+    WHERE reaction_labeled_at IS NULL AND release_at IS NOT NULL;
+
+-- POINT-IN-TIME FEATURE STORE.
+--
+-- One row per (event, stage). `as_of` is the moment the information EXISTED, not the moment we
+-- wrote it down. A PRE row is written before the release and NEVER touched again -- that is the
+-- entire mechanism preventing a backtest from cheating.
+CREATE TABLE IF NOT EXISTS earnings_features (
+    id              SERIAL PRIMARY KEY,
+    event_id        INTEGER NOT NULL REFERENCES earnings_events(id) ON DELETE CASCADE,
+    symbol          TEXT NOT NULL,
+    stage           TEXT NOT NULL,        -- 'PRE' | 'RELEASE' | 'CALL' | 'POST'
+    as_of           TIMESTAMPTZ NOT NULL, -- when this was KNOWN
+    features        JSONB NOT NULL,
+    -- Outcome labels, attached later, only from data after `as_of`.
+    fwd_ret_1d      REAL,
+    fwd_ret_5d      REAL,
+    fwd_excess_5d   REAL,
+    labeled_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_ef UNIQUE (event_id, stage)
+);
+CREATE INDEX IF NOT EXISTS ix_ef_sym ON earnings_features(symbol, as_of DESC);
+CREATE INDEX IF NOT EXISTS ix_ef_unlabeled ON earnings_features(as_of) WHERE labeled_at IS NULL;
+"""
+
+
+# =========================================================================== #
+# 1. EARNINGS CALENDAR
+# =========================================================================== #
+
+def fetch_earnings_calendar(symbol, fmp_key=None):
+    """Next scheduled report for one symbol. Returns dict or None.
+
+    FMP first (it carries the session -- before/after market -- which matters enormously:
+    a 4:05pm print gaps the stock overnight, an 8:00am print gaps it into the open).
+    yfinance as the fallback so this still works if FMP is down.
+    """
+    if fmp_key:
+        try:
+            r = requests.get(FMP_BASE + "/api/v3/earning_calendar",
+                             params={"apikey": fmp_key,
+                                     "from": date.today().isoformat(),
+                                     "to": (date.today() + timedelta(days=120)).isoformat()},
+                             timeout=15)
+            if r.status_code == 200:
+                for row in (r.json() or []):
+                    if str(row.get("symbol", "")).upper() == symbol.upper():
+                        return {
+                            "scheduled_at": row.get("date"),
+                            "session": {"bmo": "bmo", "amc": "amc"}.get(
+                                str(row.get("time", "")).lower(), "unknown"),
+                            "eps_estimate": row.get("epsEstimated"),
+                            "rev_estimate": row.get("revenueEstimated"),
+                            "fiscal_period": row.get("fiscalDateEnding"),
+                            "source": "fmp",
+                        }
+        except Exception as e:
+            logger.warning("fmp earnings calendar %s: %s", symbol, e)
+
+    try:
+        import yfinance as yf
+        info = yf.Ticker(symbol).info or {}
+        ts = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
+        if ts:
+            return {
+                "scheduled_at": datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat(),
+                "session": "unknown",
+                "eps_estimate": info.get("epsForward"),
+                "rev_estimate": None,
+                "fiscal_period": None,
+                "source": "yfinance",
+            }
+    except Exception as e:
+        logger.warning("yf earnings calendar %s: %s", symbol, e)
+    return None
+
+
+# =========================================================================== #
+# 2. RELEASE INGESTOR  —  SEC 8-K Item 2.02 / EX-99.1
+#
+# This is the free, fast path, and it is the one that matters. The 8-K hits
+# EDGAR within minutes of the wire, and it is what gaps the stock at 4:05pm --
+# an hour before anyone dials into the call.
+# =========================================================================== #
+
+_EPS_RE = re.compile(
+    r"(?:diluted\s+)?(?:net\s+)?(?:earnings|income|loss)\s+per\s+(?:diluted\s+)?share[^$\d\-]{0,40}"
+    r"\$?\s*(\(?-?[\d.]+\)?)", re.I)
+_REV_RE = re.compile(
+    r"(?:total\s+)?(?:net\s+)?revenue[s]?[^$\d]{0,40}\$\s*([\d,.]+)\s*(billion|million|thousand)?", re.I)
+_GUIDE_UP = re.compile(
+    r"rais(?:es|ing|ed)\s+(?:its\s+|full[- ]year\s+|fy\s*\d*\s*)?(?:guidance|outlook|forecast)|"
+    r"increas(?:es|ing|ed)\s+(?:its\s+)?(?:guidance|outlook)|above (?:its )?prior (?:guidance|outlook)", re.I)
+_GUIDE_DOWN = re.compile(
+    r"low(?:ers|ering|ered)\s+(?:its\s+)?(?:guidance|outlook|forecast)|"
+    r"reduc(?:es|ing|ed)\s+(?:its\s+)?(?:guidance|outlook)|"
+    r"cut(?:s|ting)?\s+(?:its\s+)?(?:guidance|outlook)|"
+    r"below (?:its )?prior (?:guidance|outlook)|withdraw(?:s|ing|n)? (?:its )?(?:guidance|outlook)", re.I)
+_GUIDE_SAME = re.compile(
+    r"reaffirm(?:s|ing|ed)|maintain(?:s|ing|ed)\s+(?:its\s+)?(?:guidance|outlook)|"
+    r"reiterat(?:es|ing|ed)\s+(?:its\s+)?(?:guidance|outlook)", re.I)
+_MARGIN_UP = re.compile(r"margin[s]?\s+(?:expand|improv|increas|grew|up)", re.I)
+_MARGIN_DOWN = re.compile(r"margin[s]?\s+(?:compress|contract|declin|decreas|pressure|down)|"
+                          r"pressure on margin", re.I)
+
+_MULT = {"billion": 1e9, "million": 1e6, "thousand": 1e3, None: 1.0, "": 1.0}
+
+
+def _num(s):
+    try:
+        s = str(s).strip()
+        neg = s.startswith("(") and s.endswith(")")
+        v = float(s.strip("()").replace(",", "").replace("$", ""))
+        return -v if neg else v
+    except Exception:
+        return None
+
+
+def parse_release(text):
+    """Earnings press release -> the numbers and the direction of the story.
+
+    Regex, not an LLM, for the NUMBERS -- a model that hallucinates an EPS figure is worse than no
+    figure at all. The LLM is used for tone and themes, where being approximately right is fine.
+    """
+    body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text or ""))
+    out = {"eps_actual": None, "rev_actual": None, "guidance_direction": "none",
+           "guidance_text": None, "margin_direction": None}
+
+    m = _EPS_RE.search(body)
+    if m:
+        out["eps_actual"] = _num(m.group(1))
+
+    m = _REV_RE.search(body)
+    if m:
+        v = _num(m.group(1))
+        if v is not None:
+            out["rev_actual"] = v * _MULT.get((m.group(2) or "").lower(), 1.0)
+
+    # Guidance direction. Order matters: an explicit cut beats a raise elsewhere in the doc.
+    if _GUIDE_DOWN.search(body):
+        out["guidance_direction"] = "lowered"
+    elif _GUIDE_UP.search(body):
+        out["guidance_direction"] = "raised"
+    elif _GUIDE_SAME.search(body):
+        out["guidance_direction"] = "reaffirmed"
+
+    g = re.search(r"([^.]{0,200}(?:guidance|outlook)[^.]{0,240}\.)", body, re.I)
+    if g:
+        out["guidance_text"] = g.group(1).strip()[:600]
+
+    if _MARGIN_DOWN.search(body):
+        out["margin_direction"] = "compressing"
+    elif _MARGIN_UP.search(body):
+        out["margin_direction"] = "expanding"
+
+    return out
+
+
+def fetch_8k_release(symbol, cik, sec_get_fn, days_back=2):
+    """Find today's 8-K Item 2.02 and pull Exhibit 99.1. Returns (text, url, filed_at) or None."""
+    try:
+        subs = sec_get_fn("https://data.sec.gov/submissions/CIK%s.json" % str(cik).zfill(10),
+                          as_json=True)
+        if not subs:
+            return None
+        recent = (subs.get("filings") or {}).get("recent") or {}
+        forms = recent.get("form") or []
+        accs = recent.get("accessionNumber") or []
+        dates = recent.get("filingDate") or []
+        items = recent.get("items") or []
+
+        cutoff = date.today() - timedelta(days=days_back)
+        for i, form in enumerate(forms):
+            if form != "8-K":
+                continue
+            try:
+                fdate = date.fromisoformat(dates[i])
+            except Exception:
+                continue
+            if fdate < cutoff:
+                break
+            # Item 2.02 is the earnings release. Without it, an 8-K is some other event entirely.
+            if EARNINGS_8K_ITEM not in str(items[i] if i < len(items) else ""):
+                continue
+
+            acc = accs[i].replace("-", "")
+            base = "https://www.sec.gov/Archives/edgar/data/%s/%s" % (int(cik), acc)
+            idx = sec_get_fn(base + "/index.json", as_json=True)
+            if not idx:
+                continue
+            for item in ((idx.get("directory") or {}).get("item") or []):
+                nm = str(item.get("name", "")).lower()
+                if re.search(r"ex[-_]?99", nm) and nm.endswith((".htm", ".html", ".txt")):
+                    url = base + "/" + item["name"]
+                    txt = sec_get_fn(url) or ""
+                    if len(txt) > 500:
+                        return (txt[:300000], url, fdate.isoformat())
+        return None
+    except Exception as e:
+        logger.warning("fetch_8k_release %s: %s", symbol, e)
+        return None
+
+
+# =========================================================================== #
+# 3. TRANSCRIPT PROVIDER  (pluggable — no fake "live")
+# =========================================================================== #
+
+class TranscriptProvider:
+    """Interface. Implement fetch() and set `is_live`.
+
+    Deliberately abstract: real-time transcript feeds cost $1k-10k/month and are not wired here.
+    The day one is paid for, it drops in behind this interface and nothing else changes.
+    """
+    name = "none"
+    is_live = False
+
+    def fetch(self, symbol, year=None, quarter=None):
+        return None
+
+
+class FMPTranscriptProvider(TranscriptProvider):
+    """Post-call transcript. Available hours after the call ends, not during it.
+
+    NOT live. The UI must never claim otherwise -- telling a user they are reading a call in
+    real time when they are reading it four hours late is exactly the kind of small lie that
+    destroys trust in a research product.
+    """
+    name = "fmp"
+    is_live = False
+
+    def __init__(self, key):
+        self.key = key
+
+    def fetch(self, symbol, year=None, quarter=None):
+        if not self.key:
+            return None
+        try:
+            params = {"apikey": self.key}
+            if year:
+                params["year"] = year
+            if quarter:
+                params["quarter"] = quarter
+            r = requests.get(FMP_BASE + "/api/v3/earning_call_transcript/" + symbol.upper(),
+                             params=params, timeout=25)
+            if r.status_code != 200:
+                return None
+            data = r.json() or []
+            if isinstance(data, list) and data:
+                d = data[0]
+                return {"text": d.get("content") or "", "date": d.get("date"),
+                        "source": "fmp", "is_live": False}
+        except Exception as e:
+            logger.warning("fmp transcript %s: %s", symbol, e)
+        return None
+
+
+def get_transcript_provider():
+    """Returns the best provider available. FMP today; a live feed the day it is paid for."""
+    live = os.environ.get("LIVE_TRANSCRIPT_PROVIDER", "").strip()
+    if live:
+        logger.info("live transcript provider configured: %s (not implemented -- add the class)", live)
+    return FMPTranscriptProvider(os.environ.get("FMP_KEY", "").strip())
+
+
+# =========================================================================== #
+# 4. NLP ANALYZER  —  tone, themes, Q&A pressure
+#
+# The LLM is used ONLY where being approximately right is acceptable: tone,
+# themes, how hard analysts pushed. The NUMBERS come from regex, because a model
+# that hallucinates an EPS figure is worse than no figure at all.
+# =========================================================================== #
+
+TONE_PROMPT = """You are analyzing an earnings call transcript for a retail investor.
+
+Return ONLY valid JSON, no markdown, no preamble:
+{
+  "tone": <float -1.0 to 1.0; -1 = defensive/evasive, 0 = neutral, 1 = confident/expansive>,
+  "tone_reason": "<one sentence on WHY, quoting nothing verbatim>",
+  "qa_pressure": <float 0.0 to 1.0; how hard analysts pushed on weak points>,
+  "qa_reason": "<one sentence: what analysts kept returning to>",
+  "themes": ["<3-5 short phrases management repeated most>"],
+  "guidance_signal": "<raised|lowered|reaffirmed|none>",
+  "margin_signal": "<expanding|compressing|stable|unclear>",
+  "hedging": <float 0.0 to 1.0; how much management hedged or deflected>
+}
+
+Rules:
+- Judge tone from HOW things are said, not whether the numbers were good.
+- qa_pressure is high when analysts repeatedly circle the same soft spot, or when
+  management answers a question that was not asked.
+- Do not quote the transcript. Paraphrase.
+- If the transcript is too short or missing, return nulls rather than guessing.
+
+TRANSCRIPT:
+"""
+
+
+def analyze_transcript(text, llm_fn):
+    """llm_fn(prompt) -> str. Returns the parsed dict, or a null-filled dict on any failure.
+
+    Fails to NULL, never to a made-up number. A confident wrong tone score is worse than an
+    honest 'we could not read the call'.
+    """
+    empty = {"tone": None, "tone_reason": None, "qa_pressure": None, "qa_reason": None,
+             "themes": [], "guidance_signal": "none", "margin_signal": "unclear", "hedging": None}
+    if not text or len(text) < 800 or not llm_fn:
+        return empty
+    try:
+        body = re.sub(r"\s+", " ", text)[:45000]
+        raw = llm_fn(TONE_PROMPT + body)
+        if not raw:
+            return empty
+        clean = re.sub(r"^```(?:json)?|```$", "", str(raw).strip(), flags=re.M).strip()
+        d = json.loads(clean)
+        out = dict(empty)
+        out.update({k: d.get(k, empty[k]) for k in empty})
+        for k in ("tone", "qa_pressure", "hedging"):
+            try:
+                out[k] = float(out[k]) if out[k] is not None else None
+            except Exception:
+                out[k] = None
+        return out
+    except Exception as e:
+        logger.warning("analyze_transcript: %s", e)
+        return empty
+
+
+# =========================================================================== #
+# 5. EARNINGS EVENT SCORE
+#
+# Bounded 0-100. It is a FACTOR, not a verdict. It does not override the engine,
+# for the same reason convergence does not: it has never been validated. Every
+# event is logged so that in a few quarters the data can say whether it should.
+# =========================================================================== #
+
+def score_event(ev):
+    """0-100 plus the reasoning. Guidance is weighted hardest, on purpose.
+
+    The single most reliable regularity in earnings reactions is that the market trades the
+    FUTURE, not the quarter. A great quarter with cut guidance sells off; a poor quarter with
+    raised guidance rallies. Weighting the backward-looking beat above the forward-looking
+    guidance would get the sign wrong on the most common confusing case there is.
+    """
+    pts, why = 50, []
+
+    eps_s = ev.get("eps_surprise_pct")
+    rev_s = ev.get("rev_surprise_pct")
+    guide = ev.get("guidance_direction") or "none"
+    tone = ev.get("mgmt_tone")
+    qa = ev.get("qa_pressure")
+    margin = ev.get("margin_direction")
+
+    # --- Guidance: the heaviest weight, because it is what the market actually trades. ---
+    if guide == "raised":
+        pts += 20; why.append("guidance raised -- management is telling you the next quarter is better than the street thinks")
+    elif guide == "lowered":
+        pts -= 22; why.append("guidance lowered -- this usually matters more than the quarter that just closed")
+    elif guide == "reaffirmed":
+        pts += 3; why.append("guidance reaffirmed")
+
+    # --- The quarter itself. Real, but backward-looking. ---
+    if eps_s is not None:
+        if eps_s >= 10:
+            pts += 12; why.append("EPS beat by %.0f%%" % eps_s)
+        elif eps_s > 0:
+            pts += 6; why.append("EPS beat by %.1f%%" % eps_s)
+        elif eps_s > -5:
+            pts -= 6; why.append("EPS missed by %.1f%%" % abs(eps_s))
+        else:
+            pts -= 14; why.append("EPS missed badly, by %.0f%%" % abs(eps_s))
+
+    if rev_s is not None:
+        # Revenue is harder to manage than EPS -- you cannot buy back your way to a revenue beat.
+        if rev_s >= 3:
+            pts += 10; why.append("revenue beat by %.1f%% (harder to engineer than an EPS beat)" % rev_s)
+        elif rev_s > 0:
+            pts += 5
+        elif rev_s > -3:
+            pts -= 6; why.append("revenue light by %.1f%%" % abs(rev_s))
+        else:
+            pts -= 12; why.append("revenue missed by %.0f%% -- demand, not accounting" % abs(rev_s))
+
+    if margin == "expanding":
+        pts += 6; why.append("margins expanding")
+    elif margin == "compressing":
+        pts -= 8; why.append("margins compressing -- costs are outrunning pricing power")
+
+    if tone is not None:
+        pts += int(tone * 6)
+        if tone <= -0.4:
+            why.append("management sounded defensive")
+        elif tone >= 0.5:
+            why.append("management sounded confident")
+
+    if qa is not None and qa >= 0.6:
+        pts -= 6
+        why.append("analysts pushed hard on a soft spot and kept coming back to it")
+
+    return {"event_score": max(0, min(100, int(pts))), "event_note": "; ".join(why[:6])}
+
+
+# =========================================================================== #
+# 6. PLAIN-ENGLISH EXPLAINER
+#
+# The actual product. Anyone can show you an EPS number. The question a retail
+# investor actually has is: "it beat -- why is it DOWN?"
+#
+# CAUSATION RULE: we do not know why a stock moved. We rank the plausible
+# readings by evidence and say which is most likely. Every sentence is phrased
+# accordingly. A research product that claims to know causation is lying, and if
+# you hold a license, it is lying on the record.
+# =========================================================================== #
+
+def classify_divergence(ev):
+    """Name the case. This is what the user is actually confused about."""
+    eps_s = ev.get("eps_surprise_pct")
+    rev_s = ev.get("rev_surprise_pct")
+    react = ev.get("reaction_1d_pct")
+    guide = ev.get("guidance_direction") or "none"
+
+    beat = (eps_s is not None and eps_s > 0) and (rev_s is None or rev_s > -1)
+    miss = (eps_s is not None and eps_s <= 0) or (rev_s is not None and rev_s < -1)
+    up = react is not None and react > 1
+    down = react is not None and react < -1
+
+    if beat and down:
+        return "beat_down"
+    if miss and up:
+        return "miss_up"
+    if beat and guide == "lowered":
+        return "good_qtr_weak_guide"
+    if miss and guide == "raised":
+        return "weak_qtr_better_guide"
+    if beat and up:
+        return "beat_up"
+    if miss and down:
+        return "miss_down"
+    return "mixed"
+
+
+def explain_event(ev):
+    """The four questions a retail investor actually asks, answered in plain English."""
+    d = classify_divergence(ev)
+    eps_s = ev.get("eps_surprise_pct")
+    rev_s = ev.get("rev_surprise_pct")
+    react = ev.get("reaction_1d_pct")
+    guide = ev.get("guidance_direction") or "none"
+    margin = ev.get("margin_direction")
+    tone = ev.get("mgmt_tone")
+    qa = ev.get("qa_pressure")
+    sym = ev.get("symbol", "the stock")
+
+    # --- What happened ---
+    bits = []
+    if eps_s is not None:
+        bits.append("EPS came in %s expectations by %.1f%%" %
+                    ("above" if eps_s > 0 else "below", abs(eps_s)))
+    if rev_s is not None:
+        bits.append("revenue was %s by %.1f%%" %
+                    ("ahead" if rev_s > 0 else "light", abs(rev_s)))
+    if guide != "none":
+        bits.append("guidance was %s" % guide)
+    what = ". ".join([b[0].upper() + b[1:] for b in bits]) + "." if bits else \
+        "The release is in, but the numbers could not be parsed cleanly."
+
+    # --- What management said ---
+    said = []
+    if tone is not None:
+        said.append("Management sounded %s on the call." %
+                    ("confident" if tone >= 0.4 else
+                     "defensive" if tone <= -0.4 else "measured"))
+    if margin:
+        said.append("They pointed to margins %s." % margin)
+    if qa is not None and qa >= 0.6:
+        said.append("Analysts pushed hard on one area and kept returning to it, which usually "
+                    "means the street is not satisfied with the answer.")
+    if not said:
+        said.append("We do not have the call transcript for this quarter yet, so there is nothing "
+                    "to say about what management said. We will not guess.")
+
+    # --- Why the stock moved. RANKED READINGS, NOT ASSERTED CAUSE. ---
+    reasons = {
+        "beat_down": (
+            "%s beat and still fell. The most likely reading, in order: the guidance was %s, and the "
+            "market trades the future rather than the quarter that just closed. %s Expectations may "
+            "also have run ahead of the published estimate -- the number traders had in their heads "
+            "(the 'whisper') is often higher than the one on the screen, and a beat against the "
+            "screen can still be a miss against the room."
+            % (sym,
+               guide if guide != "none" else "not raised",
+               "Margins were described as compressing, which means the profit is being bought with "
+               "costs. " if margin == "compressing" else "")),
+        "miss_up": (
+            "%s missed and still rose. The most likely reading: the miss was smaller than feared, or "
+            "the outlook improved. %s When a stock rallies on bad numbers, the news was usually "
+            "already in the price -- the sellers had already sold."
+            % (sym, "Guidance was raised, which is the strongest version of that story. "
+               if guide == "raised" else "")),
+        "good_qtr_weak_guide": (
+            "This is the classic trap. The quarter was fine; the OUTLOOK was cut. Markets pay for "
+            "future cash flows, not past ones, so a lowered forecast can outweigh a good quarter "
+            "entirely. When you see a green quarter and a red stock, look at the guidance first."),
+        "weak_qtr_better_guide": (
+            "The quarter was weak but the outlook improved. Investors will often forgive one bad "
+            "quarter if management convinces them it was the bottom. Whether they are right is the "
+            "open question -- 'the worst is behind us' is the most-repeated sentence in earnings."),
+        "beat_up": (
+            "Beat, and the stock rose. The simple case: the numbers were better than expected and "
+            "the outlook did not undercut them."),
+        "miss_down": (
+            "Missed, and the stock fell. The simple case. %s"
+            % ("Guidance was lowered as well, which compounds it." if guide == "lowered" else "")),
+        "mixed": (
+            "The signals point in different directions, so no single reading is clearly right. "
+            "Read the guidance line before anything else."),
+    }
+    why = reasons.get(d, reasons["mixed"])
+    if react is not None:
+        why = ("The stock moved %+.1f%% the day after. " % react) + why
+
+    # --- What the market cared about most ---
+    if guide in ("raised", "lowered"):
+        cared = ("Guidance. When guidance moves, it is almost always the thing being traded -- "
+                 "the quarter is history, the guide is the thesis.")
+    elif margin == "compressing":
+        cared = ("Margins. Revenue can grow while the business gets worse, and this is what that "
+                 "looks like.")
+    elif rev_s is not None and rev_s < -2:
+        cared = ("Revenue. A revenue miss is a demand problem, and demand problems are much harder "
+                 "to fix than cost problems.")
+    else:
+        cared = "The headline numbers, with no single line item clearly dominating."
+
+    # --- What changes the call ---
+    watch = []
+    if guide == "lowered":
+        watch.append("Whether next quarter's guide stabilizes. One cut is a stumble; two is a trend.")
+    if margin == "compressing":
+        watch.append("Whether margins stop compressing. That is the number to check first next quarter.")
+    if qa is not None and qa >= 0.6:
+        watch.append("Whatever analysts kept circling on the call -- that is where the next surprise "
+                     "usually comes from.")
+    if not watch:
+        watch.append("Whether the next quarter confirms this one. A single quarter is one data point.")
+
+    return {
+        "divergence_type": d,
+        "what_happened": what,
+        "what_management_said": " ".join(said),
+        "why_the_stock_moved": why,
+        "what_market_cared_about": cared,
+        "what_changes_the_call": watch,
+        "causation_caveat": ("These are the most likely readings given what is observable. Nobody "
+                             "can know with certainty why a stock moved on a given day."),
+    }
+
+
+# =========================================================================== #
+# 7. PRE-EARNINGS BRIEF  (written BEFORE the print, never rewritten after)
+# =========================================================================== #
+
+def build_pre_brief(ev, hist_events=None):
+    """Expectations, what matters, bull case, bear case, risk level.
+
+    Written before the release and frozen. If this row ever gets updated with post-release
+    knowledge, every backtest built on it becomes a lie.
+    """
+    eps_e = ev.get("eps_estimate")
+    rev_e = ev.get("rev_estimate")
+    hist = hist_events or []
+
+    beats = [h for h in hist if (h.get("eps_surprise_pct") or 0) > 0]
+    beat_rate = (len(beats) / len(hist) * 100) if hist else None
+    avg_move = (sum(abs(h.get("reaction_1d_pct") or 0) for h in hist) / len(hist)) if hist else None
+
+    pressure = []
+    last = hist[0] if hist else None
+    if last:
+        if (last.get("guidance_direction") or "") == "lowered":
+            pressure.append("They cut guidance last quarter. The market will want to know whether "
+                            "that was a one-off or the start of something.")
+        if (last.get("margin_direction") or "") == "compressing":
+            pressure.append("Margins were compressing last quarter. Watch whether that stabilized.")
+        if (last.get("qa_pressure") or 0) >= 0.6:
+            pressure.append("Analysts pushed hard on the last call and did not get a satisfying "
+                            "answer. Expect them to come back to it.")
+    if not pressure:
+        pressure.append("No unresolved issue carried over from last quarter. Guidance will likely "
+                        "be the swing factor.")
+
+    risk = "moderate"
+    if avg_move is not None:
+        if avg_move >= 8:
+            risk = "high"
+        elif avg_move <= 3:
+            risk = "low"
+
+    return {
+        "eps_estimate": eps_e,
+        "rev_estimate": rev_e,
+        "beat_rate_pct": round(beat_rate, 0) if beat_rate is not None else None,
+        "avg_abs_move_pct": round(avg_move, 1) if avg_move is not None else None,
+        "risk_level": risk,
+        "what_matters": pressure,
+        "bull_case": ("If guidance is raised and margins hold, the quarter confirms the thesis. "
+                      "Historically this name has beaten %s%% of the time."
+                      % (int(beat_rate) if beat_rate is not None else "an unknown")),
+        "bear_case": ("If guidance is cut, a good quarter will not save the stock -- the market "
+                      "trades the outlook, not the past. Watch for margin commentary as the tell."),
+        "expected_move_note": (
+            "This name has moved an average of %.1f%% the day after its last %d reports. That is a "
+            "rough guide to what is at stake, not a prediction."
+            % (avg_move, len(hist)) if avg_move is not None else
+            "Not enough history yet to say how much this name typically moves on earnings."),
+    }
+
+
+# =========================================================================== #
+# 8. EVENT STATE MACHINE + POINT-IN-TIME FEATURE LOGGER
+#
+# THE ONE RULE: a feature row records what was known AT `as_of`. It is written
+# once and never rewritten. Outcome labels are attached later by a job that may
+# only read prices dated AFTER `as_of`.
+#
+# If you ever find yourself updating a PRE row with something learned from the
+# release, stop. That single edit turns every backtest downstream into fiction --
+# and it will look BETTER, which is exactly why it is so dangerous.
+# =========================================================================== #
+
+STATES = ("SCHEDULED", "PRE_BRIEF", "AWAITING_RELEASE", "RELEASE_PARSED",
+          "CALL_IN_PROGRESS", "TRANSCRIPT_AVAILABLE", "POST_ANALYZED", "REACTION_LABELED")
+
+_TRANSITIONS = {
+    "SCHEDULED": {"PRE_BRIEF"},
+    "PRE_BRIEF": {"AWAITING_RELEASE"},
+    "AWAITING_RELEASE": {"RELEASE_PARSED"},
+    "RELEASE_PARSED": {"CALL_IN_PROGRESS", "TRANSCRIPT_AVAILABLE", "POST_ANALYZED"},
+    "CALL_IN_PROGRESS": {"TRANSCRIPT_AVAILABLE"},
+    "TRANSCRIPT_AVAILABLE": {"POST_ANALYZED"},
+    "POST_ANALYZED": {"REACTION_LABELED"},
+    "REACTION_LABELED": set(),
+}
+
+
+def can_transition(frm, to):
+    return to in _TRANSITIONS.get(frm, set())
+
+
+def log_features(conn, event_id, symbol, stage, features, as_of=None):
+    """Write ONE immutable row. ON CONFLICT DO NOTHING -- a stage is never rewritten.
+
+    That DO NOTHING is not laziness. It is the enforcement mechanism: even a buggy caller cannot
+    retroactively poison a pre-event row with post-event knowledge.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO earnings_features (event_id, symbol, stage, as_of, features) "
+            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (event_id, stage) DO NOTHING",
+            (event_id, symbol.upper(), stage,
+             as_of or datetime.now(timezone.utc), json.dumps(features, default=str)))
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        logger.warning("log_features %s/%s: %s", symbol, stage, e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def label_earnings_reactions(conn, closes_fn, bench_fn, max_events=100):
+    """Attach the stock reaction to matured events.
+
+    POINT-IN-TIME GUARANTEE: only bars dated strictly AFTER release_at are used. `price_before` is
+    the last close on or before the release. Nothing else is permitted to touch these rows.
+    """
+    started = time.time()
+    out = {"labeled": 0, "skipped": 0}
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, symbol, release_at, eps_surprise_pct, rev_surprise_pct, guidance_direction "
+        "FROM earnings_events WHERE release_at IS NOT NULL AND reaction_labeled_at IS NULL "
+        "AND release_at < NOW() - INTERVAL '2 days' ORDER BY release_at DESC LIMIT %s",
+        (max_events,))
+    rows = cur.fetchall() or []
+    cur.close()
+
+    bench = bench_fn() or []
+    bmap = {d: c for d, c in bench}
+    bdates = sorted(bmap.keys())
+
+    for eid, sym, rel_at, eps_s, rev_s, guide in rows:
+        try:
+            closes = closes_fn(sym) or []
+            if len(closes) < 5:
+                out["skipped"] += 1
+                continue
+            cmap = {d: c for d, c in closes}
+            cdates = sorted(cmap.keys())
+            rel_date = rel_at.date() if hasattr(rel_at, "date") else rel_at
+
+            prior = [d for d in cdates if d <= rel_date]
+            future = [d for d in cdates if d > rel_date]     # STRICTLY after. This is the guarantee.
+            if not prior or not future:
+                out["skipped"] += 1
+                continue
+
+            base = cmap[prior[-1]]
+            p1 = cmap[future[0]] if len(future) >= 1 else None
+            p5 = cmap[future[4]] if len(future) >= 5 else None
+            r1 = ((p1 - base) / base * 100.0) if (p1 and base) else None
+            r5 = ((p5 - base) / base * 100.0) if (p5 and base) else None
+
+            b1 = None
+            bp = [d for d in bdates if d <= rel_date]
+            bf = [d for d in bdates if d > rel_date]
+            if bp and bf and bmap[bp[-1]]:
+                b1 = (bmap[bf[0]] - bmap[bp[-1]]) / bmap[bp[-1]] * 100.0
+            exc = (r1 - b1) if (r1 is not None and b1 is not None) else None
+
+            ev = {"symbol": sym, "eps_surprise_pct": eps_s, "rev_surprise_pct": rev_s,
+                  "guidance_direction": guide, "reaction_1d_pct": r1}
+            expl = explain_event(ev)
+
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE earnings_events SET price_before=%s, price_after_1d=%s, reaction_1d_pct=%s,"
+                " reaction_5d_pct=%s, bench_1d_pct=%s, excess_1d_pct=%s,"
+                " divergence_type=%s, explanation=%s, reaction_labeled_at=NOW(),"
+                " state='REACTION_LABELED', updated_at=NOW() WHERE id=%s",
+                (base, p1, r1, r5, b1, exc, expl["divergence_type"],
+                 json.dumps(expl, default=str), eid))
+            # Attach outcomes to every feature stage of this event -- labels only, never features.
+            cur.execute(
+                "UPDATE earnings_features SET fwd_ret_1d=%s, fwd_ret_5d=%s, fwd_excess_5d=%s,"
+                " labeled_at=NOW() WHERE event_id=%s AND labeled_at IS NULL",
+                (r1, r5, exc, eid))
+            conn.commit()
+            cur.close()
+            out["labeled"] += 1
+        except Exception as e:
+            logger.warning("label_earnings_reactions %s: %s", sym, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    out["elapsed_sec"] = round(time.time() - started, 1)
+    logger.info("earnings reactions labeled: %s", out)
+    return out
+
+
+def past_quarters(conn, symbol, n=8):
+    """Last N quarters: outcome, tone, and how the stock reacted. Powers the history strip."""
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT fiscal_period, release_at, eps_surprise_pct, rev_surprise_pct,"
+            " guidance_direction, mgmt_tone, reaction_1d_pct, divergence_type, event_score "
+            "FROM earnings_events WHERE symbol=%s AND release_at IS NOT NULL "
+            "ORDER BY release_at DESC LIMIT %s", (symbol.upper(), n))
+        out = []
+        for r in (cur.fetchall() or []):
+            out.append({
+                "period": r[0], "date": (str(r[1])[:10] if r[1] else None),
+                "eps_surprise_pct": (round(float(r[2]), 1) if r[2] is not None else None),
+                "rev_surprise_pct": (round(float(r[3]), 1) if r[3] is not None else None),
+                "guidance": r[4], "tone": (round(float(r[5]), 2) if r[5] is not None else None),
+                "reaction_1d_pct": (round(float(r[6]), 1) if r[6] is not None else None),
+                "divergence": r[7], "event_score": r[8],
+            })
+        cur.close()
+        return out
+    except Exception as e:
+        logger.warning("past_quarters %s: %s", symbol, e)
+        return []
+
+
+def earnings_for(conn, symbol):
+    """Everything the stock page needs, in one shot. Returns None when there's nothing to show."""
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, fiscal_period, scheduled_at, session, state, eps_estimate, rev_estimate,"
+            " eps_actual, rev_actual, eps_surprise_pct, rev_surprise_pct, release_at, release_url,"
+            " guidance_direction, guidance_text, margin_direction, mgmt_tone, qa_pressure, themes,"
+            " event_score, event_note, reaction_1d_pct, divergence_type, explanation,"
+            " transcript_source, transcript_at "
+            "FROM earnings_events WHERE symbol=%s "
+            "ORDER BY COALESCE(release_at, scheduled_at) DESC LIMIT 1", (symbol.upper(),))
+        r = cur.fetchone()
+        cur.close()
+        if not r:
+            return None
+
+        now = datetime.now(timezone.utc)
+        sched = r[2]
+        countdown = None
+        if sched and not r[11]:
+            try:
+                countdown = int((sched - now).total_seconds())
+            except Exception:
+                countdown = None
+
+        return {
+            "event_id": r[0], "period": r[1],
+            "scheduled_at": (str(sched) if sched else None),
+            "session": r[3], "state": r[4],
+            "countdown_seconds": countdown,
+            "is_upcoming": bool(countdown and countdown > 0),
+            "eps_estimate": (float(r[5]) if r[5] is not None else None),
+            "rev_estimate": (float(r[6]) if r[6] is not None else None),
+            "eps_actual": (float(r[7]) if r[7] is not None else None),
+            "rev_actual": (float(r[8]) if r[8] is not None else None),
+            "eps_surprise_pct": (round(float(r[9]), 1) if r[9] is not None else None),
+            "rev_surprise_pct": (round(float(r[10]), 1) if r[10] is not None else None),
+            "release_at": (str(r[11]) if r[11] else None),
+            "release_url": r[12],
+            "guidance_direction": r[13], "guidance_text": r[14],
+            "margin_direction": r[15],
+            "mgmt_tone": (float(r[16]) if r[16] is not None else None),
+            "qa_pressure": (float(r[17]) if r[17] is not None else None),
+            "themes": r[18] or [],
+            "event_score": r[19], "event_note": r[20],
+            "reaction_1d_pct": (round(float(r[21]), 1) if r[21] is not None else None),
+            "divergence_type": r[22],
+            "explanation": r[23],
+            "transcript_source": r[24],
+            "has_transcript": bool(r[25]),
+            # HONEST: we do not have a live feed. Never claim we do.
+            "live_transcript_available": False,
+            "history": past_quarters(conn, symbol, 8),
+        }
+    except Exception as e:
+        logger.warning("earnings_for %s: %s", symbol, e)
+        return None
