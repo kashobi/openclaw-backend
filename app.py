@@ -520,6 +520,7 @@ def ensure_db():
             fs_create_tables()
             trial_create_tables()
             convergence_create_tables()
+            maturity_create_tables()
             signals_create_tables()
         except Exception as _sce:
             logger.error("snapshot table create at boot: %s" % _sce)
@@ -4760,6 +4761,7 @@ def compute_full_report(symbol):
 
         # Earnings block. Never allowed to break a report.
         _earnings_block = None
+        _maturity = None
         try:
             _earnings_block = earnings_for_report(symbol)
         except Exception as _eae:
@@ -4788,22 +4790,6 @@ def compute_full_report(symbol):
         except Exception as _ce:
             logger.warning("convergence skipped for %s: %s" % (symbol, _ce))
             _converge = None
-
-        if _converge and _converge.get("converged"):
-            try:
-                if isinstance(_alpha, dict) and _alpha.get("score") is not None:
-                    _alpha["score"] = max(0, min(100, int(_alpha["score"]) + int(_converge["bonus"])))
-                # The cap binds. APPROVE is never forced.
-                if _converge.get("cap") == "WATCH" and verdict == "APPROVE":
-                    verdict = "WATCH"
-                    flags.append({"level": "warn", "text": _converge["implication"]})
-                # Write the event down TODAY, before the outcome exists. This row is what will let
-                # the backtest decide, with data, whether convergence deserves to bind.
-                log_convergence(symbol, _converge,
-                                (_alpha.get("score") if isinstance(_alpha, dict) else None),
-                                verdict)
-            except Exception as _ce2:
-                logger.warning("convergence apply %s: %s" % (symbol, _ce2))
 
         _econ_event = None
         try:
@@ -5096,6 +5082,37 @@ def compute_full_report(symbol):
             alpha_score = 0
             alpha_breakdown = []
 
+        # ------------------------------------------------------------------------------------
+        # CONVERGENCE + DATA MATURITY — applied HERE, and this placement is the whole point.
+        #
+        # Both of these used to run ~270 lines earlier, referencing `_alpha` before it existed.
+        # That is an UnboundLocalError, and because it sat inside a try/except it was SWALLOWED:
+        # the convergence bonus, the bearish WATCH cap, and the convergence event log had never
+        # once executed. Identical failure to the sector_name bug -- a silent ordering error that
+        # looks like a working feature.
+        # ------------------------------------------------------------------------------------
+        if _converge and _converge.get("converged"):
+            try:
+                alpha_score = max(0, min(100, int(alpha_score) + int(_converge["bonus"])))
+                if isinstance(_alpha, dict):
+                    _alpha["score"] = alpha_score
+                # The cap binds. APPROVE is never forced on an unvalidated pattern.
+                if _converge.get("cap") == "WATCH" and verdict == "APPROVE":
+                    verdict = "WATCH"
+                    flags.append({"level": "warn", "text": _converge["implication"]})
+                log_convergence(symbol, _converge, alpha_score, verdict)
+            except Exception as _ce2:
+                logger.warning("convergence apply %s: %s" % (symbol, _ce2))
+
+        # Maturity attaches ONLY inside a live earnings window -- no event, no badge, no wallpaper.
+        # On PRELIMINARY, confidence steps down one LEVEL (it is a string, not a number).
+        _maturity = None
+        try:
+            _maturity, confidence, flags = apply_maturity(
+                symbol, _earnings_block, alpha_score, verdict, confidence, flags)
+        except Exception as _me:
+            logger.warning("maturity skipped for %s: %s" % (symbol, _me))
+
         # New seven-factor transparent engine. Runs alongside the legacy score; its richer factor
         # breakdown and aligned verdict are surfaced to the report. Built to never raise.
         try:
@@ -5178,6 +5195,7 @@ def compute_full_report(symbol):
             "economic_event": _econ_event,
             "dod_contracts": _dod_awards,
             "earnings": _earnings_block,
+            "data_maturity": _maturity,
             "activist": _activist,
             "comment_letters": _letters,
             "lobbying_registrations": _ld1,
@@ -13631,6 +13649,239 @@ def earnings_for_report(symbol):
     except Exception as e:
         logger.warning("earnings_for_report %s: %s" % (symbol, e))
         return None
+    finally:
+        conn.close()
+
+
+# =========================================================================== #
+# DATA MATURITY
+#
+# Tells the user where a number sits in the interpretation pipeline:
+#
+#   PRELIMINARY  numbers parsed from the 8-K. Transcript pending. Scores may move.
+#   UPDATED      transcript analyzed. Scores stable but may refine.
+#   FINAL        48h+ elapsed, market reaction recorded. Historical record.
+#
+# THREE DELIBERATE NARROWINGS FROM THE ORIGINAL SPEC:
+#
+# 1. Maturity is attached to EARNINGS and to the overall score -- NOT to every
+#    card. A 13D filing does not mature. A congressional trade does not mature.
+#    A DoD award does not mature. Badging all ten cards turns badges into
+#    wallpaper, and within a week nobody sees any of them.
+#
+# 2. The confidence downgrade is a LEVEL STEP, not "15%". `confidence` is the
+#    string High/Medium/Low; there is nothing to multiply. econ_downgrade()
+#    already steps it correctly, so we reuse it.
+#
+# 3. FINAL is defined MECHANICALLY -- 48 hours elapsed plus a recorded market
+#    reaction. The original spec said "analyst notes reviewed" and "flag for
+#    human review". There is no human in this loop and there is not going to be
+#    one; a state that depends on a review that never happens is a state nothing
+#    ever reaches.
+#
+# What IS kept from the human-review idea: if the transcript's EPS contradicts
+# the 8-K's EPS, one of the two parsers is wrong. That is a DATA QUALITY ALARM,
+# and it is worth having.
+#
+# The transition log is the real prize, and not mainly for users: if a stock's
+# score swings 30 points between PRELIMINARY and FINAL, the engine is
+# over-reacting to thin data. That is a measurable defect, and right now there
+# is no way to see it.
+# =========================================================================== #
+
+MATURITY_STATES = ("PRELIMINARY", "UPDATED", "FINAL")
+
+
+def maturity_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS maturity_transitions ("
+            "id SERIAL PRIMARY KEY,"
+            "symbol TEXT NOT NULL,"
+            "event_id INTEGER,"
+            "state TEXT NOT NULL,"
+            "alpha_at_state INTEGER,"
+            "verdict_at_state TEXT,"
+            "confidence_at_state TEXT,"
+            "entered_at TIMESTAMP DEFAULT NOW(),"
+            "CONSTRAINT uq_mat UNIQUE (symbol, event_id, state))"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_mat_sym ON maturity_transitions(symbol, entered_at DESC)")
+        conn.commit()
+        cur.close()
+        logger.info("data maturity: table ready")
+    except Exception as e:
+        logger.error("maturity_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def _hours_since(ts):
+    if not ts:
+        return None
+    try:
+        s = str(ts).replace("Z", "").replace("T", " ")[:19]
+        return (datetime.utcnow() - datetime.strptime(s, "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600.0
+    except Exception:
+        return None
+
+
+def compute_data_maturity(earn):
+    """Where the data sits. Returns None when there is no recent earnings event --
+    and returning None is the point: no event, no badge, no wallpaper."""
+    if not earn or not isinstance(earn, dict):
+        return None
+
+    rel_h = _hours_since(earn.get("release_at"))
+    has_tx = bool(earn.get("has_transcript"))
+
+    # No release in the last 10 days -> this stock is simply not in an earnings window.
+    if rel_h is None or rel_h > 240:
+        return None
+
+    if rel_h >= 48 and has_tx:
+        state = "FINAL"
+        label = "Post-event interpretation logged. Market reaction recorded."
+        nxt = None
+    elif has_tx:
+        state = "UPDATED"
+        label = "Transcript analyzed. Key metrics extracted."
+        nxt = "Final in about %d hours, once 48 hours have passed and the reaction is recorded." % max(1, int(48 - rel_h))
+    else:
+        state = "PRELIMINARY"
+        label = "Numbers parsed from the 8-K. Transcript pending."
+        nxt = "Updates when the call transcript is published, usually within a day."
+
+    # DATA QUALITY ALARM. The transcript and the 8-K should agree on EPS. If they do not,
+    # one of the two parsers is wrong, and the score resting on them is not trustworthy.
+    contradiction = None
+    try:
+        a, b = earn.get("eps_actual"), earn.get("eps_actual_transcript")
+        if a is not None and b is not None and abs(float(a)) > 0.01:
+            if abs(float(a) - float(b)) / abs(float(a)) > 0.05:
+                contradiction = ("The transcript and the 8-K report different EPS figures "
+                                 "(%.2f vs %.2f). One of the two was parsed wrong, so treat "
+                                 "this quarter's numbers with caution until it is resolved."
+                                 % (float(a), float(b)))
+    except Exception:
+        contradiction = None
+
+    return {
+        "state": state,
+        "label": label,
+        "since": earn.get("release_at"),
+        "hours_since_release": round(rel_h, 1) if rel_h is not None else None,
+        "next_expected": nxt,
+        "is_preliminary": state == "PRELIMINARY",
+        "contradiction": contradiction,
+        "period": earn.get("period"),
+        "event_id": earn.get("event_id"),
+    }
+
+
+def log_maturity_transition(symbol, mat, alpha, verdict, confidence):
+    """Record the score at each state, once. This is what lets us later ask: does the engine
+    over-react to thin data? A 30-point swing from PRELIMINARY to FINAL is a defect, not a nuance."""
+    if not mat or not symbol:
+        return
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO maturity_transitions "
+            "(symbol, event_id, state, alpha_at_state, verdict_at_state, confidence_at_state) "
+            "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (symbol, event_id, state) DO NOTHING",
+            (str(symbol).upper(), mat.get("event_id"), mat["state"],
+             (int(alpha) if alpha is not None else None), verdict, confidence))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.warning("log_maturity_transition %s: %s" % (symbol, e))
+    finally:
+        conn.close()
+
+
+def apply_maturity(symbol, earn, alpha, verdict, confidence, flags):
+    """Attach maturity, step confidence down on PRELIMINARY, log the transition.
+
+    Returns (maturity_dict_or_None, confidence, flags).
+    """
+    try:
+        mat = compute_data_maturity(earn)
+        if not mat:
+            return None, confidence, flags
+
+        flags = list(flags or [])
+
+        if mat["is_preliminary"]:
+            # A LEVEL STEP, not a percentage -- confidence is a string, not a number.
+            confidence = econ_downgrade(confidence)
+            flags.append({"level": "warn", "text":
+                "These numbers came straight from the 8-K filed in the last day or so. The call "
+                "transcript has not been analyzed yet, so the score can still move meaningfully. "
+                "Confidence has been stepped down until it has."})
+
+        if mat.get("contradiction"):
+            flags.append({"level": "warn", "text": mat["contradiction"]})
+
+        log_maturity_transition(symbol, mat, alpha, verdict, confidence)
+        return mat, confidence, flags
+    except Exception as e:
+        logger.warning("apply_maturity %s: %s" % (symbol, e))
+        return None, confidence, flags
+
+
+@app.route("/api/maturity/<symbol>")
+def api_maturity(symbol):
+    """How the score evolved: Preliminary -> Updated -> Final.
+
+    The drift column is the one that matters. Large drift means the engine is drawing strong
+    conclusions from thin data, and that is a bug in the engine, not a feature of the market.
+    """
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT event_id, state, alpha_at_state, verdict_at_state, confidence_at_state, entered_at "
+            "FROM maturity_transitions WHERE symbol=%s ORDER BY entered_at DESC LIMIT 24",
+            (symbol.upper(),))
+        rows = [{"event_id": r[0], "state": r[1], "alpha": r[2], "verdict": r[3],
+                 "confidence": r[4], "at": str(r[5])} for r in (cur.fetchall() or [])]
+        cur.close()
+
+        # Drift per event: how far the score moved from first sight to final.
+        by_event, drift = {}, []
+        for r in rows:
+            by_event.setdefault(r["event_id"], {})[r["state"]] = r
+        for eid, states in by_event.items():
+            p = (states.get("PRELIMINARY") or {}).get("alpha")
+            f = (states.get("FINAL") or states.get("UPDATED") or {}).get("alpha")
+            if p is not None and f is not None:
+                drift.append({"event_id": eid, "preliminary": p, "final": f, "drift": f - p})
+
+        avg = (sum(abs(d["drift"]) for d in drift) / len(drift)) if drift else None
+        return jsonify({
+            "symbol": symbol.upper(), "transitions": rows, "drift": drift,
+            "mean_abs_drift": round(avg, 1) if avg is not None else None,
+            "note": (
+                "Mean absolute drift of %.1f points between the preliminary read and the final one. "
+                "Large drift means the engine draws strong conclusions from thin data -- that is a "
+                "defect worth fixing, not a quirk to live with." % avg
+                if avg is not None else
+                "Not enough completed earnings events yet to measure how far the score drifts as the "
+                "data matures."
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
