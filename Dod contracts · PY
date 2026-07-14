@@ -1,0 +1,1085 @@
+"""
+=============================================================================
+APEX Q — HIGH-IMPACT DoD CONTRACT TRACKER
+=============================================================================
+
+Captures DoD contract actions with the financial scale to move a public stock,
+maps them to tickers, and scores them for stock impact.
+
+ARCHITECTURE NOTE — read this before changing anything:
+
+  defense.gov is the SIGNAL. USAspending is the BACKFILL.
+
+  The DoD posts awards at 5:00pm ET the day they happen. USAspending publishes
+  the same award as structured data weeks later. If you ingest for alpha from
+  USAspending you are systematically late to every single trade. So:
+
+    defense.gov 5pm  -> same-day detection, thin data, regex-parsed
+    USAspending      -> T+days enrichment: UEI, CAGE, NAICS, competition,
+                        obligated vs ceiling, place of performance
+    SAM.gov          -> forward-looking: RFPs and pre-solicitations, i.e. the
+                        contract that has not been awarded yet
+
+  Each source writes into the same `dod_contracts` table, keyed on a stable
+  hash, and later sources ENRICH rows the earlier ones created.
+
+VALUE FLOOR:
+
+  $100M, tested against max(obligated, ceiling). A $9B IDIQ ceiling with a $2M
+  initial obligation is exactly the announcement we exist to catch -- filtering
+  on obligated alone would throw it away. Both are stored; both are tested.
+
+=============================================================================
+"""
+
+import os
+import re
+import json
+import time
+import hashlib
+import logging
+from datetime import date, datetime, timedelta
+
+import requests
+
+logger = logging.getLogger("dod")
+
+DOD_VALUE_FLOOR = 100_000_000.00     # $100M. Nothing below this reaches production.
+USASPENDING = "https://api.usaspending.gov/api/v2"
+DEFENSE_CONTRACTS_URL = "https://www.defense.gov/News/Contracts/"
+SAM_API = "https://api.sam.gov/opportunities/v2/search"
+SAM_API_KEY = os.environ.get("SAM_API_KEY", "")
+
+UA = {"User-Agent": "ApexQ/1.0 (contracts research; contact@apexq.io)"}
+
+
+# ===========================================================================
+# 1. DATABASE SCHEMA
+# ===========================================================================
+
+SCHEMA = """
+-- ---------------------------------------------------------------------------
+-- dod_contracts : one row per contract ACTION (award, modification, IDIQ).
+-- Populated first by the defense.gov scraper (fast, thin), then enriched by
+-- USAspending (slow, structured). Nothing under the value floor is inserted.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dod_contracts (
+    id                  SERIAL PRIMARY KEY,
+    contract_hash       TEXT UNIQUE NOT NULL,   -- stable dedupe key across sources
+
+    -- WHEN. announced_date is the market-relevant timestamp: the moment the
+    -- information became public. Everything downstream keys off this.
+    announced_date      DATE NOT NULL,
+    action_date         DATE,
+
+    -- WHO (as the government names them, before any mapping)
+    recipient_name      TEXT NOT NULL,
+    recipient_uei       TEXT,
+    recipient_cage      TEXT,
+
+    -- WHO (after entity resolution -- may be NULL until resolved)
+    ticker              TEXT,
+    parent_name         TEXT,
+    resolution_method   TEXT,      -- 'seed' | 'exhibit21' | 'fuzzy' | 'manual' | NULL
+    resolution_conf     REAL,      -- 0..1. Below 0.85 goes to the review queue.
+
+    -- HOW MUCH. Kept apart on purpose: a $9B ceiling with $2M obligated is a
+    -- completely different trade from $9B in cash, and conflating them is the
+    -- single easiest way to mislead a user.
+    obligated_amount    NUMERIC(18,2),
+    ceiling_amount      NUMERIC(18,2),
+    headline_amount     NUMERIC(18,2) NOT NULL,  -- max(obligated, ceiling); what we filter on
+
+    -- WHAT KIND
+    award_type          TEXT,      -- 'DEFINITE' | 'IDIQ' | 'MODIFICATION' | 'BPA' | 'OTHER'
+    is_idiq             BOOLEAN DEFAULT FALSE,
+    is_modification     BOOLEAN DEFAULT FALSE,
+    competition         TEXT,      -- 'SOLE_SOURCE' | 'COMPETED' | 'LIMITED' | NULL
+    is_sole_source      BOOLEAN,
+
+    branch              TEXT,      -- Army / Navy / Air Force / DLA / MDA / SOCOM ...
+    naics_code          TEXT,
+    psc_code            TEXT,
+    place_of_perf       TEXT,
+    completion_date     DATE,
+    description         TEXT,
+    piid                TEXT,      -- procurement instrument ID, when known
+    source              TEXT NOT NULL,   -- 'defense.gov' | 'usaspending' | 'sam.gov'
+    source_url          TEXT,
+    raw                 JSONB,     -- the original blob; never throw the evidence away
+
+    -- SIGNAL (computed at ingest; see score_contract)
+    pure_play_ratio     REAL,      -- headline_amount / market_cap at announcement
+    is_pure_play        BOOLEAN,   -- ratio >= 0.10 -> materially changes the company
+    signal_score        INTEGER,   -- 0-100
+    signal_note         TEXT,
+
+    -- Ops
+    is_jv               BOOLEAN DEFAULT FALSE,
+    jv_partners         JSONB,     -- [{"name":..,"ticker":..,"share":0.5}, ...]
+    needs_review        BOOLEAN DEFAULT FALSE,
+    created_at          TIMESTAMP DEFAULT NOW(),
+    enriched_at         TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_dod_date   ON dod_contracts(announced_date DESC);
+CREATE INDEX IF NOT EXISTS ix_dod_ticker ON dod_contracts(ticker, announced_date DESC);
+CREATE INDEX IF NOT EXISTS ix_dod_amount ON dod_contracts(headline_amount DESC);
+CREATE INDEX IF NOT EXISTS ix_dod_review ON dod_contracts(needs_review) WHERE needs_review;
+CREATE INDEX IF NOT EXISTS ix_dod_unresolved ON dod_contracts(announced_date) WHERE ticker IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- organizations_mapping : the crosswalk. This table IS the product.
+--
+-- There is no free authoritative UEI->ticker source. We build one:
+--   1. seed      : ~60 primes, hand-entered. Defense spend is extremely
+--                  concentrated, so this alone covers most $100M+ dollars.
+--   2. exhibit21 : SEC 10-K Exhibit 21 lists every subsidiary of a registrant.
+--                  Free, authoritative, and exactly the parent->child map we
+--                  need. Harvested by the existing EDGAR pipeline.
+--   3. fuzzy     : normalized-name match, ALWAYS with a confidence score.
+--   4. manual    : a human resolved it from the review queue.
+--
+-- confidence < 0.85 never auto-publishes. A wrong ticker means telling a user
+-- RTX won $500M when a private company did -- that error ends the product.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS organizations_mapping (
+    id                  SERIAL PRIMARY KEY,
+    uei                 TEXT,
+    cage                TEXT,
+    legal_name          TEXT NOT NULL,
+    normalized_name     TEXT NOT NULL,   -- lowercased, suffixes stripped; the join key
+    ticker              TEXT,            -- NULL = known private / no public parent
+    parent_ticker       TEXT,            -- the ultimate public parent
+    parent_name         TEXT,
+    is_public           BOOLEAN DEFAULT FALSE,
+    is_subsidiary       BOOLEAN DEFAULT FALSE,
+    source              TEXT NOT NULL,   -- seed | exhibit21 | fuzzy | manual
+    confidence          REAL DEFAULT 1.0,
+    verified            BOOLEAN DEFAULT FALSE,
+    notes               TEXT,
+    updated_at          TIMESTAMP DEFAULT NOW(),
+    UNIQUE (normalized_name)
+);
+CREATE INDEX IF NOT EXISTS ix_org_uei    ON organizations_mapping(uei);
+CREATE INDEX IF NOT EXISTS ix_org_cage   ON organizations_mapping(cage);
+CREATE INDEX IF NOT EXISTS ix_org_parent ON organizations_mapping(parent_ticker);
+
+-- ---------------------------------------------------------------------------
+-- historical_stock_impact : did the contract actually move the stock?
+--
+-- Same point-in-time discipline as the feature store: the row is written when
+-- the contract is announced, BEFORE the outcome exists. Labels are filled in
+-- later by a job that may only read prices dated AFTER announced_date. That is
+-- what makes "sole-source awards to small caps produce +N% over 5 days" an
+-- honest claim rather than a hindsight illusion.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS historical_stock_impact (
+    id                  SERIAL PRIMARY KEY,
+    contract_id         INTEGER NOT NULL REFERENCES dod_contracts(id) ON DELETE CASCADE,
+    ticker              TEXT NOT NULL,
+    announced_date      DATE NOT NULL,
+
+    price_at_announce   NUMERIC(12,4),
+    market_cap_at_announce NUMERIC(20,2),
+
+    ret_1d              REAL,      -- NULL until the day actually happens
+    ret_5d              REAL,
+    ret_20d             REAL,
+    max_move_5d         REAL,
+    bench_ret_5d        REAL,      -- SPY over the same window
+    excess_ret_5d       REAL,      -- the only column that measures skill
+    volume_spike        REAL,      -- day-1 volume / 20d average
+
+    labeled_at          TIMESTAMP,
+    created_at          TIMESTAMP DEFAULT NOW(),
+    UNIQUE (contract_id, ticker)
+);
+CREATE INDEX IF NOT EXISTS ix_impact_ticker ON historical_stock_impact(ticker, announced_date DESC);
+CREATE INDEX IF NOT EXISTS ix_impact_unlabeled ON historical_stock_impact(announced_date)
+    WHERE labeled_at IS NULL;
+"""
+
+
+# ===========================================================================
+# 2. VALUE PARSING  —  the bug that would have killed the product
+# ===========================================================================
+
+_AMT_RE = re.compile(
+    r"\$\s*([\d,]+(?:\.\d+)?)\s*(trillion|billion|million|thousand)?",
+    re.IGNORECASE,
+)
+_MULT = {
+    None: 1.0, "": 1.0,
+    "thousand": 1e3, "million": 1e6, "billion": 1e9, "trillion": 1e12,
+}
+
+
+def parse_usd(text):
+    """Every dollar figure in `text`, normalized to a float USD value.
+
+    THIS is the function the original spec got wrong. The spec said: match
+    'million' or 'billion' and keep the row if the PREFIX NUMBER is >= 100.
+    Under that rule "$1.2 billion" has a prefix of 1.2, fails 1.2 >= 100, and
+    is discarded -- so every contract between $100M and $100B, which is all of
+    them, gets silently dropped. The magnitude word must be applied BEFORE the
+    comparison, not after.
+
+        parse_usd("$1.2 billion")     -> [1200000000.0]
+        parse_usd("$99,500,000")      -> [99500000.0]
+        parse_usd("$250 million")     -> [250000000.0]
+    """
+    out = []
+    for num, mult in _AMT_RE.findall(text or ""):
+        try:
+            v = float(num.replace(",", "")) * _MULT[(mult or "").lower()]
+            out.append(v)
+        except Exception:
+            continue
+    return out
+
+
+def max_usd(text):
+    vals = parse_usd(text)
+    return max(vals) if vals else 0.0
+
+
+# ===========================================================================
+# 3. ENTITY RESOLUTION
+# ===========================================================================
+
+_SUFFIXES = re.compile(
+    r"\b(inc|incorporated|corp|corporation|co|company|llc|l\.l\.c|ltd|limited|lp|l\.p|plc|"
+    r"holdings|holding|group|technologies|technology|systems|solutions|industries|"
+    r"international|intl|usa|us|america|american|the|and)\b\.?",
+    re.IGNORECASE,
+)
+
+
+def normalize_name(name):
+    """Company name -> a join key. Aggressive on purpose: the government writes
+    'LOCKHEED MARTIN CORP.', 'Lockheed Martin Corporation', and
+    'Lockheed Martin Aeronautics Co.' for what is, to a stock, one company."""
+    n = (name or "").lower()
+    n = n.replace("&", " and ")      # DoD writes "Pratt & Whitney"; our seed says "Pratt and Whitney"
+    n = re.sub(r"[^a-z0-9\s]", " ", n)
+    n = _SUFFIXES.sub(" ", n)
+    n = re.sub(r"\s+", " ", n).strip()
+    return n
+
+
+# Seed map. Defense procurement is brutally concentrated -- a few dozen primes
+# take most of the $100M+ dollar volume -- so this short list carries the system
+# on day one, before Exhibit 21 harvesting fills in the long tail.
+SEED_ORGS = [
+    # (legal name as DoD writes it, ticker, parent ticker, parent name)
+    ("Lockheed Martin",                  "LMT",  "LMT",  "Lockheed Martin Corp"),
+    ("Lockheed Martin Aeronautics",      None,   "LMT",  "Lockheed Martin Corp"),
+    ("Sikorsky Aircraft",                None,   "LMT",  "Lockheed Martin Corp"),
+    ("RTX",                              "RTX",  "RTX",  "RTX Corp"),
+    ("Raytheon",                         None,   "RTX",  "RTX Corp"),
+    ("Raytheon Missiles and Defense",    None,   "RTX",  "RTX Corp"),
+    ("Pratt and Whitney",                None,   "RTX",  "RTX Corp"),
+    ("Collins Aerospace",                None,   "RTX",  "RTX Corp"),
+    ("Boeing",                           "BA",   "BA",   "Boeing Co"),
+    ("Boeing Defense Space and Security", None,  "BA",   "Boeing Co"),
+    ("Northrop Grumman",                 "NOC",  "NOC",  "Northrop Grumman Corp"),
+    ("General Dynamics",                 "GD",   "GD",   "General Dynamics Corp"),
+    ("General Dynamics Electric Boat",   None,   "GD",   "General Dynamics Corp"),
+    ("Bath Iron Works",                  None,   "GD",   "General Dynamics Corp"),
+    ("General Dynamics Land Systems",    None,   "GD",   "General Dynamics Corp"),
+    ("L3Harris",                         "LHX",  "LHX",  "L3Harris Technologies"),
+    ("Aerojet Rocketdyne",               None,   "LHX",  "L3Harris Technologies"),
+    ("Huntington Ingalls",               "HII",  "HII",  "Huntington Ingalls Industries"),
+    ("Newport News Shipbuilding",        None,   "HII",  "Huntington Ingalls Industries"),
+    ("Ingalls Shipbuilding",             None,   "HII",  "Huntington Ingalls Industries"),
+    ("Leidos",                           "LDOS", "LDOS", "Leidos Holdings"),
+    ("Booz Allen Hamilton",              "BAH",  "BAH",  "Booz Allen Hamilton"),
+    ("CACI",                             "CACI", "CACI", "CACI International"),
+    ("SAIC",                             "SAIC", "SAIC", "Science Applications Intl"),
+    ("Science Applications International", None, "SAIC", "Science Applications Intl"),
+    ("Parsons",                          "PSN",  "PSN",  "Parsons Corp"),
+    ("KBR",                              "KBR",  "KBR",  "KBR Inc"),
+    ("Jacobs",                           "J",    "J",    "Jacobs Solutions"),
+    ("Amentum",                          "AMTM", "AMTM", "Amentum Holdings"),
+    ("V2X",                              "VVX",  "VVX",  "V2X Inc"),
+    ("Vectrus",                          None,   "VVX",  "V2X Inc"),
+    ("TransDigm",                        "TDG",  "TDG",  "TransDigm Group"),
+    ("HEICO",                            "HEI",  "HEI",  "HEICO Corp"),
+    ("Curtiss Wright",                   "CW",   "CW",   "Curtiss-Wright Corp"),
+    ("Moog",                             "MOG.A","MOG.A","Moog Inc"),
+    ("Textron",                          "TXT",  "TXT",  "Textron Inc"),
+    ("Bell Textron",                     None,   "TXT",  "Textron Inc"),
+    ("Oshkosh",                          "OSK",  "OSK",  "Oshkosh Corp"),
+    ("AeroVironment",                    "AVAV", "AVAV", "AeroVironment Inc"),
+    ("Kratos",                           "KTOS", "KTOS", "Kratos Defense"),
+    ("Kratos Defense and Security",      None,   "KTOS", "Kratos Defense"),
+    ("Mercury Systems",                  "MRCY", "MRCY", "Mercury Systems"),
+    ("Palantir",                         "PLTR", "PLTR", "Palantir Technologies"),
+    ("Palantir USG",                     None,   "PLTR", "Palantir Technologies"),
+    ("Rocket Lab",                       "RKLB", "RKLB", "Rocket Lab USA"),
+    ("Intuitive Machines",               "LUNR", "LUNR", "Intuitive Machines"),
+    ("Redwire",                          "RDW",  "RDW",  "Redwire Corp"),
+    ("BWX Technologies",                 "BWXT", "BWXT", "BWX Technologies"),
+    ("Honeywell",                        "HON",  "HON",  "Honeywell International"),
+    ("GE Aerospace",                     "GE",   "GE",   "GE Aerospace"),
+    ("Spirit AeroSystems",               "SPR",  "SPR",  "Spirit AeroSystems"),
+    ("Howmet Aerospace",                 "HWM",  "HWM",  "Howmet Aerospace"),
+    ("Woodward",                         "WWD",  "WWD",  "Woodward Inc"),
+    ("Ducommun",                         "DCO",  "DCO",  "Ducommun Inc"),
+    ("Astronics",                        "ATRO", "ATRO", "Astronics Corp"),
+    ("Elbit Systems of America",         None,   "ESLT", "Elbit Systems"),
+    ("BAE Systems",                      None,   None,   "BAE Systems plc (LSE: BA.L)"),
+    ("Anduril Industries",               None,   None,   "Anduril (private)"),
+    ("SpaceX",                           None,   None,   "SpaceX (private)"),
+    ("Sierra Nevada",                    None,   None,   "Sierra Nevada Corp (private)"),
+]
+
+
+def seed_organizations(conn):
+    """Idempotent. Safe on every boot."""
+    cur = conn.cursor()
+    for legal, ticker, parent, pname in SEED_ORGS:
+        cur.execute(
+            "INSERT INTO organizations_mapping "
+            "(legal_name, normalized_name, ticker, parent_ticker, parent_name, is_public, "
+            " is_subsidiary, source, confidence, verified) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'seed',1.0,TRUE) "
+            "ON CONFLICT (normalized_name) DO NOTHING",
+            (legal, normalize_name(legal), ticker, parent, pname,
+             bool(parent), ticker is None and parent is not None),
+        )
+    conn.commit()
+    cur.close()
+
+
+def resolve_entity(conn, recipient_name, uei=None, cage=None):
+    """UEI/CAGE/name -> ticker, with an honest confidence.
+
+    Order matters: exact identifiers first, then the normalized name, then a
+    containment match, and only then fuzzy. Anything below 0.85 is flagged for
+    human review rather than published.
+
+    Returns dict(ticker, parent_name, method, confidence, needs_review).
+    """
+    cur = conn.cursor()
+    miss = {"ticker": None, "parent_name": None, "method": None,
+            "confidence": 0.0, "needs_review": True}
+
+    # 1. UEI / CAGE -- unambiguous when present.
+    for col, val in (("uei", uei), ("cage", cage)):
+        if not val:
+            continue
+        cur.execute(
+            "SELECT parent_ticker, parent_name, source, confidence FROM organizations_mapping "
+            "WHERE %s = %%s AND parent_ticker IS NOT NULL LIMIT 1" % col, (val,))
+        r = cur.fetchone()
+        if r:
+            cur.close()
+            return {"ticker": r[0], "parent_name": r[1], "method": col,
+                    "confidence": 1.0, "needs_review": False}
+
+    norm = normalize_name(recipient_name)
+    if not norm:
+        cur.close()
+        return miss
+
+    # 2. Exact normalized name.
+    cur.execute(
+        "SELECT parent_ticker, parent_name, source, confidence FROM organizations_mapping "
+        "WHERE normalized_name = %s LIMIT 1", (norm,))
+    r = cur.fetchone()
+    if r:
+        cur.close()
+        # A row that resolves to no public parent is a RESOLVED PRIVATE COMPANY, not a
+        # failure. Saying "Anduril, private" is correct and useful; guessing a ticker is not.
+        return {"ticker": r[0], "parent_name": r[1], "method": r[2],
+                "confidence": float(r[3] or 1.0), "needs_review": False}
+
+    # 3. Containment. "lockheed martin aeronautics" contains the seed "lockheed martin".
+    cur.execute(
+        "SELECT parent_ticker, parent_name, normalized_name FROM organizations_mapping "
+        "WHERE parent_ticker IS NOT NULL AND %s LIKE '%%' || normalized_name || '%%' "
+        "ORDER BY LENGTH(normalized_name) DESC LIMIT 1", (norm,))
+    r = cur.fetchone()
+    if r:
+        conf = 0.90 if len(r[2]) >= 8 else 0.70   # short keys match by accident
+        cur.close()
+        return {"ticker": r[0], "parent_name": r[1], "method": "fuzzy",
+                "confidence": conf, "needs_review": conf < 0.85}
+
+    # 4. Unknown. Queue it. Never guess a ticker onto a $100M headline.
+    cur.execute(
+        "INSERT INTO organizations_mapping (legal_name, normalized_name, source, confidence, verified) "
+        "VALUES (%s,%s,'fuzzy',0.0,FALSE) ON CONFLICT (normalized_name) DO NOTHING",
+        (recipient_name, norm))
+    conn.commit()
+    cur.close()
+    return miss
+
+
+# --- Joint ventures --------------------------------------------------------
+_JV_SPLIT = re.compile(r"\band\b|,|/|&|\bjoint venture\b|\bJV\b", re.IGNORECASE)
+
+
+def parse_joint_venture(conn, recipient_name, description=""):
+    """A JV award names two or more parents. Credit both, never double-count.
+
+    Absent an explicit split in the text, shares are left NULL rather than
+    assumed 50/50 -- an invented split is worse than an honest unknown.
+    """
+    blob = (recipient_name or "") + " " + (description or "")
+    if not re.search(r"joint venture|\bJV\b|\bteaming\b", blob, re.IGNORECASE):
+        return []
+    parts = [p.strip() for p in _JV_SPLIT.split(recipient_name or "") if len(p.strip()) > 3]
+    out, seen = [], set()
+    for p in parts:
+        r = resolve_entity(conn, p)
+        if r["ticker"] and r["ticker"] not in seen and not r["needs_review"]:
+            seen.add(r["ticker"])
+            share = None
+            m = re.search(re.escape(p) + r"[^.]{0,60}?(\d{1,3})\s*(?:%|percent)", blob, re.IGNORECASE)
+            if m:
+                try:
+                    share = float(m.group(1)) / 100.0
+                except Exception:
+                    share = None
+            out.append({"name": p, "ticker": r["ticker"], "share": share})
+    return out if len(out) > 1 else []
+
+
+# ===========================================================================
+# 4. SIGNAL SCORING
+# ===========================================================================
+
+def score_contract(row, market_cap=None):
+    """0-100, plus the plain-English reason. The core insight the whole product
+    rests on: SIZE RELATIVE TO THE COMPANY is the signal, not size in dollars.
+
+    A $200M award is a rounding error to Lockheed ($100B+ cap) and a
+    company-altering event for AeroVironment. Same headline, opposite trade.
+    """
+    amt = float(row.get("headline_amount") or 0)
+    pts, why = 0, []
+
+    ratio = None
+    if market_cap and market_cap > 0:
+        ratio = amt / float(market_cap)
+        if ratio >= 0.50:
+            pts += 45; why.append("award equals %.0f%% of the company's entire market cap" % (ratio * 100))
+        elif ratio >= 0.20:
+            pts += 38; why.append("award is %.0f%% of market cap -- materially changes the company" % (ratio * 100))
+        elif ratio >= 0.10:
+            pts += 30; why.append("award is %.0f%% of market cap" % (ratio * 100))
+        elif ratio >= 0.03:
+            pts += 18; why.append("award is %.1f%% of market cap -- meaningful but not transformative" % (ratio * 100))
+        else:
+            pts += 5;  why.append("award is under 3% of market cap -- unlikely to move the stock on its own")
+
+    # Cash beats a ceiling. An IDIQ ceiling is permission to spend, not spending.
+    if row.get("is_idiq"):
+        pts += 8
+        why.append("IDIQ ceiling, not funded cash -- this is a spending CAP the DoD may never use")
+    else:
+        pts += 22
+        why.append("definite award -- funded, not a ceiling")
+
+    # Sole-source means no price competition, which historically means fatter margins.
+    if row.get("is_sole_source"):
+        pts += 18
+        why.append("sole-source: no competitor bid it down, so margins are typically higher")
+    elif row.get("competition") == "COMPETED":
+        pts += 8
+        why.append("competitively awarded")
+
+    if row.get("is_modification"):
+        pts -= 10
+        why.append("a modification to existing work, not new business")
+
+    if amt >= 1e9:
+        pts += 12; why.append("over $1 billion")
+    elif amt >= 5e8:
+        pts += 7
+
+    pts = max(0, min(100, pts))
+    return {
+        "signal_score": pts,
+        "pure_play_ratio": ratio,
+        "is_pure_play": bool(ratio and ratio >= 0.10),
+        "signal_note": "; ".join(why),
+    }
+
+
+# ===========================================================================
+# 5. INGESTION — defense.gov (the SIGNAL: same-day, 5pm ET)
+# ===========================================================================
+
+def _hash(*parts):
+    return hashlib.sha256("|".join(str(p or "") for p in parts).encode()).hexdigest()[:32]
+
+
+_IDIQ_RE = re.compile(r"indefinite[- ]delivery|IDIQ|ordering period|ceiling", re.I)
+_SOLE_RE = re.compile(r"sole[- ]source|not competitively procured|one (?:offer|bid) (?:was )?received|"
+                      r"pursuant to 10 U\.S\. Code 3204", re.I)
+_COMP_RE = re.compile(r"competitively procured|(\d+)\s+offers? (?:were )?received", re.I)
+_MOD_RE  = re.compile(r"\bmodification\b|\boption\b (?:is )?exercis", re.I)
+_BRANCH_RE = re.compile(r"\b(Army|Navy|Air Force|Space Force|Marine Corps|"
+                        r"Defense Logistics Agency|Missile Defense Agency|"
+                        r"Special Operations Command|Defense Advanced Research)\b", re.I)
+
+
+def parse_defense_gov_entry(text, announced):
+    """One announcement paragraph -> a contract row, or None if below the floor.
+
+    THE FLOOR IS APPLIED HERE, on a normalized dollar value. Nothing under
+    $100M is returned, so nothing under $100M can ever reach the database.
+    """
+    amt = max_usd(text)
+    if amt < DOD_VALUE_FLOOR:
+        return None
+
+    # The recipient is the leading clause, before the comma and the city.
+    m = re.match(r"\s*([^,]{3,90})\s*,", text or "")
+    recipient = (m.group(1) if m else "").strip()
+    if not recipient:
+        return None
+
+    is_idiq = bool(_IDIQ_RE.search(text))
+    is_mod = bool(_MOD_RE.search(text))
+    sole = bool(_SOLE_RE.search(text))
+    comp = _COMP_RE.search(text)
+    br = _BRANCH_RE.search(text)
+
+    return {
+        "contract_hash": _hash(recipient, round(amt), announced),
+        "announced_date": announced,
+        "recipient_name": recipient,
+        "obligated_amount": None if is_idiq else amt,
+        "ceiling_amount": amt if is_idiq else None,
+        "headline_amount": amt,                       # max(obligated, ceiling) by construction
+        "award_type": "MODIFICATION" if is_mod else ("IDIQ" if is_idiq else "DEFINITE"),
+        "is_idiq": is_idiq,
+        "is_modification": is_mod,
+        "is_sole_source": sole,
+        "competition": "SOLE_SOURCE" if sole else ("COMPETED" if comp else None),
+        "branch": br.group(1) if br else None,
+        "description": (text or "")[:2000],
+        "source": "defense.gov",
+        "source_url": DEFENSE_CONTRACTS_URL,
+        "raw": {"text": (text or "")[:4000]},
+    }
+
+
+def fetch_defense_gov(day=None):
+    """Scrape the 5pm ET daily announcements. Returns only $100M+ rows."""
+    day = day or date.today()
+    out = []
+    try:
+        r = requests.get(DEFENSE_CONTRACTS_URL, headers=UA, timeout=20)
+        if r.status_code != 200:
+            logger.warning("defense.gov -> %s", r.status_code)
+            return out
+        # Announcements are paragraph blocks. Strip tags, split on blank lines.
+        html = re.sub(r"<script.*?</script>|<style.*?</style>", " ", r.text, flags=re.S | re.I)
+        txt = re.sub(r"<[^>]+>", "\n", html)
+        blocks = [b.strip() for b in re.split(r"\n\s*\n", txt) if "$" in b and len(b.strip()) > 80]
+        for b in blocks:
+            row = parse_defense_gov_entry(b, day)
+            if row:
+                out.append(row)
+    except Exception as e:
+        logger.error("fetch_defense_gov: %s", e)
+    logger.info("defense.gov: %d contracts over the $100M floor", len(out))
+    return out
+
+
+# ===========================================================================
+# 6. INGESTION — USAspending (the BACKFILL: structured, T+weeks)
+# ===========================================================================
+
+def fetch_usaspending(days_back=30, page_limit=10):
+    """POST /api/v2/search/spending_by_award/ with the $100M floor in the payload.
+
+    NOTE ON THE FLOOR: award_amounts.lower_bound filters on the award amount as
+    USAspending reports it. For IDVs that is often the obligated figure, NOT the
+    ceiling -- which is why a $9B ceiling with $2M obligated can slip through the
+    server-side filter. So we ALSO pull IDV award types and re-test the floor
+    locally against max(obligated, ceiling). Server-side filtering alone would
+    quietly lose the biggest announcements in the system.
+    """
+    end = date.today()
+    start = end - timedelta(days=days_back)
+    out = []
+
+    payload = {
+        "subawards": False,
+        "limit": 100,
+        "page": 1,
+        "sort": "Award Amount",
+        "order": "desc",
+        "filters": {
+            "time_period": [{"start_date": start.isoformat(), "end_date": end.isoformat()}],
+            "agencies": [{"type": "awarding", "tier": "toptier",
+                          "name": "Department of Defense"}],
+            # A/B/C/D = contract award types; IDV_* = the ceiling vehicles we must not miss.
+            "award_type_codes": ["A", "B", "C", "D",
+                                 "IDV_A", "IDV_B", "IDV_B_A", "IDV_B_B", "IDV_B_C",
+                                 "IDV_C", "IDV_D", "IDV_E"],
+            "award_amounts": [{"lower_bound": DOD_VALUE_FLOOR}],
+        },
+        "fields": [
+            "Award ID", "Recipient Name", "Recipient UEI",
+            "Award Amount", "Total Outlays",
+            "Start Date", "End Date",
+            "Awarding Agency", "Awarding Sub Agency",
+            "Contract Award Type", "Award Type",
+            "NAICS", "PSC", "Description",
+            "generated_internal_id",
+        ],
+    }
+
+    for page in range(1, page_limit + 1):
+        payload["page"] = page
+        try:
+            r = requests.post(USASPENDING + "/search/spending_by_award/",
+                              json=payload, headers=UA, timeout=30)
+            if r.status_code != 200:
+                logger.warning("usaspending -> %s %s", r.status_code, r.text[:200])
+                break
+            data = r.json()
+            results = data.get("results") or []
+            if not results:
+                break
+            for a in results:
+                amt = float(a.get("Award Amount") or 0)
+                ceiling = float(a.get("Total Outlays") or 0)
+                headline = max(amt, ceiling)
+                if headline < DOD_VALUE_FLOOR:      # re-test locally; see the note above
+                    continue
+                atype = str(a.get("Award Type") or a.get("Contract Award Type") or "")
+                is_idv = atype.upper().startswith("IDV") or "INDEFINITE" in atype.upper()
+                out.append({
+                    "contract_hash": _hash(a.get("Award ID"), a.get("Recipient Name"), round(headline)),
+                    "announced_date": a.get("Start Date") or date.today().isoformat(),
+                    "action_date": a.get("Start Date"),
+                    "recipient_name": a.get("Recipient Name") or "",
+                    "recipient_uei": a.get("Recipient UEI"),
+                    "obligated_amount": amt or None,
+                    "ceiling_amount": ceiling or None,
+                    "headline_amount": headline,
+                    "award_type": "IDIQ" if is_idv else "DEFINITE",
+                    "is_idiq": is_idv,
+                    "is_modification": False,
+                    "naics_code": (a.get("NAICS") or {}).get("code") if isinstance(a.get("NAICS"), dict) else a.get("NAICS"),
+                    "psc_code": (a.get("PSC") or {}).get("code") if isinstance(a.get("PSC"), dict) else a.get("PSC"),
+                    "branch": a.get("Awarding Sub Agency"),
+                    "completion_date": a.get("End Date"),
+                    "description": (a.get("Description") or "")[:2000],
+                    "piid": a.get("Award ID"),
+                    "source": "usaspending",
+                    "source_url": "https://www.usaspending.gov/award/" + str(a.get("generated_internal_id") or ""),
+                    "raw": a,
+                })
+            if not data.get("page_metadata", {}).get("hasNext"):
+                break
+            time.sleep(0.4)
+        except Exception as e:
+            logger.error("fetch_usaspending page %s: %s", page, e)
+            break
+
+    logger.info("usaspending: %d contracts over the $100M floor", len(out))
+    return out
+
+
+# ===========================================================================
+# 7. INGESTION — SAM.gov (FORWARD-LOOKING: the contract not yet awarded)
+# ===========================================================================
+
+def fetch_sam_opportunities(days_ahead=90):
+    """Pre-solicitations and RFPs above the floor. This is the only source that
+    is ahead of the market rather than behind it -- an RFP tells you money is
+    coming before anyone has won it."""
+    if not SAM_API_KEY:
+        logger.info("SAM_API_KEY not set; skipping pre-solicitations")
+        return []
+    out = []
+    try:
+        params = {
+            "api_key": SAM_API_KEY,
+            "postedFrom": (date.today() - timedelta(days=30)).strftime("%m/%d/%Y"),
+            "postedTo": date.today().strftime("%m/%d/%Y"),
+            "ptype": "p,o,r",          # presolicitation, solicitation, sources sought
+            "deptname": "DEPT OF DEFENSE",
+            "limit": 200,
+        }
+        r = requests.get(SAM_API, params=params, headers=UA, timeout=30)
+        if r.status_code != 200:
+            logger.warning("sam.gov -> %s", r.status_code)
+            return out
+        for o in (r.json().get("opportunitiesData") or []):
+            blob = (o.get("title") or "") + " " + (o.get("description") or "")
+            amt = max_usd(blob)
+            if amt < DOD_VALUE_FLOOR:
+                continue
+            out.append({
+                "contract_hash": _hash(o.get("noticeId")),
+                "announced_date": (o.get("postedDate") or "")[:10] or date.today().isoformat(),
+                "recipient_name": "(not yet awarded)",
+                "headline_amount": amt,
+                "ceiling_amount": amt,
+                "award_type": "OTHER",
+                "is_idiq": False,
+                "is_modification": False,
+                "branch": o.get("fullParentPathName"),
+                "description": blob[:2000],
+                "source": "sam.gov",
+                "source_url": o.get("uiLink"),
+                "raw": o,
+            })
+    except Exception as e:
+        logger.error("fetch_sam_opportunities: %s", e)
+    return out
+
+
+# ===========================================================================
+# 8. PIPELINE
+# ===========================================================================
+
+def upsert_contract(conn, row, market_cap_lookup=None):
+    """Resolve the entity, score it, write it. The floor is asserted one final
+    time here so no code path can ever slip a sub-$100M row into production."""
+    if float(row.get("headline_amount") or 0) < DOD_VALUE_FLOOR:
+        return False
+
+    ent = resolve_entity(conn, row.get("recipient_name"),
+                         row.get("recipient_uei"), row.get("recipient_cage"))
+    jv = parse_joint_venture(conn, row.get("recipient_name"), row.get("description"))
+
+    mcap = None
+    if ent["ticker"] and market_cap_lookup:
+        try:
+            mcap = market_cap_lookup(ent["ticker"])
+        except Exception:
+            mcap = None
+
+    sig = score_contract(row, mcap)
+
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO dod_contracts "
+        "(contract_hash, announced_date, action_date, recipient_name, recipient_uei, recipient_cage,"
+        " ticker, parent_name, resolution_method, resolution_conf,"
+        " obligated_amount, ceiling_amount, headline_amount,"
+        " award_type, is_idiq, is_modification, competition, is_sole_source,"
+        " branch, naics_code, psc_code, completion_date, description, piid,"
+        " source, source_url, raw, pure_play_ratio, is_pure_play, signal_score, signal_note,"
+        " is_jv, jv_partners, needs_review) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        "ON CONFLICT (contract_hash) DO UPDATE SET "
+        "  recipient_uei = COALESCE(EXCLUDED.recipient_uei, dod_contracts.recipient_uei),"
+        "  obligated_amount = COALESCE(EXCLUDED.obligated_amount, dod_contracts.obligated_amount),"
+        "  ceiling_amount = COALESCE(EXCLUDED.ceiling_amount, dod_contracts.ceiling_amount),"
+        "  naics_code = COALESCE(EXCLUDED.naics_code, dod_contracts.naics_code),"
+        "  psc_code = COALESCE(EXCLUDED.psc_code, dod_contracts.psc_code),"
+        "  ticker = COALESCE(dod_contracts.ticker, EXCLUDED.ticker),"
+        "  enriched_at = NOW() "
+        "RETURNING id",
+        (row["contract_hash"], row["announced_date"], row.get("action_date"),
+         row.get("recipient_name"), row.get("recipient_uei"), row.get("recipient_cage"),
+         ent["ticker"], ent["parent_name"], ent["method"], ent["confidence"],
+         row.get("obligated_amount"), row.get("ceiling_amount"), row["headline_amount"],
+         row.get("award_type"), row.get("is_idiq", False), row.get("is_modification", False),
+         row.get("competition"), row.get("is_sole_source"),
+         row.get("branch"), row.get("naics_code"), row.get("psc_code"),
+         row.get("completion_date"), row.get("description"), row.get("piid"),
+         row["source"], row.get("source_url"), json.dumps(row.get("raw") or {}),
+         sig["pure_play_ratio"], sig["is_pure_play"], sig["signal_score"], sig["signal_note"],
+         bool(jv), json.dumps(jv) if jv else None,
+         ent["needs_review"]),
+    )
+    cid = (cur.fetchone() or [None])[0]
+
+    # Open an impact row the day the contract is announced -- labels get attached later,
+    # by a job that may only read prices dated AFTER announced_date. Same point-in-time
+    # discipline as the feature store.
+    if cid and ent["ticker"] and not ent["needs_review"]:
+        cur.execute(
+            "INSERT INTO historical_stock_impact (contract_id, ticker, announced_date, market_cap_at_announce) "
+            "VALUES (%s,%s,%s,%s) ON CONFLICT (contract_id, ticker) DO NOTHING",
+            (cid, ent["ticker"], row["announced_date"], mcap))
+    conn.commit()
+    cur.close()
+    return True
+
+
+def run_dod_pipeline(conn, market_cap_lookup=None):
+    """Daily entry point. defense.gov first (the signal), then enrichment."""
+    started = time.time()
+    cur = conn.cursor()
+    cur.execute(SCHEMA)
+    conn.commit()
+    cur.close()
+    seed_organizations(conn)
+
+    summary = {"defense_gov": 0, "usaspending": 0, "sam_gov": 0,
+               "stored": 0, "needs_review": 0}
+
+    for src, rows in (("defense_gov", fetch_defense_gov()),
+                      ("usaspending", fetch_usaspending()),
+                      ("sam_gov", fetch_sam_opportunities())):
+        summary[src] = len(rows)
+        for row in rows:
+            try:
+                if upsert_contract(conn, row, market_cap_lookup):
+                    summary["stored"] += 1
+            except Exception as e:
+                logger.error("upsert %s: %s", row.get("contract_hash"), e)
+                conn.rollback()
+
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM dod_contracts WHERE needs_review")
+    summary["needs_review"] = (cur.fetchone() or [0])[0]
+    cur.close()
+
+    summary["elapsed_sec"] = round(time.time() - started, 1)
+    logger.info("dod pipeline: %s", summary)
+    return summary
+
+
+# ===========================================================================
+# 9. EXHIBIT 21 HARVESTER  —  the crosswalk nobody sells you
+#
+# Every 10-K carries Exhibit 21, "Subsidiaries of the Registrant": a list of
+# every entity the company owns. It is filed under oath, it is free, and it is
+# EXACTLY the parent->subsidiary map we need to roll a contract awarded to
+# "Sikorsky Aircraft" up to LMT.
+#
+# No vendor sells a UEI->ticker crosswalk. This builds one from primary
+# sources, which means it costs nothing, cannot be taken away, and gets better
+# every year as new 10-Ks are filed.
+#
+# Rate limits: the SEC allows 10 requests/second and REQUIRES a real
+# User-Agent with contact info. Violate either and you get blocked by IP.
+# ===========================================================================
+
+SEC_UA = {"User-Agent": os.environ.get("SEC_USER_AGENT", "ApexQ contact@apexq.io")}
+SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+
+# Subsidiary lists are noisy. These lines are structure, not companies.
+_EX21_NOISE = re.compile(
+    r"^\s*$|subsidiaries of|state or |jurisdiction|incorporation|organization|"
+    r"^name\b|^entity\b|^\d+$|^page |^exhibit|percent|ownership|registrant|"
+    r"^\(?[a-z]\)?$|^table of|united states|delaware|^see |^\*",
+    re.IGNORECASE,
+)
+_JURIS = re.compile(
+    r"\b(delaware|nevada|california|texas|virginia|maryland|new york|florida|"
+    r"connecticut|massachusetts|ohio|arizona|colorado|washington|england|wales|"
+    r"united kingdom|canada|germany|france|israel|japan|australia|netherlands|"
+    r"switzerland|luxembourg|singapore|india|ireland|scotland|italy|spain|sweden)\b",
+    re.IGNORECASE,
+)
+
+
+def _sec_get(url, as_json=False):
+    """SEC fetch with the required identifying header and their rate limit respected."""
+    try:
+        r = requests.get(url, headers=SEC_UA, timeout=20)
+        time.sleep(0.12)          # ~8 req/s, comfortably under the SEC's 10/s ceiling
+        if r.status_code != 200:
+            logger.warning("SEC %s -> %s", url, r.status_code)
+            return None
+        return r.json() if as_json else r.text
+    except Exception as e:
+        logger.warning("SEC fetch %s: %s", url, e)
+        return None
+
+
+def sec_ticker_to_cik():
+    """{TICKER: zero-padded CIK}. Cached in-process; the file changes rarely."""
+    if getattr(sec_ticker_to_cik, "_cache", None):
+        return sec_ticker_to_cik._cache
+    out = {}
+    data = _sec_get(SEC_TICKERS_URL, as_json=True) or {}
+    for row in data.values():
+        t = str(row.get("ticker", "")).upper()
+        if t:
+            out[t] = str(row.get("cik_str", "")).zfill(10)
+    sec_ticker_to_cik._cache = out
+    logger.info("SEC ticker map: %d tickers", len(out))
+    return out
+
+
+def _latest_10k_accession(cik):
+    """Accession number of the most recent 10-K, or None."""
+    d = _sec_get("https://data.sec.gov/submissions/CIK%s.json" % cik, as_json=True)
+    if not d:
+        return None
+    recent = (d.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    accs = recent.get("accessionNumber") or []
+    for form, acc in zip(forms, accs):
+        if form in ("10-K", "10-K405", "10-KSB"):
+            return acc.replace("-", "")
+    return None
+
+
+def _find_ex21_doc(cik, accession):
+    """URL of the Exhibit 21 document inside a filing, or None."""
+    base = "https://www.sec.gov/Archives/edgar/data/%s/%s" % (int(cik), accession)
+    idx = _sec_get(base + "/index.json", as_json=True)
+    if not idx:
+        return None
+    for item in ((idx.get("directory") or {}).get("item") or []):
+        nm = str(item.get("name", "")).lower()
+        # EX-21 shows up as ex21.htm, ex-21.1.htm, exhibit21.htm, a2234567zex-21.htm ...
+        if re.search(r"ex[-_]?21", nm) and nm.endswith((".htm", ".html", ".txt")):
+            return base + "/" + item.get("name")
+    return None
+
+
+def parse_exhibit21(html):
+    """Exhibit 21 text -> a list of subsidiary names.
+
+    Deliberately conservative. A false subsidiary ("Delaware") mapped to a
+    ticker is far more damaging than a missed one: it would attribute a real
+    $100M contract to the wrong public company. When in doubt, drop the line.
+    """
+    if not html:
+        return []
+    txt = re.sub(r"<script.*?</script>|<style.*?</style>", " ", html, flags=re.S | re.I)
+    txt = re.sub(r"</(td|tr|p|div|li|h\d)>", "\n", txt, flags=re.I)
+    txt = re.sub(r"<[^>]+>", " ", txt)
+    txt = txt.replace("&amp;", "&").replace("&nbsp;", " ").replace("&#39;", "'")
+
+    names, seen = [], set()
+    for raw in txt.split("\n"):
+        line = re.sub(r"\s+", " ", raw).strip(" .\t|-")
+        if not line or len(line) < 4 or len(line) > 120:
+            continue
+        if _EX21_NOISE.match(line):
+            continue
+        # Strip a trailing jurisdiction column: "Sikorsky Aircraft Corporation  Delaware"
+        line = _JURIS.sub("", line).strip(" ,.-|")
+        if len(line) < 4:
+            continue
+        # A real company name has a corporate marker or at least two capitalized words.
+        has_suffix = re.search(r"\b(inc|corp|corporation|company|co|llc|ltd|limited|lp|plc|"
+                               r"gmbh|s\.a|b\.v|holdings|group|systems|technologies)\b\.?",
+                               line, re.IGNORECASE)
+        caps = len(re.findall(r"\b[A-Z][a-zA-Z&'.-]+", line))
+        if not has_suffix and caps < 2:
+            continue
+        if re.match(r"^\d", line):
+            continue
+        key = normalize_name(line)
+        if not key or len(key) < 3 or key in seen:
+            continue
+        seen.add(key)
+        names.append(line)
+    return names
+
+
+def harvest_exhibit21(conn, tickers=None, limit=40):
+    """Pull Exhibit 21 for each public parent and write the subsidiaries into the crosswalk.
+
+    Rows land as source='exhibit21', confidence=0.95 -- high, because the company itself
+    swore to the list, but not 1.0, because our HTML parsing is a heuristic.
+    """
+    started = time.time()
+    summary = {"parents": 0, "subsidiaries": 0, "skipped": 0, "errors": 0}
+
+    if not tickers:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT parent_ticker FROM organizations_mapping "
+                    "WHERE parent_ticker IS NOT NULL ORDER BY parent_ticker LIMIT %s", (limit,))
+        tickers = [r[0] for r in (cur.fetchall() or [])]
+        cur.close()
+
+    cikmap = sec_ticker_to_cik()
+
+    for t in tickers:
+        cik = cikmap.get(str(t).upper())
+        if not cik:
+            summary["skipped"] += 1
+            continue
+        try:
+            acc = _latest_10k_accession(cik)
+            if not acc:
+                summary["skipped"] += 1
+                continue
+            url = _find_ex21_doc(cik, acc)
+            if not url:
+                summary["skipped"] += 1
+                continue
+            subs = parse_exhibit21(_sec_get(url))
+            if not subs:
+                summary["skipped"] += 1
+                continue
+
+            summary["parents"] += 1
+            cur = conn.cursor()
+            cur.execute("SELECT parent_name FROM organizations_mapping "
+                        "WHERE parent_ticker=%s AND ticker=%s LIMIT 1", (t, t))
+            r = cur.fetchone()
+            pname = r[0] if r else t
+
+            for name in subs:
+                # DO NOT overwrite a seed or a human-verified row. Those are ground truth;
+                # this is a heuristic. ON CONFLICT DO NOTHING is the whole safety story.
+                cur.execute(
+                    "INSERT INTO organizations_mapping "
+                    "(legal_name, normalized_name, ticker, parent_ticker, parent_name,"
+                    " is_public, is_subsidiary, source, confidence, verified, notes) "
+                    "VALUES (%s,%s,NULL,%s,%s,FALSE,TRUE,'exhibit21',0.95,FALSE,%s) "
+                    "ON CONFLICT (normalized_name) DO NOTHING",
+                    (name, normalize_name(name), t, pname,
+                     "from %s 10-K Exhibit 21" % t))
+                summary["subsidiaries"] += 1
+            conn.commit()
+            cur.close()
+            logger.info("exhibit21 %s: %d subsidiaries", t, len(subs))
+        except Exception as e:
+            summary["errors"] += 1
+            logger.error("harvest_exhibit21 %s: %s", t, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    summary["elapsed_sec"] = round(time.time() - started, 1)
+    logger.info("exhibit21 harvest: %s", summary)
+    return summary
+
+
+def backfill_unresolved(conn, limit=200):
+    """Re-run entity resolution on rows that had no ticker.
+
+    Run this after every harvest: a contract that was unresolvable in January
+    can become resolvable in February once the parent's new 10-K lands. The
+    review queue should shrink on its own over time.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, recipient_name, recipient_uei, recipient_cage FROM dod_contracts "
+        "WHERE ticker IS NULL ORDER BY headline_amount DESC LIMIT %s", (limit,))
+    rows = cur.fetchall() or []
+    cur.close()
+
+    fixed = 0
+    for cid, name, uei, cage in rows:
+        ent = resolve_entity(conn, name, uei, cage)
+        if ent["ticker"] and not ent["needs_review"]:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE dod_contracts SET ticker=%s, parent_name=%s, resolution_method=%s,"
+                " resolution_conf=%s, needs_review=FALSE WHERE id=%s",
+                (ent["ticker"], ent["parent_name"], ent["method"], ent["confidence"], cid))
+            cur.execute(
+                "INSERT INTO historical_stock_impact (contract_id, ticker, announced_date) "
+                "SELECT id, %s, announced_date FROM dod_contracts WHERE id=%s "
+                "ON CONFLICT (contract_id, ticker) DO NOTHING", (ent["ticker"], cid))
+            conn.commit()
+            cur.close()
+            fixed += 1
+    logger.info("backfill_unresolved: resolved %d of %d", fixed, len(rows))
+    return {"checked": len(rows), "resolved": fixed}
