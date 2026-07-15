@@ -8995,6 +8995,26 @@ def _builder_candidates(sector):
     return out
 
 
+def _authoritative_verdict(sym):
+    """The verdict + alpha the stock's OWN full report would show -- the single source of truth.
+    Prefers a fresh cached full report; computes one only on a miss. Returns (verdict, alpha), or
+    (None, None) if it cannot be determined. Exists so the model portfolio can NEVER display a
+    verdict that contradicts the stock's full intelligence report (the APPROVE-here / WATCH-there
+    bug). compute_full_report already prefers the v2 engine's verdict, so this stays in lockstep
+    with what the report shows."""
+    try:
+        cached = CACHE.get("full_" + sym)
+        full = cached[0] if cached and (time.time() - cached[1]) < 900 and cached[0] else None
+        if not full:
+            full = compute_full_report(sym)
+        if not full:
+            return None, None
+        return full.get("verdict"), full.get("alpha_score")
+    except Exception as e:
+        logger.warning("authoritative verdict %s: %s" % (sym, e))
+        return None, None
+
+
 @app.route("/portfolio/generate")
 def portfolio_generate():
     risk = (request.args.get("risk") or "moderate").strip().lower()
@@ -9075,7 +9095,26 @@ def portfolio_generate():
     ranked.sort(key=lambda x: x[0], reverse=True)
 
     count = min(len(ranked), 5 if amount < 500 else 8, 10)
-    picks = ranked[:count]
+    # RECONCILE WITH THE FULL REPORT before showing anything. light_score is fine for RANKING the
+    # universe fast, but the verdict and alpha SHOWN must match each stock's own full report -- else
+    # the table can say APPROVE on a name the report holds at WATCH. Walk the ranked list top down,
+    # pull the authoritative full-report verdict, and keep only true APPROVEs until we have enough.
+    # Bounded so the heavy engine runs on at most a handful of names.
+    picks = []
+    scan_cap = min(len(ranked), count + 8)
+    for (adj, alpha, r) in ranked[:scan_cap]:
+        sym = r.get("symbol") or ""
+        auth_v, auth_a = _authoritative_verdict(sym)
+        if auth_v != "APPROVE":
+            continue  # not confirmable, or report doesn't approve it -> keep it out of the model
+        r["verdict"] = auth_v
+        use_alpha = auth_a if isinstance(auth_a, (int, float)) else alpha
+        picks.append((adj, use_alpha, r))
+        if len(picks) >= count:
+            break
+    if len(picks) < 5:
+        return jsonify({"error": "Not enough strong signals right now to build a balanced model. Try a broader sector or check back later."}), 200
+    count = len(picks)
     # Conviction weighted, risk aware allocation, the way professional managers tilt a book:
     # weight factor = (alpha / 100) * (1 / max(beta, 0.5)). Higher conviction and lower volatility
     # earn a larger slice. Beta comes from the cached full report when one exists; when it is
