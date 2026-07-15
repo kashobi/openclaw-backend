@@ -5154,7 +5154,7 @@ def compute_full_report(symbol):
             # history. Wire them into _sig so compute_alpha_v2 sees real numbers instead of
             # the locals().get("month_change") calls that were ALWAYS None -- month_change and
             # three_month_change are never assigned anywhere in the codebase.
-            _mom_detail = (mom or {}).get("detail") or {}
+            _mom_detail = {}
             _r1m = _alpha_num(_mom_detail.get("ret_20d"))   # 20d is our "1 month" proxy
             _r3m = _alpha_num(_mom_detail.get("ret_60d"))   # 60d is our "3 month" proxy
             _sig = {
