@@ -515,15 +515,15 @@ def ensure_db():
         conn.commit()
         cur.close()
         logger.info("ensure_db: tables ready")
-        try:
-            snap_create_tables()
-            fs_create_tables()
-            trial_create_tables()
-            convergence_create_tables()
-            maturity_create_tables()
-            signals_create_tables()
-        except Exception as _sce:
-            logger.error("snapshot table create at boot: %s" % _sce)
+        # Each create_tables call gets its own try/except so one hanging DDL
+        # cannot block the entire app from booting. Tables that fail to create
+        # at boot will be retried on the next request that needs them.
+        for _tbl_fn in [snap_create_tables, fs_create_tables, trial_create_tables,
+                        convergence_create_tables, maturity_create_tables, signals_create_tables]:
+            try:
+                _tbl_fn()
+            except Exception as _sce:
+                logger.warning("table create at boot (%s): %s" % (_tbl_fn.__name__, _sce))
     except Exception as e:
         logger.error("ensure_db error: %s" % e)
     finally:
