@@ -4906,14 +4906,43 @@ def compute_full_report(symbol):
         have_moat_data = sum(1 for x in (prof_margin, roe, earn_growth, rev_growth) if isinstance(x, (int, float))) >= 2
         if have_moat_data:
             mscore = 0
+            # PROFITABILITY. The old thresholds (>15% for full marks) were calibrated for
+            # high-margin tech. A mature retailer like HD at 8-10% margin is actually excellent
+            # for the industry. Lower thresholds so Consumer Staples, Industrials, and Retail
+            # are not systematically penalized for having the margins their industries allow.
             if isinstance(prof_margin, (int, float)):
-                mscore += 2 if prof_margin > 0.15 else (1 if prof_margin > 0.10 else 0)
+                mscore += 2 if prof_margin > 0.12 else (1 if prof_margin > 0.07 else 0)
             if isinstance(roe, (int, float)):
-                mscore += 2 if roe > 0.20 else (1 if roe > 0.15 else 0)
+                mscore += 2 if roe > 0.15 else (1 if roe > 0.10 else 0)
+            # GROWTH. Mature companies grow slowly by design. A business that has been the
+            # dominant player in its category for decades should not score 0 just because
+            # revenue grows 3% instead of 15%. Adjusted to reward stability, not just speed.
             if isinstance(earn_growth, (int, float)):
-                mscore += 2 if earn_growth > 0.10 else (1 if earn_growth > 0.05 else 0)
+                mscore += 2 if earn_growth > 0.08 else (1 if earn_growth > 0 else 0)
             if isinstance(rev_growth, (int, float)):
-                mscore += 2 if rev_growth > 0.10 else (1 if rev_growth > 0.05 else 0)
+                mscore += 2 if rev_growth > 0.06 else (1 if rev_growth > 0 else 0)
+            # SCALE AND MARKET POSITION.
+            # Mature market leaders (Home Depot, Walmart, Coca-Cola) have wide moats from brand,
+            # scale, supply chain, and switching costs -- but they show it through SIZE and
+            # CONSISTENCY, not growth rates. The old engine gave them 0 because they grow 3%.
+            #
+            # Special case: very high or undefined ROE. Home Depot's buybacks have made equity
+            # negative, so ROE is technically infinite or missing. That IS a moat signal -- only
+            # a company with extraordinary pricing power can sustain that kind of capital return.
+            mkt = info.get("marketCap")
+            # ROE undefined or extreme (>1.0 = 100%) is almost always a capital-efficiency moat
+            roe_extreme = isinstance(roe, (int, float)) and roe > 1.0
+            if roe_extreme:
+                mscore += 2
+            # Large + profitable + not a startup = structural advantage by survival
+            if isinstance(mkt, (int, float)) and mkt > 50e9:
+                if isinstance(prof_margin, (int, float)) and prof_margin > 0.05:
+                    mscore += 1
+            # Large + VERY large (>$200B) + profitable = almost certainly a moat business
+            if isinstance(mkt, (int, float)) and mkt > 200e9:
+                if isinstance(prof_margin, (int, float)) and prof_margin > 0.05:
+                    mscore += 1   # extra point for mega-cap stability
+            # INSIDER AND CONGRESSIONAL BUYING still count.
             if moat_buys >= 2:
                 mscore += 1
             if cong_buys >= 2:
@@ -5121,9 +5150,16 @@ def compute_full_report(symbol):
             _beta_raw = info.get("beta")
             _beta_raw = float(_beta_raw) if _beta_raw is not None else None
             _profitable = (_pm is not None and _pm > 0)
+            # compute_momentum() already calculated 20d and 60d returns from real price
+            # history. Wire them into _sig so compute_alpha_v2 sees real numbers instead of
+            # the locals().get("month_change") calls that were ALWAYS None -- month_change and
+            # three_month_change are never assigned anywhere in the codebase.
+            _mom_detail = (mom or {}).get("detail") or {}
+            _r1m = _alpha_num(_mom_detail.get("ret_20d"))   # 20d is our "1 month" proxy
+            _r3m = _alpha_num(_mom_detail.get("ret_60d"))   # 60d is our "3 month" proxy
             _sig = {
-                "r5": eff_chg, "r1m": _alpha_num(locals().get("month_change")),
-                "r3m": _alpha_num(locals().get("three_month_change")),
+                "r5": eff_chg, "r1m": _r1m,
+                "r3m": _r3m,
                 "up_days_5": locals().get("up_days_5"),
                 "chg_today": eff_chg,
                 "pe": pe, "profit_margin": _pm, "debt_to_equity": debt_to_equity,
@@ -5151,7 +5187,7 @@ def compute_full_report(symbol):
             alpha_v2 = _v2
             try:
                 _avgvol = info.get("averageVolume") or info.get("averageDailyVolume10Day")
-                _v2["conditions"] = compute_verdict_conditions(_v2, cur, _avgvol, _alpha_num(locals().get("month_change")))
+                _v2["conditions"] = compute_verdict_conditions(_v2, cur, _avgvol, _r1m)
             except Exception:
                 _v2["conditions"] = []
         except Exception as e:
