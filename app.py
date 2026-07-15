@@ -9100,20 +9100,32 @@ def portfolio_generate():
     # the table can say APPROVE on a name the report holds at WATCH. Walk the ranked list top down,
     # pull the authoritative full-report verdict, and keep only true APPROVEs until we have enough.
     # Bounded so the heavy engine runs on at most a handful of names.
-    picks = []
-    scan_cap = min(len(ranked), count + 8)
+    # Reconcile each candidate against its OWN full report so the verdict shown can never
+    # contradict the report, but STAY POPULATED. We attach the true full-report verdict, then
+    # rank genuine APPROVEs first and fill the rest with the strongest WATCH names (labelled
+    # WATCH by _builder_reason). Heavy computes are bounded; PASS / unconfirmable names are dropped.
+    confirmed = []
+    scan_cap = min(len(ranked), count + 12)
+    approves = 0
     for (adj, alpha, r) in ranked[:scan_cap]:
         sym = r.get("symbol") or ""
         auth_v, auth_a = _authoritative_verdict(sym)
-        if auth_v != "APPROVE":
-            continue  # not confirmable, or report doesn't approve it -> keep it out of the model
-        r["verdict"] = auth_v
+        if auth_v not in ("APPROVE", "WATCH"):
+            continue  # PASS or couldn't confirm -> never show it in the model
+        rr = dict(r)
+        rr["verdict"] = auth_v
         use_alpha = auth_a if isinstance(auth_a, (int, float)) else alpha
-        picks.append((adj, use_alpha, r))
-        if len(picks) >= count:
+        tier = 0 if auth_v == "APPROVE" else 1
+        confirmed.append((tier, adj, use_alpha, rr))
+        if tier == 0:
+            approves += 1
+        if approves >= count:
             break
-    if len(picks) < 5:
-        return jsonify({"error": "Not enough strong signals right now to build a balanced model. Try a broader sector or check back later."}), 200
+    if not confirmed:
+        return jsonify({"error": "Not enough confirmed signals right now to build a model. Try a broader sector or check back later."}), 200
+    # APPROVE first, then WATCH; keep the light-score ranking within each tier.
+    confirmed.sort(key=lambda c: (c[0], -c[1]))
+    picks = [(adj, use_alpha, rr) for (_t, adj, use_alpha, rr) in confirmed[:count]]
     count = len(picks)
     # Conviction weighted, risk aware allocation, the way professional managers tilt a book:
     # weight factor = (alpha / 100) * (1 / max(beta, 0.5)). Higher conviction and lower volatility
