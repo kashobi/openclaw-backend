@@ -3493,14 +3493,25 @@ function renderAlpha(d){
 function run(){
   var val = document.getElementById("si").value.trim();
   if(!val) return;
-  // STABILIZATION: international markets are disabled. Politely stop foreign tickers and crypto.
+  // STABILIZATION: foreign stocks, crypto and futures are not supported yet. US INDICES
+  // (^GSPC, ^DJI, ^IXIC, ^VIX ...) are intentionally NOT blocked here -- they flow through to the
+  // backend, which returns an index report that renderIndexReport() displays cleanly.
   var up = val.toUpperCase();
-  if(/\.(T|NS|KS|AX|SS|SZ|HK)$/.test(up) || /^[A-Z]{2,5}-USD$/.test(up) || /=[FX]$/.test(up) || up.charAt(0) === "^"){
+  if(/\.(T|NS|KS|AX|SS|SZ|HK)$/.test(up) || /^[A-Z]{2,5}-USD$/.test(up) || /=[FX]$/.test(up)){
     var raX = document.getElementById("reportArea");
     if(raX){ raX.style.display = ""; }
     document.getElementById("ac").style.display = "none";
+    // Clear the previous report so its data cannot bleed through under this notice.
+    ["stockSections","etfSections","indexReportWrap","rptTabsWrap","vbox","vmean","wguide","alphaCard",
+     "moatWrap","aboutCard","senateCard","lobbyCard","fdaCard","changeMindCard","cong","news",
+     "classroom","altCard","vconfidence","verdictChangeBanner","patterns"].forEach(function(id){
+      var el = document.getElementById(id); if(el){ el.style.display = "none"; }
+    });
     document.getElementById("sym").textContent = up;
-    document.getElementById("sfull").textContent = "International markets are coming soon. Currently we only support US stocks.";
+    document.getElementById("sfull").textContent = "Foreign stocks, crypto and futures aren't supported yet \u2014 Apex Q currently covers US stocks and indices.";
+    var _ss2 = document.getElementById("ssect"); if(_ss2){ _ss2.textContent = ""; }
+    var _spx2 = document.getElementById("spx"); if(_spx2){ _spx2.textContent = "--"; }
+    var _schg2 = document.getElementById("schg"); if(_schg2){ _schg2.textContent = ""; _schg2.className = "sc"; }
     document.getElementById("lb").classList.remove("on");
     document.getElementById("rpt").style.opacity = "1";
     return;
