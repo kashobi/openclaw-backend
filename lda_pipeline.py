@@ -41,7 +41,7 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("lda_pipeline")
 
 LDA_USER_AGENT = "ApexQ/1.0 support@apexq.io"
-LDA_API = "https://lda.senate.gov/api/v1/filings/"
+LDA_API = "https://lda.gov/api/v1/filings/"
 LDA_MAX_RPS = 2  # the LDA API is not high volume; stay gentle
 
 
