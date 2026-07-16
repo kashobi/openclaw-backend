@@ -13973,6 +13973,38 @@ def api_maturity(symbol):
         conn.close()
 
 
+# --------------------------------------------------------------------------- #
+# Build the full schema at startup. gunicorn imports app:app, so this runs once
+# on every boot. Each *_create_tables is idempotent and opens its own connection.
+# Previously they only ran lazily inside cron endpoints, so a fresh or newly
+# connected database errored "relation does not exist" on every query until some
+# cron happened to create each table. Isolated per function so one failure can't
+# block the rest; safe if DATABASE_URL is unset (get_db() returns None).
+# --------------------------------------------------------------------------- #
+def ensure_all_tables():
+    for _fn in (snap_create_tables, fs_create_tables, signals_create_tables,
+                convergence_create_tables, maturity_create_tables, trial_create_tables):
+        try:
+            _fn()
+            logger.info("ensure_all_tables: %s ok" % _fn.__name__)
+        except Exception as _e:
+            logger.warning("ensure_all_tables: %s failed: %s" % (_fn.__name__, _e))
+    try:
+        _c = get_db()
+        if _c:
+            sec_create_tables(_c)
+            _c.close()
+            logger.info("ensure_all_tables: sec_create_tables ok")
+    except Exception as _e:
+        logger.warning("ensure_all_tables: sec_create_tables failed: %s" % _e)
+
+
+try:
+    ensure_all_tables()
+except Exception as _e:
+    logger.warning("ensure_all_tables top-level failure: %s" % _e)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
