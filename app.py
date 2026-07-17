@@ -12449,6 +12449,94 @@ def api_trial_start():
         conn.close()
 
 
+# --- Trial: auto-initialize from a read-only brokerage sync ------------------
+# Reuses the SAME starting-line logic as /api/trial/start (single source of
+# truth: portfolio_trial) and additionally archives the exact holdings into an
+# isolated, immutable table. Idempotent: does NOTHING if a trial already exists,
+# so re-syncing never resets the fixed starting line. Never raises -- a failure
+# here must not break the sync cycle; it is logged server-side only. Reads the
+# `holdings` table (the same source the existing trial uses), NOT brokerage data.
+
+def trial_snapshot_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS trial_portfolio_snapshots ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "symbol TEXT NOT NULL,"
+            "shares NUMERIC NOT NULL,"
+            "avg_cost NUMERIC NOT NULL,"
+            "bench_start_price NUMERIC(12,4),"
+            "snapshot_at TIMESTAMP DEFAULT NOW())"
+        )
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("trial_snapshot_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def trigger_trial_initialization(user_id):
+    """Auto-start the 30-day trial after a successful read-only sync. Idempotent
+    and non-fatal. Returns True only if it initialized a NEW trial."""
+    try:
+        trial_create_tables()
+        trial_snapshot_create_tables()
+        conn = get_db()
+        if not conn:
+            logger.error("trigger_trial_initialization: no database")
+            return False
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM portfolio_trial WHERE user_id=%s", (user_id,))
+            if cur.fetchone():
+                cur.close()
+                return False
+            cur.execute(
+                "SELECT symbol, shares, avg_cost FROM holdings WHERE user_id=%s ORDER BY added_at ASC",
+                (user_id,),
+            )
+            rows = cur.fetchall()
+            if not rows:
+                cur.close()
+                logger.info("trigger_trial_initialization: user %s has no holdings; skipping" % user_id)
+                return False
+            p = compute_portfolio(user_id) or {}
+            start_val = p.get("total_value") or p.get("total") or 0
+            bench = _trial_bench_price()
+            cur.execute(
+                "INSERT INTO portfolio_trial (user_id, started_at, start_value, bench_start_price, target_days, notes) "
+                "VALUES (%s, CURRENT_DATE, %s, %s, %s, %s) "
+                "ON CONFLICT (user_id) DO NOTHING",
+                (user_id, start_val, bench, 30, "auto-started from sync"),
+            )
+            for (symbol, shares, avg_cost) in rows:
+                cur.execute(
+                    "INSERT INTO trial_portfolio_snapshots (user_id, symbol, shares, avg_cost, bench_start_price) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (user_id, symbol, shares, avg_cost, bench),
+                )
+            conn.commit()
+            cur.close()
+            logger.info("trigger_trial_initialization: started trial for user %s (%d positions)" % (user_id, len(rows)))
+            return True
+        except Exception as e:
+            try: conn.rollback()
+            except Exception: pass
+            logger.error("trigger_trial_initialization inner: %s" % e)
+            return False
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error("trigger_trial_initialization outer: %s" % e)
+        return False
+
+
 @app.route("/api/trial")
 def api_trial():
     """Performance vs SPY, plus the churn number -- and the honesty warning that belongs with both."""
