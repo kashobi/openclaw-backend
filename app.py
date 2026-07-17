@@ -14291,6 +14291,419 @@ def api_maturity(symbol):
         conn.close()
 
 
+# ============================================================================ #
+# LEGISLATIVE RISK MATRIX
+# Prediction-market signal on regulatory / political risk, mapped to tickers.
+# Read-only ingestion from free, keyless public feeds: PredictIt, Polymarket
+# (Gamma), Kalshi. (Manifold is intentionally excluded -- it is play money and
+# would corrupt a real-money risk signal.) Integrated into THIS Flask app,
+# THIS Postgres, and the existing cron pattern -- not a separate service.
+#   /cron/legislative-risk   token-gated scheduled refresh
+#   /api/legislative-risk    JSON, optional ?ticker=SYMBOL (self-refreshes if stale)
+#   /risk-matrix             self-contained dashboard page
+# ============================================================================ #
+
+LEGRISK_TICKERS = {
+    "AAPL": ["apple"], "MSFT": ["microsoft"], "GOOGL": ["google", "alphabet"],
+    "AMZN": ["amazon"], "NVDA": ["nvidia"], "TSLA": ["tesla"],
+    "META": ["meta ", "facebook", "instagram"], "LMT": ["lockheed"],
+    "RTX": ["raytheon"], "GD": ["general dynamics"], "NOC": ["northrop"],
+    "PFE": ["pfizer"], "MRNA": ["moderna"], "BABA": ["alibaba"], "AMD": ["amd"],
+}
+LEGRISK_KEYWORDS = [
+    "tax", "tariff", "ban", "antitrust", "fda", "regulation", "regulate",
+    "subsidy", "doj", "ftc", "sec ", "sanction", "lawsuit", "sued", "approval",
+    "fed", "rate cut", "rate hike", "trial", "monopoly", "shutdown", "bill",
+]
+
+
+def _legrisk_category(text):
+    t = (text or "").lower()
+    if any(k in t for k in ("fda", "drug", "approval", "phase 3", "clinical")):
+        return "Biotech / FDA Risk"
+    if any(k in t for k in ("tariff", "tax", "fed", "rate", "trade", "subsidy")):
+        return "Macro / Trade Risk"
+    return "Regulatory Risk"
+
+
+def _legrisk_match_tickers(title):
+    t = " " + (title or "").lower() + " "
+    hits = []
+    for sym, names in LEGRISK_TICKERS.items():
+        if (" " + sym.lower() + " ") in t or any(n in t for n in names):
+            hits.append(sym)
+    return hits
+
+
+def _legrisk_relevant(title):
+    t = (title or "").lower()
+    return any(k in t for k in LEGRISK_KEYWORDS) or bool(_legrisk_match_tickers(title))
+
+
+def _legrisk_pct(x):
+    try:
+        v = float(x)
+        if v <= 1.0:
+            v *= 100.0
+        v = int(round(v))
+        return max(1, min(99, v))
+    except Exception:
+        return None
+
+
+def legrisk_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS prediction_markets ("
+            "id SERIAL PRIMARY KEY,"
+            "source_platform TEXT NOT NULL,"
+            "market_id_string TEXT UNIQUE NOT NULL,"
+            "title TEXT NOT NULL,"
+            "implied_probability INTEGER,"
+            "category TEXT,"
+            "matched_tickers TEXT,"
+            "last_updated TIMESTAMP DEFAULT NOW())"
+        )
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("legrisk_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def _fetch_predictit():
+    out = []
+    try:
+        r = requests.get("https://www.predictit.org/api/marketdata/all/",
+                         timeout=12, headers={"User-Agent": "ApexQ/1.0"})
+        if r.status_code != 200:
+            return out
+        for m in ((r.json() or {}).get("markets") or []):
+            mname = m.get("name") or ""
+            for c in (m.get("contracts") or []):
+                cname = c.get("name") or ""
+                title = mname if (not cname or cname.lower() == "yes") else (mname + " -- " + cname)
+                p = _legrisk_pct(c.get("lastTradePrice"))
+                if p is None:
+                    continue
+                out.append({"source": "PredictIt", "market_id": "predictit-%s" % c.get("id"),
+                            "title": title, "prob": p})
+    except Exception as e:
+        logger.warning("_fetch_predictit: %s" % e)
+    return out
+
+
+def _fetch_polymarket():
+    out = []
+    try:
+        r = requests.get("https://gamma-api.polymarket.com/markets",
+                         params={"closed": "false", "limit": 300, "order": "volume", "ascending": "false"},
+                         timeout=12, headers={"User-Agent": "ApexQ/1.0"})
+        if r.status_code != 200:
+            return out
+        for m in (r.json() or []):
+            title = m.get("question") or m.get("title") or ""
+            prices = m.get("outcomePrices")
+            p = None
+            if isinstance(prices, str):
+                try:
+                    arr = json.loads(prices)
+                    if arr:
+                        p = _legrisk_pct(arr[0])
+                except Exception:
+                    p = None
+            elif isinstance(prices, list) and prices:
+                p = _legrisk_pct(prices[0])
+            if p is None:
+                continue
+            mid = m.get("id") or m.get("conditionId") or title[:40]
+            out.append({"source": "Polymarket", "market_id": "poly-%s" % mid,
+                        "title": title, "prob": p})
+    except Exception as e:
+        logger.warning("_fetch_polymarket: %s" % e)
+    return out
+
+
+def _fetch_kalshi():
+    out = []
+    try:
+        r = requests.get("https://external-api.kalshi.com/trade-api/v2/markets",
+                         params={"limit": 500, "status": "open"},
+                         timeout=12, headers={"User-Agent": "ApexQ/1.0"})
+        if r.status_code != 200:
+            return out
+        for m in ((r.json() or {}).get("markets") or []):
+            title = m.get("title") or m.get("subtitle") or m.get("ticker") or ""
+            yb, ya = m.get("yes_bid"), m.get("yes_ask")
+            p = None
+            try:
+                if yb is not None and ya is not None:
+                    mid = (float(yb) + float(ya)) / 2.0
+                    p = _legrisk_pct(mid / 100.0 if mid > 1 else mid)
+            except Exception:
+                p = None
+            if p is None and m.get("last_price") is not None:
+                try:
+                    p = _legrisk_pct(float(m.get("last_price")) / 100.0)
+                except Exception:
+                    p = None
+            if p is None:
+                continue
+            out.append({"source": "Kalshi", "market_id": "kalshi-%s" % (m.get("ticker") or title[:40]),
+                        "title": title, "prob": p})
+    except Exception as e:
+        logger.warning("_fetch_kalshi: %s" % e)
+    return out
+
+
+def ingest_legislative_risk():
+    """Fetch the three real-money feeds, keep only equity / legislative-relevant
+    markets, map to tickers, categorize, and upsert. Never raises."""
+    legrisk_create_tables()
+    rows = []
+    for fn in (_fetch_predictit, _fetch_polymarket, _fetch_kalshi):
+        try:
+            rows.extend(fn() or [])
+        except Exception as e:
+            logger.warning("ingest_legislative_risk source: %s" % e)
+    conn = get_db()
+    if not conn:
+        return 0
+    n = 0
+    try:
+        cur = conn.cursor()
+        for it in rows:
+            title = it.get("title") or ""
+            if not _legrisk_relevant(title):
+                continue
+            tk = _legrisk_match_tickers(title)
+            cat = _legrisk_category(title)
+            cur.execute(
+                "INSERT INTO prediction_markets "
+                "(source_platform, market_id_string, title, implied_probability, category, matched_tickers, last_updated) "
+                "VALUES (%s,%s,%s,%s,%s,%s,NOW()) "
+                "ON CONFLICT (market_id_string) DO UPDATE SET "
+                "implied_probability=EXCLUDED.implied_probability, title=EXCLUDED.title, "
+                "category=EXCLUDED.category, matched_tickers=EXCLUDED.matched_tickers, last_updated=NOW()",
+                (it.get("source"), it.get("market_id"), title[:500], it.get("prob"), cat, ",".join(tk)),
+            )
+            n += 1
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.error("ingest_legislative_risk write: %s" % e)
+    finally:
+        conn.close()
+    logger.info("ingest_legislative_risk: upserted %d relevant markets" % n)
+    return n
+
+
+@app.route("/cron/legislative-risk")
+def cron_legislative_risk():
+    if request.args.get("token") != os.environ.get("CRON_SECRET", ""):
+        return jsonify({"error": "unauthorized"}), 403
+    return jsonify({"upserted": ingest_legislative_risk()})
+
+
+@app.route("/api/legislative-risk")
+def api_legislative_risk():
+    legrisk_create_tables()
+    ticker = (request.args.get("ticker") or "").strip().upper()
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        # Self-refresh if the table is empty or older than 20 minutes -- keeps the
+        # matrix live even without a scheduled cron. Staleness computed in SQL to
+        # avoid any timezone/naive-datetime pitfalls.
+        cur.execute("SELECT COUNT(*), COALESCE(MAX(last_updated) < NOW() - INTERVAL '20 minutes', true) FROM prediction_markets")
+        cnt, stale = cur.fetchone()
+        if (cnt or 0) == 0:
+            stale = True
+        if stale:
+            cur.close()
+            conn.close()
+            ingest_legislative_risk()
+            conn = get_db()
+            cur = conn.cursor()
+        if ticker:
+            cur.execute(
+                "SELECT source_platform, category, title, implied_probability, matched_tickers, last_updated "
+                "FROM prediction_markets WHERE matched_tickers ILIKE %s "
+                "ORDER BY implied_probability DESC NULLS LAST LIMIT 100",
+                ("%" + ticker + "%",),
+            )
+        else:
+            cur.execute(
+                "SELECT source_platform, category, title, implied_probability, matched_tickers, last_updated "
+                "FROM prediction_markets ORDER BY implied_probability DESC NULLS LAST LIMIT 50"
+            )
+        rows = cur.fetchall() or []
+        cur.close()
+        out = [{"source": s, "category": c, "title": t, "probability": p,
+                "tickers": (mt or ""), "updated": str(u)} for (s, c, t, p, mt, u) in rows]
+        return jsonify({"data": out})
+    except Exception as e:
+        logger.error("api_legislative_risk: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.route("/risk-matrix")
+def risk_matrix_page():
+    return Response(_LEGRISK_HTML, mimetype="text/html")
+
+
+_LEGRISK_HTML = r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Apex Q // Legislative Risk Matrix</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{background:#0b0f19;} ::-webkit-scrollbar{height:8px;width:8px;} ::-webkit-scrollbar-thumb{background:#1e293b;border-radius:6px;}</style>
+</head>
+<body class="text-slate-200 min-h-screen" style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
+<div class="max-w-6xl mx-auto px-4 py-6">
+
+  <div class="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
+    <div class="text-lg sm:text-xl font-semibold tracking-tight">&#9888;&#65039; APEX Q <span class="text-slate-500">//</span> LEGISLATIVE RISK MATRIX</div>
+    <button id="refreshBtn" class="text-xs px-3 py-1.5 rounded-md border border-slate-700 hover:border-slate-500 text-slate-300">Refresh Feed</button>
+  </div>
+
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+    <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Total Tracked Risks</div>
+      <div id="statTotal" class="text-2xl font-semibold mt-1">--</div>
+    </div>
+    <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Avg Implied Probability</div>
+      <div id="statAvg" class="text-2xl font-semibold mt-1">--</div>
+    </div>
+    <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Most Vulnerable Category</div>
+      <div id="statSector" class="text-2xl font-semibold mt-1">--</div>
+    </div>
+  </div>
+
+  <div class="flex flex-col sm:flex-row gap-2 mb-4">
+    <input id="search" type="text" placeholder="Filter by ticker or keyword (e.g. AAPL, tariff, antitrust)..."
+      class="flex-1 bg-slate-900/60 border border-slate-800 rounded-md px-3 py-2 text-sm outline-none focus:border-slate-600 placeholder-slate-600"/>
+    <select id="catFilter" class="bg-slate-900/60 border border-slate-800 rounded-md px-3 py-2 text-sm outline-none focus:border-slate-600">
+      <option value="">All categories</option>
+      <option value="Regulatory Risk">Regulatory Risk</option>
+      <option value="Macro / Trade Risk">Macro / Trade Risk</option>
+      <option value="Biotech / FDA Risk">Biotech / FDA Risk</option>
+    </select>
+    <button id="tickerBtn" class="text-sm px-4 py-2 rounded-md bg-slate-100 text-slate-900 font-medium">Filter Terminal</button>
+  </div>
+
+  <div class="rounded-lg border border-slate-800 overflow-hidden">
+    <div class="grid grid-cols-12 gap-2 px-3 py-2 text-[11px] uppercase tracking-wide text-slate-500 bg-slate-900/60 border-b border-slate-800">
+      <div class="col-span-2">Source</div>
+      <div class="col-span-3">Category</div>
+      <div class="col-span-4">Risk Trigger Event</div>
+      <div class="col-span-3">Probability</div>
+    </div>
+    <div id="rows" class="divide-y divide-slate-900"></div>
+  </div>
+  <div id="empty" class="hidden text-center text-slate-600 text-sm py-10">No matching risk events.</div>
+  <div class="text-[11px] text-slate-600 mt-4">Sources: PredictIt, Polymarket, Kalshi (real-money prediction markets). Educational signal only, not investment advice. Auto-refreshes every 15s.</div>
+</div>
+
+<script>
+var DATA = [];
+
+function badge(src){
+  var c = src === "Kalshi" ? "bg-indigo-500/20 text-indigo-300" :
+          src === "Polymarket" ? "bg-emerald-500/20 text-emerald-300" :
+          "bg-amber-500/20 text-amber-300";
+  return "<span class=\"text-[11px] px-2 py-0.5 rounded " + c + "\">" + esc(src) + "</span>";
+}
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>\"]/g, function(x){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[x]; }); }
+
+function bar(p){
+  p = Number(p) || 0;
+  var col = p > 70 ? "#f43f5e" : (p >= 40 ? "#f59e0b" : "#10b981");
+  return "<div class=\"flex items-center gap-2\">" +
+    "<div class=\"flex-1 h-2 rounded bg-slate-800 overflow-hidden\"><div style=\"width:" + p + "%;background:" + col + ";\" class=\"h-full\"></div></div>" +
+    "<div style=\"color:" + col + ";\" class=\"text-sm font-semibold w-10 text-right\">" + p + "%</div></div>";
+}
+
+function render(){
+  var q = (document.getElementById("search").value || "").toLowerCase().trim();
+  var cat = document.getElementById("catFilter").value;
+  var list = DATA.filter(function(d){
+    if(cat && d.category !== cat) return false;
+    if(q){
+      var hay = ((d.title||"") + " " + (d.tickers||"")).toLowerCase();
+      if(hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  var html = list.map(function(d){
+    var tick = (d.tickers ? " <span class=\"text-[11px] text-slate-500\">[" + esc(d.tickers) + "]</span>" : "");
+    return "<div class=\"grid grid-cols-12 gap-2 px-3 py-3 items-center hover:bg-slate-900/40\">" +
+      "<div class=\"col-span-2\">" + badge(d.source) + "</div>" +
+      "<div class=\"col-span-3 text-xs text-slate-400\">" + esc(d.category) + "</div>" +
+      "<div class=\"col-span-4 text-sm\">" + esc(d.title) + tick + "</div>" +
+      "<div class=\"col-span-3\">" + bar(d.probability) + "</div></div>";
+  }).join("");
+  document.getElementById("rows").innerHTML = html;
+  document.getElementById("empty").classList.toggle("hidden", list.length > 0);
+
+  document.getElementById("statTotal").textContent = list.length;
+  if(list.length){
+    var avg = Math.round(list.reduce(function(a,d){ return a + (Number(d.probability)||0); }, 0) / list.length);
+    document.getElementById("statAvg").textContent = avg + "%";
+    var counts = {};
+    list.forEach(function(d){ if((Number(d.probability)||0) >= 50){ counts[d.category] = (counts[d.category]||0) + 1; } });
+    var top = "--", best = 0;
+    Object.keys(counts).forEach(function(k){ if(counts[k] > best){ best = counts[k]; top = k; } });
+    document.getElementById("statSector").textContent = top;
+  } else {
+    document.getElementById("statAvg").textContent = "--";
+    document.getElementById("statSector").textContent = "--";
+  }
+}
+
+function load(ticker){
+  var url = "/api/legislative-risk" + (ticker ? ("?ticker=" + encodeURIComponent(ticker)) : "");
+  fetch(url, {credentials:"same-origin"}).then(function(r){ return r.json(); }).then(function(j){
+    DATA = (j && j.data) ? j.data : [];
+    render();
+  }).catch(function(){});
+}
+
+document.getElementById("search").addEventListener("input", render);
+document.getElementById("catFilter").addEventListener("change", render);
+document.getElementById("refreshBtn").addEventListener("click", function(){ load(); });
+document.getElementById("tickerBtn").addEventListener("click", function(){
+  var v = (document.getElementById("search").value || "").trim();
+  load(v && v.length <= 6 && v.indexOf(" ") < 0 ? v : "");
+});
+
+load();
+setInterval(function(){ load(); }, 15000);
+</script>
+</body>
+</html>'''
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
