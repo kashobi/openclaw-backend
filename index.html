@@ -8476,7 +8476,10 @@ if(ib){
           return;
         }
         function cell(v, label){
-          var cls = v === null || v === undefined ? "trNu" : (v > 0 ? "trUp" : (v < 0 ? "trDn" : "trNu"));
+          // Day 0 has no elapsed performance yet, so show a clean 0.00% baseline
+          // instead of "--" if the backend has not produced a number yet.
+          if((v === null || v === undefined) && Number(t.day) === 0){ v = 0; }
+          var cls = (v === null || v === undefined) ? "trNu" : (v > 0 ? "trUp" : (v < 0 ? "trDn" : "trNu"));
           var txt = (v === null || v === undefined) ? "--" : ((v > 0 ? "+" : "") + v.toFixed(2) + "%");
           return "<div class=\"trBox\"><div class=\"trV " + cls + "\">" + txt + "</div><div class=\"trL\">" + label + "</div></div>";
         }
