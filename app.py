@@ -12687,6 +12687,217 @@ def refresh_one_user(conn, user):
     return out
 
 
+# --- Autonomous 12-stock PAPER simulation (virtual money only, never a broker) ---
+PAPER_SIM_TARGET = 12
+
+
+def paper_sim_create_tables():
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS paper_sim_log ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL,"
+            "action TEXT NOT NULL,"
+            "symbol TEXT,"
+            "shares NUMERIC,"
+            "price NUMERIC,"
+            "status TEXT,"
+            "note TEXT,"
+            "at TIMESTAMP DEFAULT NOW())"
+        )
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_sim_active BOOLEAN DEFAULT false")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paper_sim_started_at DATE")
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("paper_sim_create_tables: %s" % e)
+    finally:
+        conn.close()
+
+
+def _sim_log(cur, user_id, action, symbol, shares, price, status, note):
+    try:
+        cur.execute(
+            "INSERT INTO paper_sim_log (user_id, action, symbol, shares, price, status, note) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (user_id, action, symbol,
+             (float(shares) if shares is not None else None),
+             (float(price) if price is not None else None),
+             status, (note or "")[:300]),
+        )
+    except Exception as e:
+        logger.error("_sim_log: %s" % e)
+
+
+def run_paper_engine_rebalance(user_id, target_count=PAPER_SIM_TARGET):
+    """PAPER MONEY ONLY -- never touches a broker or real funds. Sells held names the
+    engine now rates PASS, then buys its top APPROVE single stocks (funds and indexes are
+    hard-blocked here) to fill to target_count, equal weight, from virtual paper_cash.
+    Logs every action to paper_sim_log. Never raises."""
+    try:
+        paper_sim_create_tables()
+        conn = get_db()
+        if not conn:
+            logger.error("run_paper_engine_rebalance: no database")
+            return {"ok": False, "error": "no database"}
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COALESCE(paper_cash, %s) FROM users WHERE id=%s", (PAPER_START_CASH, user_id))
+            row = cur.fetchone()
+            cash = float(row[0]) if row and row[0] is not None else float(PAPER_START_CASH)
+
+            cur.execute("SELECT id, symbol, shares FROM paper_trades WHERE user_id=%s AND sold=false", (user_id,))
+            held = cur.fetchall() or []
+            held_syms = set((s or "").upper() for (_i, s, _sh) in held)
+            actions = 0
+
+            # 1) SELL held names the engine now rates PASS.
+            for (tid, sym, shares) in held:
+                usym = (sym or "").upper()
+                try:
+                    ls = light_score(usym) or {}
+                except Exception:
+                    ls = {}
+                if (ls.get("verdict") or "").upper() == "PASS":
+                    price = _paper_price(usym)
+                    if price and price > 0:
+                        cur.execute("UPDATE paper_trades SET sold=true, sell_price=%s, sell_date=NOW() WHERE id=%s", (price, tid))
+                        cash += float(shares) * price
+                        held_syms.discard(usym)
+                        _sim_log(cur, user_id, "SELL", usym, shares, price, "ok", "engine verdict -> PASS")
+                        actions += 1
+                    else:
+                        _sim_log(cur, user_id, "SELL", usym, shares, None, "error", "no price available to sell")
+            cur.execute("UPDATE users SET paper_cash=%s WHERE id=%s", (cash, user_id))
+
+            # 2) BUY top APPROVE single stocks to fill to target_count. <<< 12-STOCK RESTRICTION ENFORCED HERE
+            open_slots = max(0, target_count - len(held_syms))
+            if open_slots > 0:
+                try:
+                    cands = _builder_candidates("all") or []
+                except Exception:
+                    cands = []
+                held_value = 0.0
+                for (_i, s, sh) in held:
+                    us = (s or "").upper()
+                    if us in held_syms:
+                        pp = _paper_price(us)
+                        if pp:
+                            held_value += float(sh) * pp
+                total_equity = cash + held_value
+                per_target = (total_equity / target_count) if target_count else 0.0
+
+                bought = 0
+                for item in cands:
+                    if bought >= open_slots:
+                        break
+                    r = item[0] if isinstance(item, (list, tuple)) else item
+                    ssym = (r.get("symbol") or "").upper()
+                    v = (r.get("verdict") or "").upper()
+                    if not ssym or ssym in held_syms:
+                        continue
+                    if v in ("ETF", "INDEX"):            # <<< HARD FUND/INDEX BLOCK
+                        _sim_log(cur, user_id, "SKIP", ssym, None, None, "blocked", "fund/index -- single equities only")
+                        continue
+                    if v != "APPROVE":
+                        continue
+                    price = _paper_price(ssym)
+                    if not price or price <= 0:
+                        _sim_log(cur, user_id, "BUY", ssym, None, None, "error", "no price available to buy")
+                        continue
+                    alloc = min(per_target, cash)
+                    if alloc < price:
+                        _sim_log(cur, user_id, "BUY", ssym, None, price, "skipped", "not enough virtual cash for one share")
+                        continue
+                    shares = round(alloc / price, 4)
+                    cur.execute("INSERT INTO paper_trades (user_id, symbol, shares, buy_price) VALUES (%s,%s,%s,%s)",
+                                (user_id, ssym, shares, price))
+                    cash -= shares * price
+                    held_syms.add(ssym)
+                    _sim_log(cur, user_id, "BUY", ssym, shares, price, "ok", "engine verdict -> APPROVE")
+                    actions += 1
+                    bought += 1
+                cur.execute("UPDATE users SET paper_cash=%s WHERE id=%s", (cash, user_id))
+
+            if actions == 0:
+                _sim_log(cur, user_id, "INFO", None, None, None, "ok", "no verdict changes this cycle -- nothing to trade")
+
+            conn.commit()
+            cur.close()
+            try:
+                CACHE.pop("paper_%s" % user_id, None)
+            except Exception:
+                pass
+            logger.info("run_paper_engine_rebalance: user %s, %d action(s)" % (user_id, actions))
+            return {"ok": True, "actions": actions}
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.error("run_paper_engine_rebalance inner: %s" % e)
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error("run_paper_engine_rebalance outer: %s" % e)
+        return {"ok": False, "error": str(e)}
+
+
+@app.route("/api/paper-sim/start", methods=["POST"])
+def api_paper_sim_start():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    paper_sim_create_tables()
+    conn = get_db()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET paper_sim_active = true, "
+                        "paper_sim_started_at = COALESCE(paper_sim_started_at, CURRENT_DATE) WHERE id = %s", (u["id"],))
+            conn.commit()
+            cur.close()
+        except Exception as e:
+            logger.error("api_paper_sim_start activate: %s" % e)
+        finally:
+            conn.close()
+    return jsonify(run_paper_engine_rebalance(u["id"]))
+
+
+@app.route("/api/paper-sim/log")
+def api_paper_sim_log():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    paper_sim_create_tables()
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT action, symbol, shares, price, status, note, at FROM paper_sim_log "
+                    "WHERE user_id=%s ORDER BY at DESC LIMIT 60", (u["id"],))
+        rows = cur.fetchall() or []
+        cur.close()
+        out = []
+        for (a, sy, sh, pr, st, n, t) in rows:
+            out.append({"action": a, "symbol": sy,
+                        "shares": (float(sh) if sh is not None else None),
+                        "price": (float(pr) if pr is not None else None),
+                        "status": st, "note": n, "at": str(t)})
+        return jsonify({"log": out})
+    except Exception as e:
+        logger.error("api_paper_sim_log: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
 @app.route("/cron/portfolio-refresh")
 def cron_portfolio_refresh():
     """Re-run the engine across every user's holdings. Schedule TWICE daily:
@@ -12710,6 +12921,25 @@ def cron_portfolio_refresh():
             s = refresh_one_user(conn, user)
             total["checked"] += s["checked"]
             total["changed"] += s["changed"]
+        # PAPER SIM (virtual money only): auto-rebalance users who started the 30-day run,
+        # and retire any whose 30 days are up.
+        try:
+            paper_sim_create_tables()
+            cur3 = conn.cursor()
+            cur3.execute("SELECT id, paper_sim_started_at FROM users WHERE COALESCE(paper_sim_active, false) = true")
+            sim_users = cur3.fetchall() or []
+            cur3.close()
+            for (sim_uid, sim_started) in sim_users:
+                if sim_started and (_sec_date.today() - sim_started).days >= 30:
+                    c4 = conn.cursor()
+                    c4.execute("UPDATE users SET paper_sim_active = false WHERE id = %s", (sim_uid,))
+                    conn.commit()
+                    c4.close()
+                else:
+                    run_paper_engine_rebalance(sim_uid)
+            total["paper_sim_users"] = len(sim_users)
+        except Exception as _pe:
+            logger.error("cron paper sim: %s" % _pe)
         logger.info("portfolio refresh: %s" % total)
         return jsonify(total)
     except Exception as e:
