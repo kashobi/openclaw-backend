@@ -5651,8 +5651,66 @@ function loadPaper(){
   fetch(API + "/paper/portfolio", {credentials:"same-origin"}).then(function(r){ return r.json(); }).then(function(d){
     if(!d || d.error){ return; }
     renderPaper(d);
+    loadPaperSim();
   }).catch(function(){});
 }
+
+// ---- Autonomous 12-Stock Engine Monitor (paper money only) ----
+function loadPaperSim(){
+  var anchor = document.getElementById("ptChart");
+  if(!anchor){ return; }
+  var host = document.getElementById("paperSimMonitor");
+  if(!host){
+    host = document.createElement("div");
+    host.id = "paperSimMonitor";
+    host.style.marginTop = "14px";
+    anchor.parentNode.insertBefore(host, anchor.nextSibling);
+  }
+  fetch(API + "/api/paper-sim/log", {credentials:"same-origin"})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var rows = "";
+      if(d && d.log && d.log.length){
+        rows = d.log.map(function(e){
+          var when = (String(e.at || "")).replace("T", " ").slice(0, 16);
+          var body = (e.action || "") +
+                     (e.symbol ? " " + e.symbol : "") +
+                     (e.shares ? " x" + e.shares : "") +
+                     (e.price ? " @ $" + Number(e.price).toFixed(2) : "") +
+                     (e.note ? "  \u2014  " + e.note : "");
+          return "<div style=\"padding:3px 0;border-bottom:1px solid rgba(128,128,128,.12);\">" +
+                 "<span style=\"color:#8a8f98;margin-right:10px;\">" + esc(when) + "</span>" + esc(body) + "</div>";
+        }).join("");
+      } else {
+        rows = "<div style=\"padding:3px 0;color:#8a8f98;\">No simulated trades yet. Start the run to begin.</div>";
+      }
+      host.innerHTML =
+        "<div class=\"ic\"><div class=\"ih\"><div class=\"it\">Autonomous 12-Stock Engine Monitor</div></div>" +
+        "<div class=\"itxt\">Paper money only \u2014 no broker, no real funds. The engine auto-rebalances twice a day for 30 days: sells anything it rates PASS, buys its top APPROVE single stocks (funds and indexes blocked), equal weight. Every simulated trade is logged below.</div>" +
+        "<div id=\"paperSimStartWrap\" style=\"margin:8px 0;\"><button class=\"lnBtn\" onclick=\"startPaperSim();\">Start / rebalance the 30-day paper simulation</button></div>" +
+        "<div style=\"max-height:260px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.7;\">" + rows + "</div></div>";
+    })
+    .catch(function(){});
+}
+window.loadPaperSim = loadPaperSim;
+
+function startPaperSim(){
+  if(!currentUser){ openAuth("login"); return; }
+  var b = document.querySelector("#paperSimStartWrap .lnBtn");
+  if(b){ b.disabled = true; b.textContent = "Working\u2026"; }
+  fetch(API + "/api/paper-sim/start", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:"{}"})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d && d.ok){ showToast("Paper simulation ran: " + (d.actions || 0) + " simulated trade(s)."); }
+      else { showToast((d && d.error) ? d.error : "Could not run the simulation."); }
+      loadPaperSim();
+    })
+    .catch(function(){ loadPaperSim(); });
+}
+window.startPaperSim = startPaperSim;
+
+// Poll every 30s. Only the monitor's innerHTML updates, so there is no page-wide redraw.
+setInterval(function(){ if(document.getElementById("paperSimMonitor")){ loadPaperSim(); } }, 30000);
 function paperBuy(){
   if(!currentUser){ openAuth("login"); return; }
   var symEl = document.getElementById("ptSym");
