@@ -14704,6 +14704,266 @@ setInterval(function(){ load(); }, 15000);
 </html>'''
 
 
+# ============================================================================ #
+# FLOW FEED  --  "what changed since you last looked", in one place.
+# This is the delivery fix: instead of re-analyzing every position from scratch,
+# the user opens ONE view that shows only the deltas across the signals they
+# already have -- verdict flips on their holdings, plus fresh regulatory /
+# congressional / DoD events on those same tickers. Single-user (the logged-in
+# user's own holdings + watchlist). No new tables, no per-user relevance engine,
+# no SMS/push -- it reads the change-tracking that already exists.
+#   /api/flow-feed        JSON: merged, newest-first list of changes for the user
+#   /api/flow-feed/seen   POST: mark everything acknowledged (clears the feed)
+#   /flow                 the single "start here each session" page
+# ============================================================================ #
+
+def _flow_user_symbols(cur, user_id):
+    syms = set()
+    try:
+        cur.execute("SELECT DISTINCT symbol FROM holdings WHERE user_id=%s", (user_id,))
+        for (s,) in (cur.fetchall() or []):
+            if s:
+                syms.add(s.upper())
+    except Exception as e:
+        logger.warning("_flow_user_symbols holdings: %s" % e)
+    # include watchlist tickers too, if that table exists
+    try:
+        cur.execute("SELECT DISTINCT symbol FROM watchlist WHERE user_id=%s", (user_id,))
+        for (s,) in (cur.fetchall() or []):
+            if s:
+                syms.add(s.upper())
+    except Exception:
+        pass
+    return syms
+
+
+def build_flow_feed(user_id, limit=60):
+    """Merge the deltas the user actually cares about into one reverse-chron list.
+    Never raises; returns a list of {kind, symbol, headline, detail, at, weight}."""
+    conn = get_db()
+    if not conn:
+        return []
+    items = []
+    try:
+        cur = conn.cursor()
+        syms = _flow_user_symbols(cur, user_id)
+
+        # 1) VERDICT CHANGES on the user's positions (the heart of "what changed").
+        try:
+            cur.execute(
+                "SELECT symbol, prev_verdict, last_verdict, prev_alpha, last_alpha, change_note, changed_at, acknowledged_at "
+                "FROM portfolio_watch WHERE user_id=%s AND changed_at IS NOT NULL "
+                "ORDER BY changed_at DESC LIMIT 40",
+                (user_id,),
+            )
+            for (sym, pv, lv, pa, la, note, chg, ack) in (cur.fetchall() or []):
+                seen = bool(ack and chg and ack >= chg)
+                arrow = ((pv or "?") + " \u2192 " + (lv or "?")) if (pv or lv) else ""
+                detail = note or ""
+                if pa is not None and la is not None:
+                    detail = (detail + "  " if detail else "") + ("Alpha %s \u2192 %s" % (pa, la))
+                items.append({
+                    "kind": "verdict", "symbol": (sym or "").upper(),
+                    "headline": "Engine changed its mind on %s" % (sym or ""),
+                    "detail": (arrow + ("  \u00b7  " + detail if detail else "")).strip(),
+                    "at": str(chg), "seen": seen, "weight": 100,
+                })
+        except Exception as e:
+            logger.warning("flow verdicts: %s" % e)
+
+        # 2) Fresh REGULATORY risk (prediction markets) on the user's tickers.
+        if syms:
+            try:
+                cur.execute(
+                    "SELECT title, implied_probability, category, matched_tickers, last_updated, source_platform "
+                    "FROM prediction_markets WHERE matched_tickers IS NOT NULL AND matched_tickers <> '' "
+                    "ORDER BY last_updated DESC LIMIT 120"
+                )
+                for (title, prob, cat, mt, upd, src) in (cur.fetchall() or []):
+                    hit = [t for t in (mt or "").split(",") if t and t.upper() in syms]
+                    if not hit:
+                        continue
+                    items.append({
+                        "kind": "regulatory", "symbol": ",".join(hit),
+                        "headline": "%s risk on %s" % (cat or "Regulatory", ",".join(hit)),
+                        "detail": ("%s%% \u00b7 %s \u00b7 %s" % (prob, src, title))[:200],
+                        "at": str(upd), "seen": True, "weight": int(prob or 0),
+                    })
+            except Exception as e:
+                logger.warning("flow regulatory: %s" % e)
+
+        # 3) Recent CONGRESS trades on the user's tickers (both chambers).
+        for tbl, label in (("congressional_trades_house", "House"), ("congressional_trades_senate", "Senate")):
+            if not syms:
+                break
+            try:
+                cur.execute(
+                    "SELECT ticker, transaction_type, amount, transaction_date "
+                    "FROM %s WHERE ticker = ANY(%%s) AND ticker IS NOT NULL "
+                    "ORDER BY transaction_date DESC LIMIT 20" % tbl,
+                    (list(syms),),
+                )
+                for (tk, tt, amt, dt) in (cur.fetchall() or []):
+                    items.append({
+                        "kind": "congress", "symbol": (tk or "").upper(),
+                        "headline": "%s trade in %s" % (label, tk),
+                        "detail": ("%s %s" % ((tt or "").title(), amt or "")).strip(),
+                        "at": str(dt), "seen": True, "weight": 60,
+                    })
+            except Exception:
+                pass
+
+        # 4) Recent DoD contract awards on the user's tickers.
+        if syms:
+            try:
+                cur.execute(
+                    "SELECT ticker, headline_amount, contractor, announced_date "
+                    "FROM dod_contracts WHERE ticker = ANY(%s) AND needs_review = FALSE "
+                    "ORDER BY announced_date DESC LIMIT 15",
+                    (list(syms),),
+                )
+                for (tk, amt, who, dt) in (cur.fetchall() or []):
+                    items.append({
+                        "kind": "dod", "symbol": (tk or "").upper(),
+                        "headline": "Defense contract \u2192 %s" % tk,
+                        "detail": (("$%s  " % amt) if amt else "") + (who or ""),
+                        "at": str(dt), "seen": True, "weight": 70,
+                    })
+            except Exception:
+                pass
+
+        cur.close()
+    except Exception as e:
+        logger.error("build_flow_feed: %s" % e)
+    finally:
+        conn.close()
+
+    # newest first; unseen verdict changes always float to the very top
+    def _key(it):
+        return (0 if (it.get("kind") == "verdict" and not it.get("seen")) else 1, )
+    items.sort(key=lambda it: (it.get("at") or ""), reverse=True)
+    items.sort(key=_key)
+    return items[:limit]
+
+
+@app.route("/api/flow-feed")
+def api_flow_feed():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    try:
+        limit = int(request.args.get("limit", 60))
+    except Exception:
+        limit = 60
+    return jsonify({"feed": build_flow_feed(u["id"], limit=max(1, min(150, limit)))})
+
+
+@app.route("/api/flow-feed/seen", methods=["POST"])
+def api_flow_feed_seen():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "not_logged_in"}), 401
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no database"}), 503
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE portfolio_watch SET acknowledged_at = NOW() WHERE user_id=%s AND changed_at IS NOT NULL", (u["id"],))
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("api_flow_feed_seen: %s" % e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/flow")
+def flow_page():
+    return Response(_FLOW_HTML, mimetype="text/html")
+
+
+_FLOW_HTML = r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Apex Q // What Changed</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{background:#0b0f19;} ::-webkit-scrollbar{width:8px;} ::-webkit-scrollbar-thumb{background:#1e293b;border-radius:6px;}</style>
+</head>
+<body class="text-slate-200 min-h-screen" style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
+<div class="max-w-3xl mx-auto px-4 py-6">
+
+  <div class="flex items-center justify-between border-b border-slate-800 pb-4 mb-2">
+    <div>
+      <div class="text-lg sm:text-xl font-semibold tracking-tight">Apex Q <span class="text-slate-500">//</span> What Changed</div>
+      <div class="text-xs text-slate-500 mt-0.5">Everything new since you last looked. Read top to bottom. That is the whole session.</div>
+    </div>
+    <button id="seenBtn" class="text-xs px-3 py-1.5 rounded-md border border-slate-700 hover:border-slate-500 text-slate-300">Mark all seen</button>
+  </div>
+
+  <div id="empty" class="hidden text-center text-slate-500 text-sm py-16">Nothing has changed since you last looked. You are caught up &mdash; close the tab.</div>
+  <div id="feed" class="divide-y divide-slate-900"></div>
+
+  <div class="text-[11px] text-slate-600 mt-6">Verdict flips on your positions surface first. Regulatory, congressional, and defense signals on your tickers follow. Educational only, not investment advice.</div>
+</div>
+
+<script>
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>\"]/g, function(x){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[x]; }); }
+
+function tag(kind){
+  var m = {
+    verdict:   ["VERDICT",     "bg-indigo-500/20 text-indigo-300"],
+    regulatory:["REGULATORY",  "bg-rose-500/20 text-rose-300"],
+    congress:  ["CONGRESS",    "bg-amber-500/20 text-amber-300"],
+    dod:       ["DEFENSE",     "bg-emerald-500/20 text-emerald-300"]
+  };
+  var v = m[kind] || ["SIGNAL", "bg-slate-500/20 text-slate-300"];
+  return "<span class=\"text-[10px] font-semibold px-2 py-0.5 rounded " + v[1] + "\">" + v[0] + "</span>";
+}
+
+function when(s){
+  if(!s) return "";
+  var t = String(s).replace("T"," ");
+  return t.slice(0, 16);
+}
+
+function render(feed){
+  var host = document.getElementById("feed");
+  document.getElementById("empty").classList.toggle("hidden", feed.length > 0);
+  host.innerHTML = feed.map(function(it){
+    var live = (it.kind === "verdict" && !it.seen);
+    return "<div class=\"py-3 flex gap-3 items-start " + (live ? "bg-indigo-500/5 -mx-2 px-2 rounded" : "") + "\">" +
+      (live ? "<div class=\"mt-2 w-2 h-2 rounded-full bg-indigo-400 flex-shrink-0\"></div>" : "<div class=\"mt-2 w-2 h-2 flex-shrink-0\"></div>") +
+      "<div class=\"flex-1 min-w-0\">" +
+        "<div class=\"flex items-center gap-2 flex-wrap\">" + tag(it.kind) +
+          "<span class=\"font-semibold text-sm\">" + esc(it.headline) + "</span></div>" +
+        (it.detail ? "<div class=\"text-xs text-slate-400 mt-1\">" + esc(it.detail) + "</div>" : "") +
+      "</div>" +
+      "<div class=\"text-[11px] text-slate-600 whitespace-nowrap flex-shrink-0\">" + esc(when(it.at)) + "</div>" +
+    "</div>";
+  }).join("");
+}
+
+function load(){
+  fetch("/api/flow-feed", {credentials:"same-origin"}).then(function(r){ return r.json(); }).then(function(j){
+    render((j && j.feed) ? j.feed : []);
+  }).catch(function(){});
+}
+
+document.getElementById("seenBtn").addEventListener("click", function(){
+  fetch("/api/flow-feed/seen", {method:"POST", credentials:"same-origin"}).then(function(){ load(); }).catch(function(){});
+});
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>'''
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
