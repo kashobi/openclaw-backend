@@ -7,6 +7,7 @@ import traceback
 import time
 import json
 import re
+import re as _re
 import html
 import logging
 import csv
@@ -14318,26 +14319,70 @@ LEGRISK_KEYWORDS = [
 
 
 def _legrisk_category(text):
+    """Categorize a market. Keywords are deliberately specific: generic words
+    like "approval" and "rate" collide with political polling ("job approval
+    rating") and used to mislabel poll markets as Biotech/FDA risk."""
     t = (text or "").lower()
-    if any(k in t for k in ("fda", "drug", "approval", "phase 3", "clinical")):
+    if any(k in t for k in ("fda", "drug approval", "clinical", "phase 3",
+                            "phase 2", "biotech", "vaccine", "pharma", "pdufa")):
         return "Biotech / FDA Risk"
-    if any(k in t for k in ("tariff", "tax", "fed", "rate", "trade", "subsidy")):
+    if any(k in t for k in ("tariff", "trade deal", "trade war", "export control",
+                            "sanction", "inflation", "rate cut", "rate hike",
+                            "interest rate", "fomc", "key rate", "gas tax",
+                            "wealth tax", "capital gains", "subsidy")):
         return "Macro / Trade Risk"
     return "Regulatory Risk"
 
 
 def _legrisk_match_tickers(title):
-    t = " " + (title or "").lower() + " "
+    """Whole-word ticker / company matching. Naive substring matching produced
+    false positives -- e.g. "Mamdani" contains "amd" and tagged a political
+    market as [AMD]."""
+    t = (title or "").lower()
     hits = []
     for sym, names in LEGRISK_TICKERS.items():
-        if (" " + sym.lower() + " ") in t or any(n in t for n in names):
-            hits.append(sym)
+        for pat in [sym.lower()] + list(names):
+            try:
+                if _re.search(r"\b" + _re.escape(pat) + r"\b", t):
+                    hits.append(sym)
+                    break
+            except Exception:
+                continue
     return hits
 
 
+# Markets that are noise for an equity risk matrix: horse-race polling, sports,
+# entertainment, and personnel/nomination contests. These flooded the table --
+# one approval-rating poll alone produced ~40 near-identical bucket rows.
+LEGRISK_BLOCK = (
+    "job approval", "approval rating", "ballon", "album", "grammy", "oscar",
+    "super bowl", "world cup", "premier league", "box office", "rotten tomatoes",
+    "will leave office", "vice-presidential", "vice presidential",
+    "senate nomination", "presidential nomination", "prime minister",
+    "who will replace", "next senate-confirmed", "governor race", "mayor of",
+    "person of the year", "time magazine",
+)
+
+# A market with no ticker attached still earns a place if it is a real policy
+# event with market consequences.
+LEGRISK_STRONG = (
+    "tariff", "antitrust", "monopoly", "fda", "drug approval", "clinical",
+    "regulation", "regulate", "deregulat", "subsidy", "doj", "ftc", "sec ",
+    "sanction", "export control", "rate cut", "rate hike", "interest rate",
+    "fomc", "key rate", "shutdown", "reconciliation bill", "housing bill",
+    "gas tax", "wealth tax", "capital gains", "crypto regulation", "clarity act",
+    "earnings call", "capital expenditures", "stimulus", "debt ceiling",
+)
+
+
 def _legrisk_relevant(title):
+    """Keep a market only if it is plausibly an equity risk signal."""
     t = (title or "").lower()
-    return any(k in t for k in LEGRISK_KEYWORDS) or bool(_legrisk_match_tickers(title))
+    if any(b in t for b in LEGRISK_BLOCK):
+        return False
+    if _legrisk_match_tickers(title):
+        return True
+    return any(k in t for k in LEGRISK_STRONG)
 
 
 def _legrisk_pct(x):
@@ -14493,6 +14538,14 @@ def ingest_legislative_risk():
                 (it.get("source"), it.get("market_id"), title[:500], it.get("prob"), cat, ",".join(tk)),
             )
             n += 1
+        # Drop rows not refreshed by this run -- this is what actually removes
+        # markets that no longer pass the relevance filter (they simply stop
+        # being upserted). Only runs on a successful, non-empty ingest.
+        if n > 0:
+            cur.execute(
+                "DELETE FROM prediction_markets "
+                "WHERE last_updated < NOW() - INTERVAL '6 hours'"
+            )
         conn.commit()
         cur.close()
     except Exception as e:
@@ -14538,15 +14591,23 @@ def api_legislative_risk():
             cur = conn.cursor()
         if ticker:
             cur.execute(
-                "SELECT source_platform, category, title, implied_probability, matched_tickers, last_updated "
-                "FROM prediction_markets WHERE matched_tickers ILIKE %s "
-                "ORDER BY implied_probability DESC NULLS LAST LIMIT 100",
+                "SELECT source_platform, category, title, implied_probability, matched_tickers, last_updated FROM ("
+                "  SELECT DISTINCT ON (split_part(title, ' -- ', 1)) "
+                "         source_platform, category, title, implied_probability, matched_tickers, last_updated "
+                "  FROM prediction_markets WHERE matched_tickers ILIKE %s "
+                "  ORDER BY split_part(title, ' -- ', 1), implied_probability DESC NULLS LAST"
+                ") d ORDER BY implied_probability DESC NULLS LAST LIMIT 100",
                 ("%" + ticker + "%",),
             )
         else:
             cur.execute(
-                "SELECT source_platform, category, title, implied_probability, matched_tickers, last_updated "
-                "FROM prediction_markets ORDER BY implied_probability DESC NULLS LAST LIMIT 50"
+                "SELECT source_platform, category, title, implied_probability, matched_tickers, last_updated FROM ("
+                "  SELECT DISTINCT ON (split_part(title, ' -- ', 1)) "
+                "         source_platform, category, title, implied_probability, matched_tickers, last_updated "
+                "  FROM prediction_markets "
+                "  ORDER BY split_part(title, ' -- ', 1), implied_probability DESC NULLS LAST"
+                ") d ORDER BY (matched_tickers IS NOT NULL AND matched_tickers <> '') DESC, "
+                "implied_probability DESC NULLS LAST LIMIT 50"
             )
         rows = cur.fetchall() or []
         cur.close()
